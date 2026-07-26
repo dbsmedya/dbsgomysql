@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-26
+
 ### Added
 
 - Repository scaffold: `go.mod` (module `github.com/dbsmedya/dbsgomysql`, Go
@@ -34,4 +36,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/commits/main
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/dbsmedya/dbsgomysql/releases/tag/v0.1.0
