@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Catalog()`, and `LookupCheck`. The catalog covers the whole published check
   vocabulary, so the six checks reserved for a later slice appear too, carrying
   `StatusDeferred` and the phase that delivers them.
+- `pkg/validations`: `PKKind` and `TriggerEvent`. Both reserve their zero value
+  for "not populated", so an unset value is detectable rather than silently
+  meaning `PKNone` or `INSERT`. `TriggerEvent.String` returns the event as
+  `information_schema.TRIGGERS.EVENT_MANIPULATION` spells it.
 
 ### Changed
 
