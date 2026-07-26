@@ -6,6 +6,8 @@ import "strconv"
 //
 // The zero value, PKUnknown, means "not populated": a fact never returns it, so
 // a PKInfo that carries it was built by something other than an inspection.
+//
+// PKKind is a plain value and is safe for concurrent use.
 type PKKind uint8
 
 const (

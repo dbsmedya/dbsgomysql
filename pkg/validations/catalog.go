@@ -24,6 +24,8 @@ const (
 // CheckStatus records whether a cataloged check is callable in this release.
 // The zero value is not a valid status, so an unpopulated CheckInfo is
 // detectable.
+//
+// CheckStatus is a plain value and is safe for concurrent use.
 type CheckStatus uint8
 
 const (

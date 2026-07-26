@@ -16,6 +16,8 @@ const (
 // omits the argument is rejected rather than silently defaulted into one, since
 // guessing would answer a question about DELETE triggers with facts about
 // INSERT ones.
+//
+// TriggerEvent is a plain value and is safe for concurrent use.
 type TriggerEvent uint8
 
 const (
