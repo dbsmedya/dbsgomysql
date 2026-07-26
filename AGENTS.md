@@ -50,12 +50,38 @@ put it in `internal/`: moving outward later is additive, inward is breaking.
 ## 3. Workflow
 
 ```
-read the highest -rN spec in .ayder/specs/  ->  plan in .ayder/plans/
-  ->  implement (test first, watch it fail, then code)  ->  make check
-  ->  CHANGELOG.md [Unreleased]  ->  commit to main
+branch from main  ->  read the highest -rN spec in .ayder/specs/
+  ->  plan in .ayder/plans/  ->  implement (test first, watch it fail, then code)
+  ->  make check  ->  CHANGELOG.md [Unreleased]  ->  commit  ->  PR  ->  merge
 ```
 
-Work lands as direct commits to `main`; no pull request required.
+### One document, one branch
+
+**Every spec and every plan runs on its own git branch, and nothing is ever
+committed directly to `main`.** `main` only ever advances by merge.
+
+The documents themselves live in gitignored `.ayder/` and are never committed,
+so a branch does not carry its spec or plan — it carries what that document
+produces: code, tests, `docs/`, and `CHANGELOG.md`.
+
+| Work | Branch | Example |
+|---|---|---|
+| Executing a plan | `feat/<topic>-<phase>` | `feat/validations-phase-1b` |
+| Spec-driven change to tracked files, no plan | `spec/<topic>` | `spec/validations-library-design` |
+| Anything else — repo chores, CI, corrections | `fix/`, `docs/`, `chore/` + a short slug | `chore/bump-golangci` |
+| Releasing | `release/vX.Y.Z` | `release/v0.2.0` |
+
+Use the branch prefix that matches the change's Conventional Commit type; the
+`feat/` row above is the common case, not the only legal prefix.
+
+A plan is the unit of execution: two plans never share a branch, and one plan
+never spreads across two. A spec spanning several plans therefore produces
+several branches. Branch from current `main`, and merge back through a pull
+request once `make check` passes and `CHANGELOG.md` records anything a consumer
+could notice. Delete the branch after merge.
+
+If you find yourself on `main` with uncommitted work, branch first and commit
+there — do not commit and then fix it up.
 
 Internal documents in `.ayder/specs|plans/` carry a `-rN` suffix. Read the
 **highest `-rN`** of a topic — superseded revisions move to `.ayder/archived/`, so
@@ -147,7 +173,9 @@ package or area: `feat(validations): add FK_CLOSURE check`. Breaking changes tak
 `## [Unreleased]` in the same commit, per
 [Keep a Changelog](https://keepachangelog.com/).
 
-**Releasing:** move `[Unreleased]` under a dated version heading, commit as
-`chore(release): vX.Y.Z`, tag `vX.Y.Z`, push the tag. The tag push is what
-triggers `integration.yml`, so dispatch that workflow manually and confirm green
-before tagging.
+**Releasing:** on a `release/vX.Y.Z` branch, move `[Unreleased]` under a dated
+version heading and commit as `chore(release): vX.Y.Z`. Merge that branch to
+`main` first — the tag names a commit on `main`, never one that only exists on a
+branch — then tag `vX.Y.Z` on the merge result and push the tag. The tag push is
+what triggers `integration.yml`, so dispatch that workflow manually and confirm
+green before tagging.
