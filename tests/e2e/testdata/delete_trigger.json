@@ -1,0 +1,14 @@
+[
+  {
+    "check": "TRIGGERS_PRESENT",
+    "tables": ["delete_only_trigger"],
+    "facts": [
+      {
+        "table": "delete_only_trigger",
+        "name": "DeleteOnly",
+        "event": "DELETE",
+        "timing": "BEFORE"
+      }
+    ]
+  }
+]

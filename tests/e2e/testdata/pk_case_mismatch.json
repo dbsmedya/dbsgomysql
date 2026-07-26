@@ -1,0 +1,14 @@
+[
+  {
+    "check": "PK_NAME_CASE",
+    "tables": ["pk_case_mismatch"],
+    "facts": {
+      "table": "pk_case_mismatch",
+      "kind": 2,
+      "columns": ["LOG_ID"],
+      "data_type": "int",
+      "is_integer": true,
+      "unsigned": false
+    }
+  }
+]

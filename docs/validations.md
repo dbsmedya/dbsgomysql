@@ -1,9 +1,9 @@
 # pkg/validations — Consumer Guide
 
-> **Status: design phase.** The package is not implemented yet. This document
-> describes the intended shape so consumers can plan against it. Signatures are
-> indicative and will be confirmed against the released API. Track progress in
-> [CHANGELOG.md](../CHANGELOG.md).
+> **Status:** the package foundation, metadata facts, and nine checks described
+> below are implemented. Foreign-key and privilege facts plus `TableSpec` and
+> `DiffSpecs` remain in design; those sections are marked accordingly. Track
+> shipped changes in [CHANGELOG.md](../CHANGELOG.md).
 
 `pkg/validations` has two layers built on one connection:
 
@@ -64,22 +64,31 @@ inspection observe uncommitted schema changes.
 Every call takes a `context.Context` first.
 
 ```go
-pk, err := insp.PKInfo(ctx, "film_actor")
-// pk.Kind    → PKSingle | PKComposite | PKNone
-// pk.Columns → exact-case column names, in key order
-// pk.Type    → column type of a single-column PK (with IsInteger, Unsigned)
+tables := []string{"film", "film_actor"}
+
+tableFacts, err := insp.Tables(ctx, tables)
+pks, err := insp.PrimaryKeys(ctx, tables)
+invisible, err := insp.InvisibleColumns(ctx, tables)
+deleteTriggers, err := insp.Triggers(ctx, tables, validations.TriggerDelete)
 ```
+
+Each fact returns a slice in requested table order. Missing or invisible
+objects are absent rather than errors; compare `tableFacts` with `tables` using
+`CheckTablesExist` when absence is the question. `PKInfo.Columns` retains exact
+case and primary-key order, and a single-column key reports its `DataType`,
+`IsInteger`, and `Unsigned` facts.
 
 Names come back in the server's exact case, and the library compares names in
 Go rather than in SQL — `information_schema` collates case-insensitively, so a
 SQL-side comparison would match `LOG_ID` against `log_id`. See
 [COMPAT.md §2](COMPAT.md).
 
-Other facts include table existence, invisible columns, triggers by event,
-foreign keys (with an `Indexed` flag computed for every key), and the effective
-privileges of the connected account.
+Foreign-key and effective-privilege facts are planned for the next slice.
 
 ## Table specifications and diffs
+
+> **Pending:** `TableSpec`, `Ref`, the option functions, and `DiffSpecs` land in
+> phase 1d and are not part of the current package.
 
 `TableSpec` describes a table completely enough to compare it with any other
 table, on any server:
@@ -115,13 +124,17 @@ Checks are pure functions over facts, so you fetch once and run as many as you
 like without touching the server again:
 
 ```go
-pks, err := insp.PrimaryKeys(ctx, tables)
-if err != nil {
-    return err
-}
-findings := validations.CheckPKExists(pks)
+var findings []validations.Finding
+findings = append(findings, validations.CheckTablesExist(tables, tableFacts)...)
+findings = append(findings, validations.CheckStorageEngine(tableFacts, "")...)
+findings = append(findings, validations.CheckInvisibleColumns(invisible)...)
+findings = append(findings,
+    validations.CheckTriggersPresent(deleteTriggers, validations.TriggerDelete)...)
+findings = append(findings, validations.CheckPKExists(pks)...)
 findings = append(findings, validations.CheckPKSingleColumn(pks)...)
+findings = append(findings, validations.CheckPKMatchesExpected(pks, expected)...)
 findings = append(findings, validations.CheckPKNameCase(pks, expected)...)
+findings = append(findings, validations.CheckPKIntegerType(pks)...)
 ```
 
 A check returns `[]Finding` and no error — it inspects nothing, so there is
@@ -150,9 +163,10 @@ text — values can be bound as parameters, identifiers cannot. Use
 
 ## Concurrency
 
-Thread-safety is documented on every exported type. `Inspector` is intended to
-be safe for concurrent use by multiple goroutines, bounded by the connection
-limits of the `*sql.DB` you supply.
+Thread-safety is documented on every exported type. `Inspector` is immutable
+and safe for concurrent use when the `Querier` you supply is safe for concurrent
+use. Mutable slices in returned facts and findings require the usual caller
+synchronization.
 
 ## MySQL versions
 

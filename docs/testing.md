@@ -1,7 +1,7 @@
 # Testing
 
-`dbsgomysql` has four test layers. Only the first requires no database, and it
-is the one that gates every commit.
+`dbsgomysql` has four test layers. Unit tests require no database; unit and
+MySQL 8.4 smoke tests gate every commit.
 
 | Layer | Database | Command | Scope |
 |---|---|---|---|
@@ -49,11 +49,11 @@ misleading failures.
 
 ## Fixtures
 
-`tests/fixtures/` holds the seed schemas: a realistic Sakila-style schema plus
-purpose-built defect schemas covering composite primary keys, missing primary
-keys, case-mismatched primary key names, invisible columns, unindexed foreign
-keys, cross-schema incoming foreign keys, least-privilege accounts, DELETE and
-INSERT triggers, and partitioned tables.
+`tests/fixtures/` holds repository-owned seed schemas. The phase-1b fixture
+covers clean and missing tables, views, InnoDB and MyISAM, absent/single/
+composite/non-integer primary keys, exact-name mismatches, invisible and
+generated columns, and DELETE/INSERT/UPDATE triggers. Later slices extend it
+with foreign-key, privilege, and table-specification scenarios.
 
 This repository owns its fixtures and containers outright. It does not reuse
 another project's test infrastructure in place.
@@ -62,12 +62,12 @@ another project's test infrastructure in place.
 
 | Workflow | Trigger | What runs |
 |---|---|---|
-| `ci.yml` | every push and pull request | format check, `go vet`, `golangci-lint`, unit tests, dependency check, build |
+| `ci.yml` | every push and pull request | `make check` without a database, plus MySQL 8.4 smoke |
 | `integration.yml` | version tags, manual dispatch, or the `run-integration` PR label | the full 8.0 / 8.4 / 9.7 matrix |
 
-The matrix is not on every push by design. It is a slow, container-heavy job;
-running it per-push while the suite is small trains everyone to ignore CI. It
-becomes a per-push gate once the integration suite is meaningful.
+Smoke runs on every push so every fact and check gets a real-server go/no-go.
+The full three-version integration and E2E matrix remains off the per-push path
+by design; it runs on tags, manual dispatch, and labeled pull requests.
 
 The 26.x development line runs as an allowed-to-fail watch job when practical
 images exist.

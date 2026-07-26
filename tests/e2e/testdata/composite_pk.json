@@ -1,0 +1,14 @@
+[
+  {
+    "check": "PK_SINGLE_COLUMN",
+    "tables": ["composite_pk"],
+    "facts": {
+      "table": "composite_pk",
+      "kind": 3,
+      "columns": ["key_first", "ordinal_first"],
+      "data_type": "",
+      "is_integer": false,
+      "unsigned": false
+    }
+  }
+]

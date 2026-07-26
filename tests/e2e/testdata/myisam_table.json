@@ -1,0 +1,11 @@
+[
+  {
+    "check": "STORAGE_ENGINE",
+    "tables": ["myisam_table"],
+    "facts": {
+      "table": "myisam_table",
+      "type": "BASE TABLE",
+      "engine": "MyISAM"
+    }
+  }
+]

@@ -52,14 +52,14 @@ type mismatch on every integer column.
 `unsigned` and `zerofill` attributes are **preserved** — they change the value
 range and are therefore real differences, not formatting noise.
 
-## 2. `information_schema` name collations vary by category 🔜
+## 2. `information_schema` name collations vary by category ✅
 
 **Affected:** all supported versions.
 
 **Symptom:** name columns in `information_schema` do not share one collation.
-`COLUMN_NAME` and `CONSTRAINT_NAME` can use `utf8mb3_tolower_ci`, while
-`TABLE_NAME` and `SCHEMA_NAME` use `utf8mb3_bin` on the tested 8.0 / 8.4 / 9.7
-matrix. A query like
+`COLUMN_NAME` and `CONSTRAINT_NAME` use `utf8mb3_tolower_ci`,
+`TRIGGER_NAME` uses `utf8mb3_general_ci`, and `TABLE_NAME` and `SCHEMA_NAME`
+use `utf8mb3_bin` on the tested 8.0 / 8.4 / 9.7 matrix. A query like
 
 ```sql
 SELECT ... FROM information_schema.COLUMNS WHERE COLUMN_NAME = 'log_id'
@@ -75,7 +75,12 @@ is also wrong.
 SQL predicates may narrow a metadata result set, but the returned spelling is
 the server's actual value and any acceptance decision is made by exact
 comparison in Go. This is core behavior, not a workaround limited to one
-check.
+check. The category collations and both sides of the case-exact comparison are
+pinned by
+[`TestMetadataNameCollationsIntegration`](../pkg/validations/validations_integration_test.go),
+[`TestColumnNameCaseInsensitivityIntegration`](../pkg/validations/validations_integration_test.go),
+and
+[`TestTableNameCaseSensitivityIntegration`](../pkg/validations/validations_integration_test.go).
 
 ## 3. `GRANTEE` does not escape embedded quotes 🔜
 
