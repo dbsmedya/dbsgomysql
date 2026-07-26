@@ -51,6 +51,7 @@ Planned consumers: [goarchive](https://github.com/dbsmedya/goarchive), gocdc.
 | [docs/validations.md](docs/validations.md) | `pkg/validations` consumer guide |
 | [docs/sqlutil.md](docs/sqlutil.md) | `pkg/sqlutil` — identifier safety |
 | [docs/COMPAT.md](docs/COMPAT.md) | MySQL version-quirk registry |
+| [docs/mysql-version-spesific-compatibility.md](docs/mysql-version-spesific-compatibility.md) | Observed MySQL compatibility matrix |
 | [docs/testing.md](docs/testing.md) | Running the test matrix |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 | [AGENTS.md](AGENTS.md) | Contributor and agent operating rules |

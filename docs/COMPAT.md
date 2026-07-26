@@ -7,6 +7,9 @@ job is allowed to fail and no code accommodates it until it stabilizes.
 This document is the registry of MySQL behaviors that differ across versions or
 that surprise callers of `information_schema`. Each entry states the affected
 versions, the observable symptom, and how the library handles it.
+The exact server versions and results observed during `pkg/sqlutil`
+implementation are retained in the
+[development compatibility matrix](mysql-version-spesific-compatibility.md).
 
 > **Status legend** — ✅ handled and pinned by a test · 🔜 registered, handling
 > lands with the package that needs it · 👁 operator guidance only, no library
@@ -147,7 +150,10 @@ above `U+FFFF`, but does not preserve it. For example, a table requested as
 `supp_𐀀` is stored and reported by `information_schema` as `supp_?`. Reusing
 the original SQL text can appear to work because the same replacement happens
 again, but the configured name does not round-trip and can collide with a
-literal question mark.
+literal question mark. Comparing `information_schema.TABLES.TABLE_NAME` with
+the original supplementary-character parameter fails with error 3988 because
+MySQL cannot convert the `utf8mb4` parameter to the metadata column's
+`utf8mb3` collation.
 
 **Handling:** `sqlutil.ValidateIdentifier` returns
 `ErrIdentifierSupplementary` before SQL is executed. `QuoteIdentifier` remains
