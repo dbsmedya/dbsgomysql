@@ -1,0 +1,90 @@
+# Database-backed matrix across every supported MySQL version.
+#
+# Deliberately NOT on every push. It is slow and container-heavy, and running
+# it per-push while the suite is small trains everyone to ignore CI. It becomes
+# a per-push gate once the integration suite is meaningful.
+#
+# Trigger it by:
+#   - pushing a version tag (release gate),
+#   - the Actions "Run workflow" button,
+#   - adding the `run-integration` label to a pull request.
+#
+# The MySQL 26.x development line is watch-only and is not in the matrix until
+# practical images exist; when added it runs as allowed-to-fail.
+
+name: Integration
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    name: mysql ${{ matrix.mysql }}
+    # Skip label-triggered runs unless the label is actually present.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'run-integration')
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        mysql: ["8.0", "8.4", "9.7"]
+
+    services:
+      mysql:
+        image: mysql:${{ matrix.mysql }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    env:
+      DBSGOMYSQL_TEST_DSN: "root:root@tcp(127.0.0.1:3306)/"
+      DBSGOMYSQL_TEST_MYSQL_VERSION: ${{ matrix.mysql }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
+              echo "MySQL is up"
+              mysql -h 127.0.0.1 -P 3306 -uroot -proot -e 'SELECT VERSION();'
+              exit 0
+            fi
+            echo "waiting for MySQL ($i/30)"
+            sleep 2
+          done
+          echo "::error::MySQL did not become ready"
+          exit 1
+
+      - name: Integration tests
+        run: make test-integration
+
+      - name: End-to-end tests
+        run: make test-e2e

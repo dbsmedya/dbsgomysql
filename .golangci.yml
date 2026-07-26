@@ -1,0 +1,214 @@
+# golangci-lint configuration for dbsgomysql.
+#
+# This file is the canonical statement of the library's mechanical rules. Each is
+# checked by a tool rather than left to review or to prose that can drift:
+#
+#   never panic / never log      -> forbidigo
+#   no init() functions          -> gochecknoinits
+#   no global mutable state      -> gochecknoglobals
+#   wrap errors with %w          -> wrapcheck, errorlint
+#   GoDoc on every export        -> revive (exported, package-comments)
+#   no stutter in exported names -> revive (exported)
+#   stdlib-only public packages  -> depguard  (plus `make deps-check`)
+#   context first for all I/O    -> noctx, contextcheck, revive
+#   no context.Background in lib -> forbidigo
+#   //nolint must say why        -> nolintlint
+#
+# Loosening anything here needs the reason in the commit message.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+issues:
+  # Defaults hide real violations, which is unacceptable for a gate:
+  #   uniq-by-line=true   keeps only ONE issue per line, so a line that is both
+  #                       an undocumented export and a global reports only one.
+  #   max-*               truncate at 50 per linter / 3 per issue type.
+  # Report everything. A gate that under-reports is worse than no gate.
+  uniq-by-line: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - nilerr
+    - makezero
+    - unconvert
+    - predeclared
+
+    # database/sql specific — this library's entire surface is SQL I/O.
+    - rowserrcheck # rows.Err() must be checked after iteration
+    - sqlclosecheck # sql.Rows / sql.Stmt must be closed
+    - noctx # no database/sql or net/http call without a Context
+
+    # Error handling discipline
+    - errorlint
+    - wrapcheck
+
+    # Library hygiene
+    - gochecknoinits # "Avoid init() Functions"
+    - gochecknoglobals # "Avoid Global State"
+    - contextcheck
+    - forbidigo
+    - depguard
+
+    # Documentation & style
+    - revive
+    - gocritic
+    - godot
+    - misspell
+    - goconst
+    - nolintlint # a suppression must name its linter and say why
+
+  settings:
+    depguard:
+      rules:
+        public-api-is-stdlib-only:
+          files:
+            - "**/pkg/**"
+            - "!**/*_test.go"
+          allow:
+            - $gostd
+            - github.com/dbsmedya/dbsgomysql
+          deny:
+            - pkg: github.com/go-sql-driver/mysql
+              desc: >-
+                The library is driver-agnostic. Consumers supply *sql.DB;
+                drivers belong in test files and consumer code only.
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^panic$
+          msg: >-
+            Library code must never panic — a library must not crash its
+            consumer's application. Return an error instead.
+        - pattern: ^print(ln)?$
+          msg: "Library code must not write to stdout/stderr."
+        - pattern: ^fmt\.(Print|Printf|Println)$
+          msg: >-
+            Library code must not write to stdout. Return data; the consumer
+            decides how to render it.
+        - pattern: ^log\.[A-Z].*$
+          msg: >-
+            Library code must not log. Return data and errors; the consumer
+            owns logging.
+        - pattern: ^context\.(Background|TODO)$
+          msg: >-
+            The context comes from the caller. Library code never creates its
+            own root context. Test files are exempt.
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # readability of fact structs beats struct packing
+
+    revive:
+      # Listing rules explicitly disables revive's defaults, so this set is
+      # the complete set that runs.
+      rules:
+        # No disableStutteringCheck: exported names carry no stutter
+        # (validations.Inspector, not validations.ValidationsInspector), so the
+        # check that catches it stays on.
+        - name: exported
+          arguments: [checkPrivateReceivers]
+        - name: package-comments
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: errorf
+        - name: indent-error-flow
+        - name: var-naming
+        - name: var-declaration
+        - name: receiver-naming
+        - name: unexported-return
+        - name: blank-imports
+        - name: range
+        - name: time-naming
+        - name: increment-decrement
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: bare-return
+        - name: deep-exit
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+        - opinionated
+      disabled-checks:
+        - whyNoLint
+
+    wrapcheck:
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+
+    goconst:
+      min-len: 3
+      min-occurrences: 4
+
+    misspell:
+      locale: US
+
+    nolintlint:
+      require-explanation: true # say why, on the same line
+      require-specific: true # `//nolint` alone hides more than intended
+      allow-unused: false # a suppression that suppresses nothing is stale
+
+  exclusions:
+    generated: lax
+    presets:
+      # NOT the `comments` preset — it suppresses "exported X should have a
+      # comment", which is precisely the rule this file makes mandatory.
+      #
+      # `std-error-handling` is kept: it waives the unchecked error on deferred
+      # Close/Flush calls, where `defer rows.Close()` is the idiomatic form and
+      # the meaningful error surfaces through rows.Err() instead. sqlclosecheck
+      # still guarantees the Close happens at all.
+      - std-error-handling
+    rules:
+      # Test code may use third-party helpers, panic on setup failure, and
+      # skip the documentation and wrapping rules that govern the public API.
+      - path: (_test\.go|^tests/|^internal/testsupport/)
+        linters:
+          - depguard
+          - forbidigo
+          - wrapcheck
+          - gochecknoglobals
+          - goconst
+          - godot
+          - noctx
+          - nolintlint
+          - revive
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/dbsmedya/dbsgomysql

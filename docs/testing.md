@@ -1,0 +1,82 @@
+# Testing
+
+`dbsgomysql` has four test layers. Only the first requires no database, and it
+is the one that gates every commit.
+
+| Layer | Database | Command | Scope |
+|---|---|---|---|
+| Unit | none | `make test` | Pure logic — type normalization, spec diffing, grantee formatting, finding assembly |
+| Smoke | MySQL 8.4 | `make test-smoke` | Every fact and check runs once against a seeded fixture. Fast go/no-go |
+| Integration | 8.0 / 8.4 / 9.7 | `make test-integration` | Per-version behavior, including every quirk pinned in [COMPAT.md](COMPAT.md) |
+| E2E | 8.0 / 8.4 / 9.7 | `make test-e2e` | Defect-schema scenarios compared against golden findings |
+
+## Running without a database
+
+```sh
+make test
+```
+
+Database-backed tests sit behind build tags (`integration`, `e2e`), so a plain
+`go test ./...` passes with no MySQL present. This is deliberate: it keeps the
+per-commit CI job honest and fast, and it means a contributor can work on the
+pure logic without Docker.
+
+## Running the matrix locally
+
+Compose definitions for all three tested versions live in `tests/docker/`.
+
+```sh
+# Bring up the version you want to test against
+docker compose -f tests/docker/compose.yaml up -d mysql84
+
+# Point the tests at it
+export DBSGOMYSQL_TEST_DSN='root:root@tcp(127.0.0.1:3384)/'
+
+make test-integration
+```
+
+Each version listens on its own port so several can run at once:
+
+| Version | Service | Port |
+|---|---|---|
+| 8.0 | `mysql80` | 3380 |
+| 8.4 | `mysql84` | 3384 |
+| 9.7 | `mysql97` | 3397 |
+
+Tests skip rather than fail when `DBSGOMYSQL_TEST_DSN` is unset, so an
+accidental `go test -tags=integration ./...` without a server does not produce
+misleading failures.
+
+## Fixtures
+
+`tests/fixtures/` holds the seed schemas: a realistic Sakila-style schema plus
+purpose-built defect schemas covering composite primary keys, missing primary
+keys, case-mismatched primary key names, invisible columns, unindexed foreign
+keys, cross-schema incoming foreign keys, least-privilege accounts, DELETE and
+INSERT triggers, and partitioned tables.
+
+This repository owns its fixtures and containers outright. It does not reuse
+another project's test infrastructure in place.
+
+## CI
+
+| Workflow | Trigger | What runs |
+|---|---|---|
+| `ci.yml` | every push and pull request | format check, `go vet`, `golangci-lint`, unit tests, dependency check, build |
+| `integration.yml` | version tags, manual dispatch, or the `run-integration` PR label | the full 8.0 / 8.4 / 9.7 matrix |
+
+The matrix is not on every push by design. It is a slow, container-heavy job;
+running it per-push while the suite is small trains everyone to ignore CI. It
+becomes a per-push gate once the integration suite is meaningful.
+
+The 26.x development line runs as an allowed-to-fail watch job when practical
+images exist.
+
+## Writing tests
+
+Write the test first, watch it fail for the right reason, then implement. A
+test that has never failed has never been shown to test anything.
+
+Every entry in [COMPAT.md](COMPAT.md) needs a test that pins the documented
+behavior on every affected version. That test is what stops a future
+contributor from "simplifying" a version accommodation they do not recognize.

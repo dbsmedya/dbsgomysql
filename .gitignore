@@ -1,0 +1,28 @@
+# Internal development scratch — specs, plans, notes.
+# Never tracked. The -rN filename protocol substitutes for git history here; see
+# .ayder/SPEC_AND_PLAN_REVISION_GUIDE.md.
+.ayder/
+
+# Go build & test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/dist/
+/bin/
+coverage.out
+coverage.html
+
+# Go workspace files (per-developer, never shared)
+go.work
+go.work.sum
+
+# Editor & OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
