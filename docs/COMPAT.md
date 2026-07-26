@@ -7,9 +7,12 @@ job is allowed to fail and no code accommodates it until it stabilizes.
 This document is the registry of MySQL behaviors that differ across versions or
 that surprise callers of `information_schema`. Each entry states the affected
 versions, the observable symptom, and how the library handles it.
-The exact server versions and results observed during `pkg/sqlutil`
-implementation are retained in the
-[development compatibility matrix](mysql-version-specific-compatibility.md).
+
+Most entries here describe behavior MySQL exhibits *identically* on every
+supported version. Where a behavior genuinely differs between versions, it is
+also listed in the
+[version divergence register](mysql-version-specific-compatibility.md), which
+records nothing else and is currently empty.
 
 > **Status legend** — ✅ handled and pinned by a test · 🔜 registered, handling
 > lands with the package that needs it · 👁 operator guidance only, no library

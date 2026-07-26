@@ -1,122 +1,66 @@
-# MySQL Version-Specific Compatibility Matrix
+# MySQL Version Divergence Register
 
-This document records the MySQL behavior observed while implementing
-`pkg/sqlutil` on 2026-07-26. It is an evidence snapshot for future development:
-[`COMPAT.md`](COMPAT.md) remains the canonical registry of compatibility quirks
-and their library handling.
+This file records **only behavior that differs between the supported MySQL
+versions**. Anything MySQL does identically on all of them — including the
+surprising things — belongs in [`COMPAT.md`](COMPAT.md), which is the canonical
+registry of quirks and their library handling.
 
-## Tested environment
+That split is what makes an entry here worth reading: it means a consumer's
+result depends on which server they are connected to, and the library has to
+absorb the difference. An invariant surprise does not.
 
-| Matrix target | Resolved server version | Docker image | Result |
-|---|---:|---|---|
-| MySQL 8.0 | 8.0.46 | `mysql:8.0` | Passed |
-| MySQL 8.4 | 8.4.9 | `mysql:8.4` | Passed |
-| MySQL 9.7 | 9.7.1 | `mysql:9.7` | Passed |
+## Current divergences
 
-The tests used `github.com/go-sql-driver/mysql` v1.10.0 and a connection whose
-default database was unset. Every object was addressed with a fully qualified,
-separately quoted schema and table name.
+**None.** Every behavior `pkg/sqlutil` exercises is identical on all three
+supported versions.
 
-The Docker tags above follow release lines rather than immutable patch
-versions. A later run may resolve them to newer patch releases; always record
-the result of `SELECT VERSION()` when refreshing this matrix.
+Last probed 2026-07-26 against:
 
-## Compatibility matrix
+| Matrix target | Resolved version | Docker image |
+|---|---:|---|
+| MySQL 8.0 | 8.0.46 | `mysql:8.0` |
+| MySQL 8.4 | 8.4.9 | `mysql:8.4` |
+| MySQL 9.7 | 9.7.1 | `mysql:9.7` |
 
-| Behavior | MySQL 8.0.46 | MySQL 8.4.9 | MySQL 9.7.1 | Library treatment |
-|---|---|---|---|---|
-| Embedded backtick in a quoted table name | Exact round-trip | Exact round-trip | Exact round-trip | `QuoteIdentifier` doubles backticks |
-| 64-character table name | Accepted | Accepted | Accepted | `ValidateIdentifier` accepts it |
-| 65-character table name | Error 1059 | Error 1059 | Error 1059 | `ErrIdentifierTooLong` |
-| BMP Unicode table name such as `表_é` | Exact round-trip | Exact round-trip | Exact round-trip | Accepted |
-| Supplementary character such as `U+10000` in a table name | Statement accepted; stored as `?` | Statement accepted; stored as `?` | Statement accepted; stored as `?` | `ErrIdentifierSupplementary` |
-| `information_schema.TABLES` comparison with the original supplementary-character parameter | Error 3988 | Error 3988 | Error 3988 | Reject before querying |
-| Database, table, or column ending in TAB–CR (`U+0009`–`U+000D`) or SPACE (`U+0020`) | Error 1102 / 1103 / 1166 | Error 1102 / 1103 / 1166 | Error 1102 / 1103 / 1166 | `ErrIdentifierTrailingSpace` |
-| Quoted name with any leading space character (`U+0009`–`U+000D`, `U+0020`), trailing NBSP, or trailing `U+3000` | Exact round-trip | Exact round-trip | Exact round-trip | Accepted |
+through `github.com/go-sql-driver/mysql` v1.10.0, on a connection with no
+default database, addressing every object by a fully qualified and separately
+quoted name.
 
-No behavior differed between the three tested release lines. The issues below
-are still compatibility concerns because they are surprising, can silently
-change an identifier, and must remain pinned as MySQL evolves.
+The Docker tags follow release lines rather than immutable patch versions, so a
+later run may resolve to newer patches. Record `SELECT VERSION()`, not the tag.
 
-## Issues encountered
+## Probed for divergence
 
-### Supplementary characters are silently replaced
+Listed so that "none" is falsifiable rather than merely asserted. What each
+behavior *is*, and how the library handles it, is documented in
+[`COMPAT.md`](COMPAT.md) and [`sqlutil.md`](sqlutil.md) — not repeated here.
 
-MySQL accepted a quoted table name containing `U+10000`, but the name did not
-round-trip:
+| Behavior | Pinned by |
+|---|---|
+| Embedded backtick in a quoted identifier | `TestQuoteIdentifierRoundTripIntegration` |
+| Identifier length at the 64- and 65-character boundary | `TestIdentifierLengthBoundaryIntegration` |
+| BMP Unicode identifiers | `TestIdentifierCharacterSetIntegration` |
+| Supplementary characters above `U+FFFF` | `TestIdentifierCharacterSetIntegration` |
+| `information_schema` lookup of a supplementary-character name | `TestIdentifierCharacterSetIntegration` |
+| Trailing `U+0009`–`U+000D` and `U+0020`, per object kind | `TestIdentifierCharacterSetIntegration` |
+| Leading space characters, trailing NBSP, trailing `U+3000` | `TestIdentifierCharacterSetIntegration` |
 
-```sql
-CREATE TABLE `supp_𐀀` (id INT);
-SHOW TABLES;
-```
+All of the above live in
+[`sqlutil_integration_test.go`](../pkg/sqlutil/sqlutil_integration_test.go) and
+run against every version in the matrix.
 
-The server reported the stored name as `supp_?` on all three versions.
-Repeating the original SQL text can appear to work because the same conversion
-to `?` occurs again. That apparent success is unsafe: the configured name is
-not preserved and can collide with a name that contains a literal question
-mark.
-
-`ValidateIdentifier` therefore returns `ErrIdentifierSupplementary`.
-`QuoteIdentifier` remains total because quoting safety and server validity are
-separate guarantees. The behavior is pinned by
-[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go).
-
-### `information_schema` cannot compare the original value
-
-After creating the supplementary-character table, comparing
-`information_schema.TABLES.TABLE_NAME` with the original `utf8mb4` parameter
-failed on every tested version:
-
-```text
-Error 3988 (HY000): Conversion from collation utf8mb4_general_ci
-into utf8mb3_bin impossible for parameter
-```
-
-The collation named in that message is the connection's, not a fixed property
-of the server — a session negotiating `utf8mb4_0900_ai_ci` sees that name
-instead. Error number 3988 is the stable part, and it is what
-[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go)
-asserts on all three versions.
-
-This is consistent with the `utf8mb3` metadata behavior already tracked in
-[`COMPAT.md`](COMPAT.md). Code must not interpret this error as “table does not
-exist.” For `pkg/sqlutil`, the safe boundary is earlier:
-`ValidateIdentifier` rejects the non-round-trippable name before SQL or
-metadata lookup.
-
-### Six trailing ASCII space characters are rejected
-
-MySQL rejected database, table, and column identifiers ending in TAB, LF, VT,
-FF, CR, or SPACE on every tested version. Database names failed with error
-1102, table names with 1103, and column names with 1166; the integration test
-asserts those numbers rather than merely that the statement failed, so a
-statement that broke for an unrelated reason cannot satisfy it. The
-distinction matters for configuration input: a trailing tab or newline is easy
-to introduce and previously received a false all-clear from
-`ValidateIdentifier`.
-
-The rejection is deliberately narrow, and position is what decides it. Every
-one of the six characters round-tripped on the matrix in the *leading*
-position, as did a trailing NBSP (`U+00A0`) or trailing ideographic space
-(`U+3000`). `ErrIdentifierTrailingSpace` covers only `U+0009`–`U+000D` and
-`U+0020` in the final position.
-
-### Length is not the only server-side limit
-
-The 64-character boundary is a MySQL identifier rule, counted in Unicode
-characters. A 64-rune CJK name therefore passes `ValidateIdentifier`, but an
-InnoDB table can still fail earlier with error 1030 when its encoded filename
-exceeds an environment-dependent limit. The validator intentionally does not
-predict storage-engine or filesystem constraints.
+One further behavior was probed by hand across the same three servers and also
+showed no divergence: the collations of `information_schema` name columns
+(`COMPAT.md` entry 2). It has no pinning test yet because its handling lands
+with `pkg/validations`.
 
 ## Refresh procedure
 
-When a matrix image advances or a new supported release line is added:
+Run the matrix as described in [`testing.md`](testing.md), which owns the
+harness conventions and is not restated here. Then:
 
-1. Start the services in [`tests/docker/compose.yaml`](../tests/docker/compose.yaml).
-2. Record `SELECT VERSION()` for each server.
-3. Set `DBSGOMYSQL_TEST_DSN` and `DBSGOMYSQL_TEST_MYSQL_VERSION` for the
-   service, run `go clean -testcache`, then run `make test-integration`.
-4. Update this matrix if the resolved versions or results changed.
-5. If behavior changes, update [`COMPAT.md`](COMPAT.md), the handling code, and
-   the pinning test together.
+1. Record `SELECT VERSION()` for each server and update the table above.
+2. If a behavior now differs between versions, add it here **and** to
+   [`COMPAT.md`](COMPAT.md), with the handling code and its pinning test in the
+   same commit.
+3. If nothing differs, update only the probe date.
