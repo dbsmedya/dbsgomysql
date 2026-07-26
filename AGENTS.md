@@ -19,9 +19,10 @@ document.
 
 The organizing idea is **facts versus policy**. The library answers factual
 questions (*what kind of primary key does this table have?*) and reports findings
-carrying a rationale and a *reference* severity that consumers remap. Deciding
-whether a finding matters is the consumer's job — which is why a check stays once
-written: another consumer still needs that question answered.
+carrying a rationale and **no severity** — not even a remappable default, since a
+default is a decision. Deciding whether a finding matters is the consumer's job —
+which is why a check stays once written: another consumer still needs that
+question answered.
 
 ## 2. Layout
 
@@ -89,8 +90,10 @@ What no tool checks:
   consumer supplies the connection, so accept the smallest `database/sql`
   interface the call needs — one a `*sql.DB` and a `*sql.Tx` both satisfy.
 - **Facts and findings are not errors.** A composite primary key is a finding; an
-  unreachable server is an error. Facts return `(facts, error)`, checks return
-  `([]Finding, error)`. Errors name the object they concern.
+  unreachable server is an error. Facts return `(facts, error)`; checks are pure
+  predicates over facts and return `[]Finding` alone — a check inspects nothing,
+  so it has nothing to fail at. Errors name the object they concern, and claim no
+  attribution they do not have.
 - **Every check documents the failure mode it protects against.** The rationale is
   the product — it is what makes this a reference library and not a bag of
   predicates.

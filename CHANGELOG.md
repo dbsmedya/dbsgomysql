@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Clarified the planned `pkg/validations` contract: checks are pure functions
+  over facts, and findings carry no severity; consumers own policy. A check
+  returns `[]Finding` and no error — it inspects nothing, so it has nothing to
+  fail at, and errors belong to the facts layer. No code is affected:
+  `pkg/validations` is not implemented yet, so this changes published
+  documentation and the operating contract only.
+
 ## [0.1.0] - 2026-07-26
 
 ### Added
