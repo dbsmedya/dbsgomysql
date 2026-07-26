@@ -45,19 +45,57 @@ func TestIdentifierCharacterSetIntegration(t *testing.T) {
 	t.Parallel()
 
 	db, schema := integrationDatabase(t)
-	bmpName := "表_é"
 	supplementaryName := "supplementary_\U00010000"
 
-	assertIntegrationTableRoundTrip(t, db, schema, bmpName, 7)
+	validNames := []struct {
+		name string
+		id   int
+	}{
+		{name: "表_é", id: 7},
+		{name: " leading_space", id: 8},
+		{name: "trailing_nbsp\u00A0", id: 9},
+		{name: "trailing_ideographic_space\u3000", id: 10},
+	}
+	for _, valid := range validNames {
+		assertIntegrationTableRoundTrip(t, db, schema, valid.name, valid.id)
+	}
+
 	assertSupplementaryIdentifierReplacement(t, db, schema, supplementaryName)
-	assertIntegrationSQLRejected(
-		t,
-		db,
-		"CREATE TABLE "+sqlutil.QuoteQualified(schema, "trailing ")+" (id INT)",
-	)
+
+	trailingSpaceCharacters := []struct {
+		name      string
+		character string
+	}{
+		{name: "tab", character: "\t"},
+		{name: "lf", character: "\n"},
+		{name: "vt", character: "\v"},
+		{name: "ff", character: "\f"},
+		{name: "cr", character: "\r"},
+		{name: "space", character: " "},
+	}
+	for _, trailing := range trailingSpaceCharacters {
+		t.Run(trailing.name, func(t *testing.T) {
+			assertIntegrationDatabaseNameRejected(
+				t,
+				db,
+				schema+"_database_"+trailing.name+trailing.character,
+			)
+			assertIntegrationSQLRejected(
+				t,
+				db,
+				"CREATE TABLE "+sqlutil.QuoteQualified(schema, "table"+trailing.character)+" (id INT)",
+			)
+			assertIntegrationSQLRejected(
+				t,
+				db,
+				"CREATE TABLE "+sqlutil.QuoteQualified(schema, "column_probe_"+trailing.name)+
+					" ("+sqlutil.QuoteIdentifier("column"+trailing.character)+" INT)",
+			)
+		})
+	}
 }
 
-func integrationDatabase(t *testing.T) (*sql.DB, string) {
+func integrationDatabase(t *testing.T) (db *sql.DB, schema string) {
 	t.Helper()
 
 	dsn := os.Getenv("DBSGOMYSQL_TEST_DSN")
@@ -83,7 +121,7 @@ func integrationDatabase(t *testing.T) (*sql.DB, string) {
 		_ = db.Close()
 		t.Fatalf("generate integration schema suffix: %v", err)
 	}
-	schema := "dbsgomysql_sqlutil_" + hex.EncodeToString(suffix)
+	schema = "dbsgomysql_sqlutil_" + hex.EncodeToString(suffix)
 	if err := sqlutil.ValidateIdentifier(schema); err != nil {
 		_ = db.Close()
 		t.Fatalf("generated integration schema name %q: %v", schema, err)
@@ -139,19 +177,7 @@ func assertIntegrationTableRoundTrip(t *testing.T, db *sql.DB, schema, table str
 		t.Errorf("selected id = %d, want %d", selectedID, id)
 	}
 
-	var storedName string
-	err = db.QueryRowContext(
-		t.Context(),
-		"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
-		schema,
-		table,
-	).Scan(&storedName)
-	if err != nil {
-		t.Fatalf("read metadata for table %q: %v", table, err)
-	}
-	if storedName != table {
-		t.Errorf("stored table name = %q, want exact round-trip %q", storedName, table)
-	}
+	assertIntegrationStoredTableName(t, db, schema, table)
 }
 
 func assertSupplementaryIdentifierReplacement(t *testing.T, db *sql.DB, schema, table string) {
@@ -164,19 +190,55 @@ func assertSupplementaryIdentifierReplacement(t *testing.T, db *sql.DB, schema, 
 	)
 
 	wantStoredName := strings.ReplaceAll(table, "\U00010000", "?")
-	var storedName string
-	err := db.QueryRowContext(
+	assertIntegrationStoredTableName(t, db, schema, wantStoredName)
+}
+
+func assertIntegrationStoredTableName(t *testing.T, db *sql.DB, schema, want string) {
+	t.Helper()
+
+	rows, err := db.QueryContext(
 		t.Context(),
-		"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+		"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?",
 		schema,
-		wantStoredName,
-	).Scan(&storedName)
+	)
 	if err != nil {
-		t.Fatalf("read metadata for supplementary table name %q: %v", table, err)
+		t.Fatalf("list table metadata for schema %q: %v", schema, err)
 	}
-	if storedName != wantStoredName {
-		t.Errorf("stored supplementary table name = %q, want replacement %q", storedName, wantStoredName)
+	defer rows.Close()
+
+	var storedNames []string
+	found := false
+	for rows.Next() {
+		var storedName string
+		if err := rows.Scan(&storedName); err != nil {
+			t.Fatalf("scan table metadata for schema %q: %v", schema, err)
+		}
+		storedNames = append(storedNames, storedName)
+		if storedName == want {
+			found = true
+		}
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate table metadata for schema %q: %v", schema, err)
+	}
+	if found {
+		return
+	}
+
+	t.Errorf("stored table names in schema %q = %q, want exact name %q", schema, storedNames, want)
+}
+
+func assertIntegrationDatabaseNameRejected(t *testing.T, db *sql.DB, database string) {
+	t.Helper()
+
+	if _, err := db.ExecContext(t.Context(), "CREATE DATABASE "+sqlutil.QuoteIdentifier(database)); err != nil {
+		return
+	}
+
+	if _, err := db.ExecContext(t.Context(), "DROP DATABASE "+sqlutil.QuoteIdentifier(database)); err != nil {
+		t.Fatalf("drop unexpectedly accepted database %q: %v", database, err)
+	}
+	t.Errorf("database name unexpectedly succeeded: %q", database)
 }
 
 func assertIntegrationSQLRejected(t *testing.T, db *sql.DB, statement string) {

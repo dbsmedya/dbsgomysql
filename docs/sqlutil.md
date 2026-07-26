@@ -78,7 +78,7 @@ It reports these sentinel errors, which callers can inspect with `errors.Is`:
 | `ErrIdentifierEmpty` | the name is empty |
 | `ErrIdentifierNulByte` | the name contains `U+0000` |
 | `ErrIdentifierSupplementary` | the name contains a character above `U+FFFF` |
-| `ErrIdentifierTrailingSpace` | the name ends with an ASCII space |
+| `ErrIdentifierTrailingSpace` | the name ends with TAB–CR (`U+0009`–`U+000D`) or SPACE (`U+0020`) |
 | `ErrIdentifierTooLong` | the name exceeds 64 Unicode characters |
 
 The length is counted in characters, not bytes, so a 64-character multibyte
@@ -90,8 +90,12 @@ first matching error is returned deterministically.
 
 This contract does not cover MySQL identifier categories with other limits,
 such as 256-character aliases or 16-character compound-statement labels.
-Punctuation that is legal inside a quoted identifier is accepted; validation
-does not impose the conservative ASCII allowlist described below.
+It also does not predict storage-engine or filesystem-encoding limits: a
+64-rune CJK table name satisfies MySQL's identifier-character limit but may
+still fail with an environment-dependent InnoDB filename error. Punctuation,
+NBSP (`U+00A0`), `U+3000`, and leading space characters that are legal inside
+a quoted identifier are accepted; validation does not impose the conservative
+ASCII allowlist described below.
 
 ### Conservative allowlist
 
@@ -145,4 +149,7 @@ The two are independent — `pkg/sqlutil` has no knowledge of schemas and
 validations tells you what is safe to act on, `sqlutil` helps you write the
 statement that acts on it.
 
-Both are stdlib-only and driver-agnostic.
+Both library packages are stdlib-only and driver-agnostic. This repository
+declares `github.com/go-sql-driver/mysql` and its indirect dependency for
+integration tests, so those requirements appear in the module graph even
+though neither is reachable from library code.

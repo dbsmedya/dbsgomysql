@@ -31,7 +31,8 @@ the result of `SELECT VERSION()` when refreshing this matrix.
 | BMP Unicode table name such as `表_é` | Exact round-trip | Exact round-trip | Exact round-trip | Accepted |
 | Supplementary character such as `U+10000` in a table name | Statement accepted; stored as `?` | Statement accepted; stored as `?` | Statement accepted; stored as `?` | `ErrIdentifierSupplementary` |
 | `information_schema.TABLES` comparison with the original supplementary-character parameter | Error 3988 | Error 3988 | Error 3988 | Reject before querying |
-| Table name ending in ASCII space | Rejected | Rejected | Rejected | `ErrIdentifierTrailingSpace` |
+| Database, table, or column ending in TAB–CR (`U+0009`–`U+000D`) or SPACE (`U+0020`) | Rejected | Rejected | Rejected | `ErrIdentifierTrailingSpace` |
+| Quoted name with leading SPACE, trailing NBSP, or trailing `U+3000` | Exact round-trip | Exact round-trip | Exact round-trip | Accepted |
 
 No behavior differed between the three tested release lines. The issues below
 are still compatibility concerns because they are surprising, can silently
@@ -76,6 +77,27 @@ This is consistent with the `utf8mb3` metadata behavior already tracked in
 exist.” For `pkg/sqlutil`, the safe boundary is earlier:
 `ValidateIdentifier` rejects the non-round-trippable name before SQL or
 metadata lookup.
+
+### Six trailing ASCII space characters are rejected
+
+MySQL rejected database, table, and column identifiers ending in TAB, LF, VT,
+FF, CR, or SPACE on every tested version. Table names failed with error 1103,
+while column names failed with error 1166. The distinction matters for
+configuration input: a trailing tab or newline is easy to introduce and
+previously received a false all-clear from `ValidateIdentifier`.
+
+The rejection is deliberately narrow. Quoted names with leading SPACE,
+trailing NBSP (`U+00A0`), or trailing ideographic space (`U+3000`) round-tripped
+on the matrix. `ErrIdentifierTrailingSpace` covers only `U+0009`–`U+000D` and
+`U+0020` in the final position.
+
+### Length is not the only server-side limit
+
+The 64-character boundary is a MySQL identifier rule, counted in Unicode
+characters. A 64-rune CJK name therefore passes `ValidateIdentifier`, but an
+InnoDB table can still fail earlier with error 1030 when its encoded filename
+exceeds an environment-dependent limit. The validator intentionally does not
+predict storage-engine or filesystem constraints.
 
 ## Refresh procedure
 

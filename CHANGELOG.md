@@ -21,9 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `validations.md`, `sqlutil.md`, `testing.md`.
 - CI: `ci.yml` runs `make check` on every push and pull request;
   `integration.yml` runs the MySQL 8.0 / 8.4 / 9.7 matrix on a version tag, a
-  manual dispatch, or the `run-integration` label.
+  manual dispatch, or the `run-integration` label. The gate lints the
+  `integration` and `e2e` build-tagged files explicitly.
+- Test-only module requirements: `github.com/go-sql-driver/mysql` v1.10.0 and
+  indirect `filippo.io/edwards25519` v1.2.0. Adding the driver normalized the
+  module directive from Go 1.24 to 1.24.0; the requirements appear in consumer
+  module graphs but remain unreachable from library code.
 - `pkg/sqlutil`: `QuoteIdentifier`, `QuoteQualified`, `IsSimpleIdentifier`,
   `ValidateIdentifier`, and inspectable identifier-validation errors, with
   unit tests and MySQL 8.0 / 8.4 / 9.7 integration pins.
+
+### Fixed
+
+- `ValidateIdentifier` rejects all six trailing ASCII space characters that
+  MySQL rejects, rather than only `U+0020`.
 
 [Unreleased]: https://github.com/dbsmedya/dbsgomysql/commits/main

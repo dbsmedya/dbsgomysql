@@ -49,12 +49,14 @@ type mismatch on every integer column.
 `unsigned` and `zerofill` attributes are **preserved** — they change the value
 range and are therefore real differences, not formatting noise.
 
-## 2. `information_schema` name lookups are case-insensitive 🔜
+## 2. `information_schema` name collations vary by category 🔜
 
 **Affected:** all supported versions.
 
-**Symptom:** string columns in `information_schema` collate under
-`utf8mb3_tolower_ci`. A query like
+**Symptom:** name columns in `information_schema` do not share one collation.
+`COLUMN_NAME` and `CONSTRAINT_NAME` can use `utf8mb3_tolower_ci`, while
+`TABLE_NAME` and `SCHEMA_NAME` use `utf8mb3_bin` on the tested 8.0 / 8.4 / 9.7
+matrix. A query like
 
 ```sql
 SELECT ... FROM information_schema.COLUMNS WHERE COLUMN_NAME = 'log_id'
@@ -63,11 +65,14 @@ SELECT ... FROM information_schema.COLUMNS WHERE COLUMN_NAME = 'log_id'
 also matches a column actually named `LOG_ID`. Code that trusts such a lookup
 to confirm exact naming silently accepts the wrong case, which then fails later
 against a case-sensitive consumer or a differently configured server.
+Conversely, assuming that every metadata name comparison is case-insensitive
+is also wrong.
 
 **Handling:** library-wide rule — **fetch the real name and compare it in Go**.
-Every name returned by the library is the server's exact-case spelling, and
-every equality check on a name happens in Go, never in SQL. This is core
-behavior, not a workaround limited to one check.
+SQL predicates may narrow a metadata result set, but the returned spelling is
+the server's actual value and any acceptance decision is made by exact
+comparison in Go. This is core behavior, not a workaround limited to one
+check.
 
 ## 3. `GRANTEE` does not escape embedded quotes 🔜
 
@@ -158,9 +163,26 @@ MySQL cannot convert the `utf8mb4` parameter to the metadata column's
 **Handling:** `sqlutil.ValidateIdentifier` returns
 `ErrIdentifierSupplementary` before SQL is executed. `QuoteIdentifier` remains
 total and safe for interpolation because validity and quoting safety are
-separate contracts. Pinned by
+separate contracts. The server behavior is pinned by
 [`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go)
-on MySQL 8.0, 8.4, and 9.7.
+on MySQL 8.0, 8.4, and 9.7; the validator result is pinned independently by
+[`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
+
+## 9. Trailing ASCII space characters are rejected ✅
+
+**Affected:** all supported versions.
+
+**Symptom:** MySQL rejects database, table, and column identifiers whose final
+character is TAB, LF, VT, FF, CR (`U+0009`–`U+000D`), or SPACE (`U+0020`).
+Tables fail with error 1103 and columns with error 1166. NBSP (`U+00A0`),
+ideographic space (`U+3000`), and leading SPACE remain legal when quoted.
+
+**Handling:** `sqlutil.ValidateIdentifier` returns
+`ErrIdentifierTrailingSpace` for the six rejected final characters. Server
+behavior is pinned by
+[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go);
+the validator and error precedence are pinned by
+[`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
 
 ---
 

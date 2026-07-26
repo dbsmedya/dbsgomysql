@@ -19,8 +19,9 @@ var (
 	// ErrIdentifierSupplementary means an identifier contains a character above
 	// U+FFFF.
 	ErrIdentifierSupplementary = errors.New("identifier contains a character above U+FFFF")
-	// ErrIdentifierTrailingSpace means an identifier ends with an ASCII space.
-	ErrIdentifierTrailingSpace = errors.New("identifier ends with a space")
+	// ErrIdentifierTrailingSpace means an identifier ends with U+0009 through
+	// U+000D or U+0020.
+	ErrIdentifierTrailingSpace = errors.New("identifier ends with a space character")
 )
 
 // QuoteIdentifier wraps one identifier in backticks, doubling any backticks it
@@ -79,8 +80,9 @@ func IsSimpleIdentifier(name string) bool {
 //
 // It enforces the constraints common to those 64-character identifier
 // categories. Validation is deterministic: invalid UTF-8, empty input, U+0000,
-// supplementary characters, a trailing ASCII space, and length are checked in
-// that order. ValidateIdentifier is safe for concurrent use.
+// supplementary characters, a trailing ASCII space character (U+0009 through
+// U+000D or U+0020), and length are checked in that order. ValidateIdentifier
+// is safe for concurrent use.
 func ValidateIdentifier(name string) error {
 	if !utf8.ValidString(name) {
 		return ErrIdentifierInvalidUTF8
@@ -96,7 +98,8 @@ func ValidateIdentifier(name string) error {
 			return ErrIdentifierSupplementary
 		}
 	}
-	if strings.HasSuffix(name, " ") {
+	last, _ := utf8.DecodeLastRuneInString(name)
+	if last == ' ' || (last >= '\t' && last <= '\r') {
 		return ErrIdentifierTrailingSpace
 	}
 	if utf8.RuneCountInString(name) > 64 {
