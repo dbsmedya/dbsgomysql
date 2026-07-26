@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pkg/validations`: the check catalog — stable check identifiers, `CheckInfo`,
+  `Catalog()`, and `LookupCheck`. The catalog covers the whole published check
+  vocabulary, so the six checks reserved for a later slice appear too, carrying
+  `StatusDeferred` and the phase that delivers them.
+
 ### Changed
 
 - Clarified the planned `pkg/validations` contract: checks are pure functions
