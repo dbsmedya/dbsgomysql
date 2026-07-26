@@ -42,7 +42,7 @@ help: ## Show available targets
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: tools-check fmt-check vet vet-tags lint test tidy-check deps-check build ## Full verification gate (AGENTS.md)
+check: tools-check fmt-check vet vet-tags lint lint-tags test tidy-check deps-check build ## Full verification gate (AGENTS.md)
 	@echo ""
 	@echo "make check: PASS"
 
@@ -121,6 +121,18 @@ lint: ## Run golangci-lint
 		$(GOLANGCI) run; \
 	else \
 		echo "lint: skipped (no Go packages yet)"; \
+	fi
+
+# Like vet, golangci-lint ignores build-tagged files unless the tags are named.
+# Keep the passes separate so helpers that may eventually exist in both layers
+# do not become duplicate declarations.
+.PHONY: lint-tags
+lint-tags: ## Lint the build-tagged test layers (integration, e2e)
+	@if $(HAVE_PKGS); then \
+		$(GOLANGCI) run --build-tags=integration && \
+		$(GOLANGCI) run --build-tags=e2e; \
+	else \
+		echo "lint-tags: skipped (no Go packages yet)"; \
 	fi
 
 # ---------------------------------------------------------------------------

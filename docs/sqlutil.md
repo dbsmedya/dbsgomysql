@@ -1,10 +1,5 @@
 # pkg/sqlutil — Identifier Safety
 
-> **Status: design phase.** The package is not implemented yet. This document
-> describes the intended shape and the guarantees it will carry. Signatures are
-> indicative and will be confirmed against the released API. Track progress in
-> [CHANGELOG.md](../CHANGELOG.md).
-
 `pkg/sqlutil` makes MySQL identifiers safe to interpolate into SQL.
 
 It is small on purpose and public on purpose. Values can be bound as
@@ -24,11 +19,15 @@ exists so that does not happen.
 import "github.com/dbsmedya/dbsgomysql/pkg/sqlutil"
 
 sqlutil.QuoteIdentifier("payment")       // `payment`
-sqlutil.QuoteIdentifier("wei``rd")       // `wei````rd`   — backticks doubled
+sqlutil.QuoteIdentifier("wei`rd")        // `wei``rd`   — backticks doubled
+sqlutil.QuoteIdentifier("")              // ``
 ```
 
 Backtick quoting is correct under both the default SQL mode and `ANSI_QUOTES`,
-so no mode detection is required.
+so no mode detection is required. `QuoteIdentifier` is total: it never fails
+or rejects input. The empty output shown above cannot escape its identifier
+context, but MySQL will reject it as an invalid name. Use `ValidateIdentifier`
+at trust boundaries to distinguish server validity from interpolation safety.
 
 ### Qualified names
 
@@ -49,7 +48,56 @@ This distinction is the most common way identifier quoting is misused, and
 hand-joining the parts at every call site is how the mistake spreads. Reach for
 `QuoteQualified` whenever more than one part is involved.
 
+With no parts, `QuoteQualified()` returns `""`. Empty parts are not discarded:
+
+```go
+sqlutil.QuoteQualified("", "payment") // ``.`payment`
+```
+
+Silently dropping an empty schema would make the statement use the connection's
+default schema and could address the wrong object.
+
 ## Validation
+
+### MySQL validity
+
+`ValidateIdentifier` checks the rules common to the 64-character database,
+table, and column identifiers this package is intended to interpolate:
+
+```go
+if err := sqlutil.ValidateIdentifier(configuredTable); err != nil {
+    return fmt.Errorf("table name %q: %w", configuredTable, err)
+}
+```
+
+It reports these sentinel errors, which callers can inspect with `errors.Is`:
+
+| Error | Condition |
+|---|---|
+| `ErrIdentifierInvalidUTF8` | the string is not valid UTF-8 |
+| `ErrIdentifierEmpty` | the name is empty |
+| `ErrIdentifierNulByte` | the name contains `U+0000` |
+| `ErrIdentifierSupplementary` | the name contains a character above `U+FFFF` |
+| `ErrIdentifierTrailingSpace` | the name ends with TAB–CR (`U+0009`–`U+000D`) or SPACE (`U+0020`) |
+| `ErrIdentifierTooLong` | the name exceeds 64 Unicode characters |
+
+The length is counted in characters, not bytes, so a 64-character multibyte
+BMP name is accepted. MySQL 8.0, 8.4, and 9.7 accept a statement containing a
+supplementary character above `U+FFFF`, but silently store that character as
+`?`; the name therefore does not round-trip and validation rejects it.
+Validation uses the table order above; when a name has several defects, the
+first matching error is returned deterministically.
+
+This contract does not cover MySQL identifier categories with other limits,
+such as 256-character aliases or 16-character compound-statement labels.
+It also does not predict storage-engine or filesystem-encoding limits: a
+64-rune CJK table name satisfies MySQL's identifier-character limit but may
+still fail with an environment-dependent InnoDB filename error. Punctuation,
+NBSP (`U+00A0`), `U+3000`, and leading space characters that are legal inside
+a quoted identifier are accepted; validation does not impose the conservative
+ASCII allowlist described below.
+
+### Conservative allowlist
 
 ```go
 sqlutil.IsSimpleIdentifier("order_items")   // true
@@ -70,19 +118,29 @@ would accept an identifier — it will produce false negatives.
 
 ## Threat model
 
-**What this package does:** makes an identifier safe to interpolate into a
-statement, so a hostile or merely awkward table name cannot terminate the
-quoting context and inject SQL.
+Consumers construct trusted statement templates. Configuration or another
+untrusted input may supply schema, table, and column names and bound values,
+but it is not accepted as an arbitrary SQL program.
+
+**What this package does:** validates identifier parts at the trust boundary
+and makes each part safe to interpolate into a trusted statement template, so
+a hostile or merely awkward name cannot terminate the quoting context and
+inject SQL.
 
 **What it does not do:**
 
 - **It is not a substitute for bound parameters.** Values belong in
   placeholders. `WHERE id = ?`, never `WHERE id = ` + quoted input.
+- **It does not parse, sanitize, or classify arbitrary query text.** The caller
+  owns the trusted SQL template.
 - **It authorizes nothing.** Quoting a name says nothing about whether the
   connected account may read or write that object. For privilege facts, use
   [`pkg/validations`](validations.md).
 - **It does not check existence.** A well-quoted identifier for a table that
   does not exist is still well-quoted.
+- **It does not manage execution controls.** Credentials, least-privilege
+  policy, contexts, timeouts, and transactions remain the consumer's
+  responsibility.
 
 ## Relationship to pkg/validations
 
@@ -91,4 +149,7 @@ The two are independent — `pkg/sqlutil` has no knowledge of schemas and
 validations tells you what is safe to act on, `sqlutil` helps you write the
 statement that acts on it.
 
-Both are stdlib-only and driver-agnostic.
+Both library packages are stdlib-only and driver-agnostic. This repository
+declares `github.com/go-sql-driver/mysql` and its indirect dependency for
+integration tests, so those requirements appear in the module graph even
+though neither is reachable from library code.

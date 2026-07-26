@@ -8,13 +8,17 @@ This document is the registry of MySQL behaviors that differ across versions or
 that surprise callers of `information_schema`. Each entry states the affected
 versions, the observable symptom, and how the library handles it.
 
+Most entries here describe behavior MySQL exhibits *identically* on every
+supported version. Where a behavior genuinely differs between versions, it is
+also listed in the
+[version divergence register](mysql-version-specific-compatibility.md), which
+records nothing else and is currently empty.
+
 > **Status legend** — ✅ handled and pinned by a test · 🔜 registered, handling
 > lands with the package that needs it · 👁 operator guidance only, no library
 > code involved.
 >
-> The library is in its design phase, so entries below are 🔜 or 👁. Each
-> becomes ✅ with a linked pinning test as `pkg/validations` and
-> `pkg/replication` land.
+> An entry becomes ✅ when its handling lands with a linked pinning test.
 
 ## Strategy
 
@@ -48,12 +52,14 @@ type mismatch on every integer column.
 `unsigned` and `zerofill` attributes are **preserved** — they change the value
 range and are therefore real differences, not formatting noise.
 
-## 2. `information_schema` name lookups are case-insensitive 🔜
+## 2. `information_schema` name collations vary by category 🔜
 
 **Affected:** all supported versions.
 
-**Symptom:** string columns in `information_schema` collate under
-`utf8mb3_tolower_ci`. A query like
+**Symptom:** name columns in `information_schema` do not share one collation.
+`COLUMN_NAME` and `CONSTRAINT_NAME` can use `utf8mb3_tolower_ci`, while
+`TABLE_NAME` and `SCHEMA_NAME` use `utf8mb3_bin` on the tested 8.0 / 8.4 / 9.7
+matrix. A query like
 
 ```sql
 SELECT ... FROM information_schema.COLUMNS WHERE COLUMN_NAME = 'log_id'
@@ -62,11 +68,14 @@ SELECT ... FROM information_schema.COLUMNS WHERE COLUMN_NAME = 'log_id'
 also matches a column actually named `LOG_ID`. Code that trusts such a lookup
 to confirm exact naming silently accepts the wrong case, which then fails later
 against a case-sensitive consumer or a differently configured server.
+Conversely, assuming that every metadata name comparison is case-insensitive
+is also wrong.
 
 **Handling:** library-wide rule — **fetch the real name and compare it in Go**.
-Every name returned by the library is the server's exact-case spelling, and
-every equality check on a name happens in Go, never in SQL. This is core
-behavior, not a workaround limited to one check.
+SQL predicates may narrow a metadata result set, but the returned spelling is
+the server's actual value and any acceptance decision is made by exact
+comparison in Go. This is core behavior, not a workaround limited to one
+check.
 
 ## 3. `GRANTEE` does not escape embedded quotes 🔜
 
@@ -139,6 +148,54 @@ after an upgrade to 8.4.
 `*sql.DB` and never manages connections or authentication. The entry exists
 here as operator guidance: migrate affected accounts to
 `caching_sha2_password` before upgrading.
+
+## 8. Supplementary identifier characters are replaced ✅
+
+**Affected:** all supported versions.
+
+**Symptom:** MySQL accepts a quoted identifier containing a Unicode character
+above `U+FFFF`, but does not preserve it. For example, a table requested as
+`supp_𐀀` is stored and reported by `information_schema` as `supp_?`. Reusing
+the original SQL text can appear to work because the same replacement happens
+again, but the configured name does not round-trip and can collide with a
+literal question mark. Looking the original name up afterwards does not simply
+fail to match: comparing `information_schema.TABLES.TABLE_NAME` against the
+original supplementary-character parameter **raises error 3988**
+(`ER_CANNOT_CONVERT_STRING`), because MySQL cannot convert the `utf8mb4`
+parameter into the metadata column's `utf8mb3` collation. Code must not read
+that error as "the table does not exist". The collation named in the message
+text follows the connection's collation, so the error *number* is the stable
+part.
+
+**Handling:** `sqlutil.ValidateIdentifier` returns
+`ErrIdentifierSupplementary` before SQL is executed, which keeps callers away
+from both the silent replacement and the metadata error. `QuoteIdentifier`
+remains total and safe for interpolation because validity and quoting safety
+are separate contracts. The replacement and the 3988 lookup failure are both
+pinned by
+[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go)
+on MySQL 8.0, 8.4, and 9.7; the validator result is pinned independently by
+[`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
+
+## 9. Trailing ASCII space characters are rejected ✅
+
+**Affected:** all supported versions.
+
+**Symptom:** MySQL rejects database, table, and column identifiers whose final
+character is TAB, LF, VT, FF, CR (`U+0009`–`U+000D`), or SPACE (`U+0020`).
+Databases fail with error 1102, tables with 1103, and columns with 1166.
+Position is what decides it: the same six characters remain legal in the
+leading position, as do NBSP (`U+00A0`) and ideographic space (`U+3000`)
+anywhere.
+
+**Handling:** `sqlutil.ValidateIdentifier` returns
+`ErrIdentifierTrailingSpace` for the six rejected final characters. Server
+behavior is pinned by
+[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go),
+which asserts the specific error number for each of the three object kinds
+rather than merely that the statement failed; the validator and error
+precedence are pinned by
+[`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
 
 ---
 
