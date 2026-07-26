@@ -9,7 +9,7 @@ that surprise callers of `information_schema`. Each entry states the affected
 versions, the observable symptom, and how the library handles it.
 The exact server versions and results observed during `pkg/sqlutil`
 implementation are retained in the
-[development compatibility matrix](mysql-version-spesific-compatibility.md).
+[development compatibility matrix](mysql-version-specific-compatibility.md).
 
 > **Status legend** — ✅ handled and pinned by a test · 🔜 registered, handling
 > lands with the package that needs it · 👁 operator guidance only, no library
@@ -174,8 +174,9 @@ on MySQL 8.0, 8.4, and 9.7; the validator result is pinned independently by
 
 **Symptom:** MySQL rejects database, table, and column identifiers whose final
 character is TAB, LF, VT, FF, CR (`U+0009`–`U+000D`), or SPACE (`U+0020`).
-Tables fail with error 1103 and columns with error 1166. NBSP (`U+00A0`),
-ideographic space (`U+3000`), and leading SPACE remain legal when quoted.
+Tables fail with error 1103 and columns with error 1166. Position is what
+decides it: the same six characters remain legal in the leading position, as do
+NBSP (`U+00A0`) and ideographic space (`U+3000`) anywhere.
 
 **Handling:** `sqlutil.ValidateIdentifier` returns
 `ErrIdentifierTrailingSpace` for the six rejected final characters. Server

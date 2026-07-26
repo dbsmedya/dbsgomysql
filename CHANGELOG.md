@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.editorconfig`, `.gitignore`, MIT `LICENSE`.
 - `AGENTS.md`, the operating contract, imported by `CLAUDE.md`.
 - `docs/`: `COMPAT.md` (MySQL version-quirk registry),
-  `mysql-version-spesific-compatibility.md` (observed compatibility matrix),
+  `mysql-version-specific-compatibility.md` (observed compatibility matrix),
   `validations.md`, `sqlutil.md`, `testing.md`.
 - CI: `ci.yml` runs `make check` on every push and pull request;
   `integration.yml` runs the MySQL 8.0 / 8.4 / 9.7 matrix on a version tag, a
@@ -29,11 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   module graphs but remain unreachable from library code.
 - `pkg/sqlutil`: `QuoteIdentifier`, `QuoteQualified`, `IsSimpleIdentifier`,
   `ValidateIdentifier`, and inspectable identifier-validation errors, with
-  unit tests and MySQL 8.0 / 8.4 / 9.7 integration pins.
-
-### Fixed
-
-- `ValidateIdentifier` rejects all six trailing ASCII space characters that
-  MySQL rejects, rather than only `U+0020`.
+  unit tests and MySQL 8.0 / 8.4 / 9.7 integration pins. `ValidateIdentifier`
+  rejects every trailing space character MySQL rejects — `U+0009` through
+  `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
+  characters, which MySQL preserves.
 
 [Unreleased]: https://github.com/dbsmedya/dbsgomysql/commits/main

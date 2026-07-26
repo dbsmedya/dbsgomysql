@@ -52,9 +52,8 @@ func TestIdentifierCharacterSetIntegration(t *testing.T) {
 		id   int
 	}{
 		{name: "表_é", id: 7},
-		{name: " leading_space", id: 8},
-		{name: "trailing_nbsp\u00A0", id: 9},
-		{name: "trailing_ideographic_space\u3000", id: 10},
+		{name: "trailing_nbsp\u00A0", id: 8},
+		{name: "trailing_ideographic_space\u3000", id: 9},
 	}
 	for _, valid := range validNames {
 		assertIntegrationTableRoundTrip(t, db, schema, valid.name, valid.id)
@@ -62,7 +61,11 @@ func TestIdentifierCharacterSetIntegration(t *testing.T) {
 
 	assertSupplementaryIdentifierReplacement(t, db, schema, supplementaryName)
 
-	trailingSpaceCharacters := []struct {
+	// MySQL rejects each of these six characters in the final position of a
+	// database, table, or column name but accepts every one of them in the
+	// leading position. That asymmetry is why ValidateIdentifier inspects only
+	// the last rune, so both halves are pinned against the matrix.
+	spaceCharacters := []struct {
 		name      string
 		character string
 	}{
@@ -73,7 +76,11 @@ func TestIdentifierCharacterSetIntegration(t *testing.T) {
 		{name: "cr", character: "\r"},
 		{name: "space", character: " "},
 	}
-	for _, trailing := range trailingSpaceCharacters {
+	for i, leading := range spaceCharacters {
+		assertIntegrationTableRoundTrip(t, db, schema, leading.character+"leading_"+leading.name, 20+i)
+	}
+
+	for _, trailing := range spaceCharacters {
 		t.Run(trailing.name, func(t *testing.T) {
 			assertIntegrationDatabaseNameRejected(
 				t,
