@@ -2,8 +2,8 @@
 
 **A reference library of MySQL schema facts and validations for Go.**
 
-Module: `github.com/dbsmedya/dbsgomysql` · Go 1.24+ · Status: **design phase**
-(no code yet) · Version: see [CHANGELOG.md](CHANGELOG.md)
+Module: `github.com/dbsmedya/dbsgomysql` · Go 1.24+ · Status: **phase 1
+implementation** · Version: see [CHANGELOG.md](CHANGELOG.md)
 
 `dbsgomysql` gives Go projects a single, well-tested answer to questions like
 *"does this table have a single, composite, or no primary key?"*, *"which
@@ -39,8 +39,8 @@ go get github.com/dbsmedya/dbsgomysql
 
 ## Status
 
-First planned area: `pkg/validations`, alongside `pkg/sqlutil`. Later:
-`pkg/replication`.
+Available now: `pkg/sqlutil` for MySQL identifier validation and quoting.
+Planned next: `pkg/validations`, followed later by `pkg/replication`.
 
 Planned consumers: [goarchive](https://github.com/dbsmedya/goarchive), gocdc.
 

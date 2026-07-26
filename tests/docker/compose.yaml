@@ -1,0 +1,36 @@
+services:
+  mysql80:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3380:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  mysql84:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3384:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  mysql97:
+    image: mysql:9.7
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3397:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24

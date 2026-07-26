@@ -12,9 +12,7 @@ versions, the observable symptom, and how the library handles it.
 > lands with the package that needs it · 👁 operator guidance only, no library
 > code involved.
 >
-> The library is in its design phase, so entries below are 🔜 or 👁. Each
-> becomes ✅ with a linked pinning test as `pkg/validations` and
-> `pkg/replication` land.
+> An entry becomes ✅ when its handling lands with a linked pinning test.
 
 ## Strategy
 
@@ -139,6 +137,24 @@ after an upgrade to 8.4.
 `*sql.DB` and never manages connections or authentication. The entry exists
 here as operator guidance: migrate affected accounts to
 `caching_sha2_password` before upgrading.
+
+## 8. Supplementary identifier characters are replaced ✅
+
+**Affected:** all supported versions.
+
+**Symptom:** MySQL accepts a quoted identifier containing a Unicode character
+above `U+FFFF`, but does not preserve it. For example, a table requested as
+`supp_𐀀` is stored and reported by `information_schema` as `supp_?`. Reusing
+the original SQL text can appear to work because the same replacement happens
+again, but the configured name does not round-trip and can collide with a
+literal question mark.
+
+**Handling:** `sqlutil.ValidateIdentifier` returns
+`ErrIdentifierSupplementary` before SQL is executed. `QuoteIdentifier` remains
+total and safe for interpolation because validity and quoting safety are
+separate contracts. Pinned by
+[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go)
+on MySQL 8.0, 8.4, and 9.7.
 
 ---
 

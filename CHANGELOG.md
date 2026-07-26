@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: `ci.yml` runs `make check` on every push and pull request;
   `integration.yml` runs the MySQL 8.0 / 8.4 / 9.7 matrix on a version tag, a
   manual dispatch, or the `run-integration` label.
-
-No library code yet.
+- `pkg/sqlutil`: `QuoteIdentifier`, `QuoteQualified`, `IsSimpleIdentifier`,
+  `ValidateIdentifier`, and inspectable identifier-validation errors, with
+  unit tests and MySQL 8.0 / 8.4 / 9.7 integration pins.
 
 [Unreleased]: https://github.com/dbsmedya/dbsgomysql/commits/main
