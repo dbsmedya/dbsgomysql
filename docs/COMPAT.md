@@ -155,15 +155,21 @@ above `U+FFFF`, but does not preserve it. For example, a table requested as
 `supp_𐀀` is stored and reported by `information_schema` as `supp_?`. Reusing
 the original SQL text can appear to work because the same replacement happens
 again, but the configured name does not round-trip and can collide with a
-literal question mark. Comparing `information_schema.TABLES.TABLE_NAME` with
-the original supplementary-character parameter fails with error 3988 because
-MySQL cannot convert the `utf8mb4` parameter to the metadata column's
-`utf8mb3` collation.
+literal question mark. Looking the original name up afterwards does not simply
+fail to match: comparing `information_schema.TABLES.TABLE_NAME` against the
+original supplementary-character parameter **raises error 3988**
+(`ER_CANNOT_CONVERT_STRING`), because MySQL cannot convert the `utf8mb4`
+parameter into the metadata column's `utf8mb3` collation. Code must not read
+that error as "the table does not exist". The collation named in the message
+text follows the connection's collation, so the error *number* is the stable
+part.
 
 **Handling:** `sqlutil.ValidateIdentifier` returns
-`ErrIdentifierSupplementary` before SQL is executed. `QuoteIdentifier` remains
-total and safe for interpolation because validity and quoting safety are
-separate contracts. The server behavior is pinned by
+`ErrIdentifierSupplementary` before SQL is executed, which keeps callers away
+from both the silent replacement and the metadata error. `QuoteIdentifier`
+remains total and safe for interpolation because validity and quoting safety
+are separate contracts. The replacement and the 3988 lookup failure are both
+pinned by
 [`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go)
 on MySQL 8.0, 8.4, and 9.7; the validator result is pinned independently by
 [`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
@@ -174,15 +180,18 @@ on MySQL 8.0, 8.4, and 9.7; the validator result is pinned independently by
 
 **Symptom:** MySQL rejects database, table, and column identifiers whose final
 character is TAB, LF, VT, FF, CR (`U+0009`–`U+000D`), or SPACE (`U+0020`).
-Tables fail with error 1103 and columns with error 1166. Position is what
-decides it: the same six characters remain legal in the leading position, as do
-NBSP (`U+00A0`) and ideographic space (`U+3000`) anywhere.
+Databases fail with error 1102, tables with 1103, and columns with 1166.
+Position is what decides it: the same six characters remain legal in the
+leading position, as do NBSP (`U+00A0`) and ideographic space (`U+3000`)
+anywhere.
 
 **Handling:** `sqlutil.ValidateIdentifier` returns
 `ErrIdentifierTrailingSpace` for the six rejected final characters. Server
 behavior is pinned by
-[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go);
-the validator and error precedence are pinned by
+[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go),
+which asserts the specific error number for each of the three object kinds
+rather than merely that the statement failed; the validator and error
+precedence are pinned by
 [`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
 
 ---

@@ -7,14 +7,28 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 
 	"github.com/dbsmedya/dbsgomysql/pkg/sqlutil"
+)
+
+// Server error numbers these tests pin. Asserting the number rather than
+// "some error occurred" is what makes the docs/COMPAT.md entries evidence: a
+// statement that failed for an unrelated reason would otherwise satisfy the
+// assertion and silently unpin the behavior.
+const (
+	erWrongDBName     = 1102 // ER_WRONG_DB_NAME
+	erTooLongIdent    = 1059 // ER_TOO_LONG_IDENT
+	erWrongTableName  = 1103 // ER_WRONG_TABLE_NAME
+	erWrongColumnName = 1166 // ER_WRONG_COLUMN_NAME
+	erCannotConvert   = 3988 // ER_CANNOT_CONVERT_STRING
 )
 
 func TestQuoteIdentifierRoundTripIntegration(t *testing.T) {
@@ -37,6 +51,7 @@ func TestIdentifierLengthBoundaryIntegration(t *testing.T) {
 	assertIntegrationSQLRejected(
 		t,
 		db,
+		erTooLongIdent,
 		"CREATE TABLE "+sqlutil.QuoteQualified(schema, name65)+" (id INT)",
 	)
 }
@@ -85,16 +100,19 @@ func TestIdentifierCharacterSetIntegration(t *testing.T) {
 			assertIntegrationDatabaseNameRejected(
 				t,
 				db,
+				erWrongDBName,
 				schema+"_database_"+trailing.name+trailing.character,
 			)
 			assertIntegrationSQLRejected(
 				t,
 				db,
+				erWrongTableName,
 				"CREATE TABLE "+sqlutil.QuoteQualified(schema, "table"+trailing.character)+" (id INT)",
 			)
 			assertIntegrationSQLRejected(
 				t,
 				db,
+				erWrongColumnName,
 				"CREATE TABLE "+sqlutil.QuoteQualified(schema, "column_probe_"+trailing.name)+
 					" ("+sqlutil.QuoteIdentifier("column"+trailing.character)+" INT)",
 			)
@@ -198,6 +216,29 @@ func assertSupplementaryIdentifierReplacement(t *testing.T, db *sql.DB, schema, 
 
 	wantStoredName := strings.ReplaceAll(table, "\U00010000", "?")
 	assertIntegrationStoredTableName(t, db, schema, wantStoredName)
+
+	// Looking the original name up in metadata does not merely fail to match:
+	// the utf8mb4 parameter cannot be converted into the utf8mb3 collation of
+	// the metadata column, so the server raises an error instead of reporting
+	// no rows. Callers must not read that error as "the table does not exist".
+	var storedName string
+	err := db.QueryRowContext(
+		t.Context(),
+		"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+		schema,
+		table,
+	).Scan(&storedName)
+	if err == nil {
+		t.Errorf("metadata lookup of the original name %q unexpectedly succeeded", table)
+
+		return
+	}
+	assertIntegrationServerErrorNumber(
+		t,
+		err,
+		erCannotConvert,
+		"metadata lookup of original name "+strconv.Quote(table),
+	)
 }
 
 func assertIntegrationStoredTableName(t *testing.T, db *sql.DB, schema, want string) {
@@ -235,10 +276,13 @@ func assertIntegrationStoredTableName(t *testing.T, db *sql.DB, schema, want str
 	t.Errorf("stored table names in schema %q = %q, want exact name %q", schema, storedNames, want)
 }
 
-func assertIntegrationDatabaseNameRejected(t *testing.T, db *sql.DB, database string) {
+func assertIntegrationDatabaseNameRejected(t *testing.T, db *sql.DB, wantNumber uint16, database string) {
 	t.Helper()
 
-	if _, err := db.ExecContext(t.Context(), "CREATE DATABASE "+sqlutil.QuoteIdentifier(database)); err != nil {
+	_, err := db.ExecContext(t.Context(), "CREATE DATABASE "+sqlutil.QuoteIdentifier(database))
+	if err != nil {
+		assertIntegrationServerErrorNumber(t, err, wantNumber, "create database "+strconv.Quote(database))
+
 		return
 	}
 
@@ -248,10 +292,35 @@ func assertIntegrationDatabaseNameRejected(t *testing.T, db *sql.DB, database st
 	t.Errorf("database name unexpectedly succeeded: %q", database)
 }
 
-func assertIntegrationSQLRejected(t *testing.T, db *sql.DB, statement string) {
+func assertIntegrationSQLRejected(t *testing.T, db *sql.DB, wantNumber uint16, statement string) {
 	t.Helper()
 
-	if _, err := db.ExecContext(t.Context(), statement); err == nil {
+	_, err := db.ExecContext(t.Context(), statement)
+	if err == nil {
 		t.Errorf("statement unexpectedly succeeded: %s", statement)
+
+		return
+	}
+
+	assertIntegrationServerErrorNumber(t, err, wantNumber, statement)
+}
+
+// assertIntegrationServerErrorNumber requires err to be a MySQL server error
+// carrying wantNumber. A driver-level or connection error, or a server error
+// raised for some other reason, fails the assertion instead of passing it.
+func assertIntegrationServerErrorNumber(t *testing.T, err error, wantNumber uint16, operation string) {
+	t.Helper()
+
+	var serverErr *mysql.MySQLError
+	if !errors.As(err, &serverErr) {
+		t.Errorf("%s: error %v is not a MySQL server error, want number %d", operation, err, wantNumber)
+
+		return
+	}
+	if serverErr.Number != wantNumber {
+		t.Errorf(
+			"%s: server error %d (%s), want number %d",
+			operation, serverErr.Number, serverErr.Message, wantNumber,
+		)
 	}
 }

@@ -27,11 +27,11 @@ the result of `SELECT VERSION()` when refreshing this matrix.
 |---|---|---|---|---|
 | Embedded backtick in a quoted table name | Exact round-trip | Exact round-trip | Exact round-trip | `QuoteIdentifier` doubles backticks |
 | 64-character table name | Accepted | Accepted | Accepted | `ValidateIdentifier` accepts it |
-| 65-character table name | Rejected | Rejected | Rejected | `ErrIdentifierTooLong` |
+| 65-character table name | Error 1059 | Error 1059 | Error 1059 | `ErrIdentifierTooLong` |
 | BMP Unicode table name such as `表_é` | Exact round-trip | Exact round-trip | Exact round-trip | Accepted |
 | Supplementary character such as `U+10000` in a table name | Statement accepted; stored as `?` | Statement accepted; stored as `?` | Statement accepted; stored as `?` | `ErrIdentifierSupplementary` |
 | `information_schema.TABLES` comparison with the original supplementary-character parameter | Error 3988 | Error 3988 | Error 3988 | Reject before querying |
-| Database, table, or column ending in TAB–CR (`U+0009`–`U+000D`) or SPACE (`U+0020`) | Rejected | Rejected | Rejected | `ErrIdentifierTrailingSpace` |
+| Database, table, or column ending in TAB–CR (`U+0009`–`U+000D`) or SPACE (`U+0020`) | Error 1102 / 1103 / 1166 | Error 1102 / 1103 / 1166 | Error 1102 / 1103 / 1166 | `ErrIdentifierTrailingSpace` |
 | Quoted name with any leading space character (`U+0009`–`U+000D`, `U+0020`), trailing NBSP, or trailing `U+3000` | Exact round-trip | Exact round-trip | Exact round-trip | Accepted |
 
 No behavior differed between the three tested release lines. The issues below
@@ -72,6 +72,12 @@ Error 3988 (HY000): Conversion from collation utf8mb4_general_ci
 into utf8mb3_bin impossible for parameter
 ```
 
+The collation named in that message is the connection's, not a fixed property
+of the server — a session negotiating `utf8mb4_0900_ai_ci` sees that name
+instead. Error number 3988 is the stable part, and it is what
+[`TestIdentifierCharacterSetIntegration`](../pkg/sqlutil/sqlutil_integration_test.go)
+asserts on all three versions.
+
 This is consistent with the `utf8mb3` metadata behavior already tracked in
 [`COMPAT.md`](COMPAT.md). Code must not interpret this error as “table does not
 exist.” For `pkg/sqlutil`, the safe boundary is earlier:
@@ -81,10 +87,13 @@ metadata lookup.
 ### Six trailing ASCII space characters are rejected
 
 MySQL rejected database, table, and column identifiers ending in TAB, LF, VT,
-FF, CR, or SPACE on every tested version. Table names failed with error 1103,
-while column names failed with error 1166. The distinction matters for
-configuration input: a trailing tab or newline is easy to introduce and
-previously received a false all-clear from `ValidateIdentifier`.
+FF, CR, or SPACE on every tested version. Database names failed with error
+1102, table names with 1103, and column names with 1166; the integration test
+asserts those numbers rather than merely that the statement failed, so a
+statement that broke for an unrelated reason cannot satisfy it. The
+distinction matters for configuration input: a trailing tab or newline is easy
+to introduce and previously received a false all-clear from
+`ValidateIdentifier`.
 
 The rejection is deliberately narrow, and position is what decides it. Every
 one of the six characters round-tripped on the matrix in the *leading*
