@@ -1,0 +1,10 @@
+[
+  {
+    "check": "INVISIBLE_COLUMNS",
+    "tables": ["invisible_columns"],
+    "facts": {
+      "table": "invisible_columns",
+      "columns": ["plain_secret", "generated_secret"]
+    }
+  }
+]

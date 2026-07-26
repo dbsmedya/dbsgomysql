@@ -1,0 +1,7 @@
+[
+  {
+    "check": "TABLES_EXIST",
+    "tables": ["missing_table"],
+    "facts": null
+  }
+]

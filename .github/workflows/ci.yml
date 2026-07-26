@@ -1,8 +1,8 @@
 # Per-commit gate. Runs the same `make check` a developer runs locally, so a
 # green CI and a green workstation mean the same thing.
 #
-# Requires no database: DB-backed tests sit behind the `integration` and `e2e`
-# build tags and are exercised by integration.yml.
+# The check job requires no database. A separate MySQL 8.4 smoke job runs every
+# shipped fact and check once against the repository-owned fixture.
 
 name: CI
 
@@ -44,3 +44,37 @@ jobs:
       # CI mean the same thing.
       - name: make check
         run: make check
+
+  smoke:
+    name: smoke
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    env:
+      DBSGOMYSQL_TEST_DSN: "root:root@tcp(127.0.0.1:3306)/"
+      DBSGOMYSQL_TEST_MYSQL_VERSION: "8.4"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Smoke tests
+        run: make test-smoke

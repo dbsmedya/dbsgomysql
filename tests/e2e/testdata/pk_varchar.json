@@ -1,0 +1,14 @@
+[
+  {
+    "check": "PK_INTEGER_TYPE",
+    "tables": ["pk_varchar"],
+    "facts": {
+      "table": "pk_varchar",
+      "kind": 2,
+      "columns": ["id"],
+      "data_type": "varchar",
+      "is_integer": false,
+      "unsigned": false
+    }
+  }
+]

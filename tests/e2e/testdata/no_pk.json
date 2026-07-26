@@ -1,0 +1,14 @@
+[
+  {
+    "check": "PK_EXISTS",
+    "tables": ["no_pk"],
+    "facts": {
+      "table": "no_pk",
+      "kind": 1,
+      "columns": null,
+      "data_type": "",
+      "is_integer": false,
+      "unsigned": false
+    }
+  }
+]

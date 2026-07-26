@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pkg/validations`: the check catalog — stable check identifiers, `CheckInfo`,
+  `Catalog()`, and `LookupCheck`. The catalog covers the whole published check
+  vocabulary, so the six checks reserved for a later slice appear too, carrying
+  `StatusDeferred` and the phase that delivers them.
+- `pkg/validations`: `PKKind` and `TriggerEvent`. Both reserve their zero value
+  for "not populated", so an unset value is detectable rather than silently
+  meaning `PKNone` or `INSERT`. `TriggerEvent.String` returns the event as
+  `information_schema.TRIGGERS.EVENT_MANIPULATION` spells it.
+- `pkg/validations`: immutable `Inspector`, inspectable `ObjectError`, and the
+  `Tables`, `PrimaryKeys`, `InvisibleColumns`, and `Triggers` facts. Facts issue
+  one metadata query per call, preserve requested table order and exact server
+  spelling, and distinguish inspection failures from missing or invisible
+  objects.
+- Nine pure checks over those facts: `TABLES_EXIST`, `STORAGE_ENGINE`,
+  `INVISIBLE_COLUMNS`, `TRIGGERS_PRESENT`, `PK_EXISTS`, `PK_SINGLE_COLUMN`,
+  `PK_MATCHES_EXPECTED`, `PK_NAME_CASE`, and `PK_INTEGER_TYPE`.
+- Repository-owned MySQL fixture, unit and smoke coverage, 8.0 / 8.4 / 9.7
+  integration pins, and nine E2E golden-finding scenarios. The per-commit
+  workflow now runs the MySQL 8.4 smoke suite alongside `make check`.
+- `docs/COMPAT.md` entry 10: `information_schema.TRIGGERS.ACTION_TIMING` is an
+  `ENUM`, so MySQL orders it by declaration index and `Inspector.Triggers`
+  reports BEFORE ahead of AFTER. The reliance is now recorded and pinned by
+  `TestTriggerTimingEnumOrderIntegration`.
+
+The new `pkg/validations` API is part of the `v0.x` line and may change before
+`v1.0.0`.
+
+### Changed
+
+- Clarified the planned `pkg/validations` contract: checks are pure functions
+  over facts, and findings carry no severity; consumers own policy. A check
+  returns `[]Finding` and no error — it inspects nothing, so it has nothing to
+  fail at, and errors belong to the facts layer.
+
 ## [0.1.0] - 2026-07-26
 
 ### Added

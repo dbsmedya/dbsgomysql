@@ -11,8 +11,8 @@ absorb the difference. An invariant surprise does not.
 
 ## Current divergences
 
-**None.** Every behavior `pkg/sqlutil` exercises is identical on all three
-supported versions.
+**None.** Every behavior exercised by `pkg/sqlutil` and the phase-1b
+`pkg/validations` facts and checks is identical on all three supported versions.
 
 Last probed 2026-07-26 against:
 
@@ -44,15 +44,22 @@ behavior *is*, and how the library handles it, is documented in
 | `information_schema` lookup of a supplementary-character name | `TestIdentifierCharacterSetIntegration` |
 | Trailing `U+0009`–`U+000D` and `U+0020`, per object kind | `TestIdentifierCharacterSetIntegration` |
 | Leading space characters, trailing NBSP, trailing `U+3000` | `TestIdentifierCharacterSetIntegration` |
+| `information_schema` name-column collations by category | `TestMetadataNameCollationsIntegration` |
+| Case-insensitive column-name metadata lookup with exact returned spelling | `TestColumnNameCaseInsensitivityIntegration` |
+| Case-distinct table names when `lower_case_table_names=0` | `TestTableNameCaseSensitivityIntegration` |
+| Primary-key absence, type, unsigned flag, key order, and secondary-index overlap | `TestPrimaryKeysIntegration` |
+| Plain and generated invisible columns | `TestInvisibleColumnsIntegration` |
+| Trigger event separation, exact names, timing, and ordering | `TestTriggersIntegration` |
+| `ACTION_TIMING` declared as `ENUM`, ordering BEFORE ahead of AFTER | `TestTriggerTimingEnumOrderIntegration` |
+| InnoDB and MyISAM engine spelling | `TestStorageEngineIntegration` |
+| Views as existing objects with a NULL storage engine | `TestViewsIntegration` |
+| Unknown and privilege-invisible schemas producing indistinguishable facts | `TestUnknownAndInvisibleSchemaIntegration` |
 
-All of the above live in
-[`sqlutil_integration_test.go`](../pkg/sqlutil/sqlutil_integration_test.go) and
-run against every version in the matrix.
-
-One further behavior was probed by hand across the same three servers and also
-showed no divergence: the collations of `information_schema` name columns
-(`COMPAT.md` entry 2). It has no pinning test yet because its handling lands
-with `pkg/validations`.
+The identifier pins live in
+[`sqlutil_integration_test.go`](../pkg/sqlutil/sqlutil_integration_test.go);
+the metadata pins live in
+[`validations_integration_test.go`](../pkg/validations/validations_integration_test.go).
+Both run against every version in the matrix.
 
 ## Refresh procedure
 

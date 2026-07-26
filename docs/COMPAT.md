@@ -52,14 +52,14 @@ type mismatch on every integer column.
 `unsigned` and `zerofill` attributes are **preserved** — they change the value
 range and are therefore real differences, not formatting noise.
 
-## 2. `information_schema` name collations vary by category 🔜
+## 2. `information_schema` name collations vary by category ✅
 
 **Affected:** all supported versions.
 
 **Symptom:** name columns in `information_schema` do not share one collation.
-`COLUMN_NAME` and `CONSTRAINT_NAME` can use `utf8mb3_tolower_ci`, while
-`TABLE_NAME` and `SCHEMA_NAME` use `utf8mb3_bin` on the tested 8.0 / 8.4 / 9.7
-matrix. A query like
+`COLUMN_NAME` and `CONSTRAINT_NAME` use `utf8mb3_tolower_ci`,
+`TRIGGER_NAME` uses `utf8mb3_general_ci`, and `TABLE_NAME` and `SCHEMA_NAME`
+use `utf8mb3_bin` on the tested 8.0 / 8.4 / 9.7 matrix. A query like
 
 ```sql
 SELECT ... FROM information_schema.COLUMNS WHERE COLUMN_NAME = 'log_id'
@@ -75,7 +75,12 @@ is also wrong.
 SQL predicates may narrow a metadata result set, but the returned spelling is
 the server's actual value and any acceptance decision is made by exact
 comparison in Go. This is core behavior, not a workaround limited to one
-check.
+check. The category collations and both sides of the case-exact comparison are
+pinned by
+[`TestMetadataNameCollationsIntegration`](../pkg/validations/validations_integration_test.go),
+[`TestColumnNameCaseInsensitivityIntegration`](../pkg/validations/validations_integration_test.go),
+and
+[`TestTableNameCaseSensitivityIntegration`](../pkg/validations/validations_integration_test.go).
 
 ## 3. `GRANTEE` does not escape embedded quotes 🔜
 
@@ -196,6 +201,33 @@ which asserts the specific error number for each of the three object kinds
 rather than merely that the statement failed; the validator and error
 precedence are pinned by
 [`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
+
+## 10. `ACTION_TIMING` sorts by ENUM index, not alphabetically ✅
+
+**Affected:** all supported versions.
+
+**Symptom:** `information_schema.TRIGGERS.ACTION_TIMING` is declared
+`ENUM('BEFORE','AFTER')`, not a string column. MySQL orders an `ENUM` by its
+declaration index, so `ORDER BY ACTION_TIMING` yields `BEFORE` before `AFTER` —
+firing order, which is what a caller wants. Read as text the pair inverts,
+since `'AFTER' < 'BEFORE'`. The hazard is that the SQL *looks* like a string
+sort that is obviously wrong and invites a "correction" into a `CASE`
+expression, which would change nothing on a real server while implying the
+original was broken. The same trap applies to `EVENT_MANIPULATION`, declared
+`ENUM('INSERT','UPDATE','DELETE')`.
+
+**Handling:** `Inspector.Triggers` orders by `ACTION_TIMING` in SQL and relies
+on the ENUM index deliberately; the reliance is called out at the query. The
+pure check `CheckTriggersPresent` cannot depend on it — it sorts facts already
+in memory, with no server involved — so it reproduces the same order in Go
+through `triggerTimingOrder`. The two agree by construction rather than by
+luck, and
+[`TestTriggerTimingEnumOrderIntegration`](../pkg/validations/validations_integration_test.go)
+pins both halves: that the column is still an `ENUM` with `BEFORE` declared
+first, and that the fact method returns BEFORE-timed triggers first.
+[`TestTriggersIntegration`](../pkg/validations/validations_integration_test.go)
+additionally asserts the `Timing` values themselves rather than only the
+resulting name order.
 
 ---
 
