@@ -21,8 +21,9 @@ type TriggerInfo struct {
 }
 
 // Triggers returns triggers for event on requested tables. Results preserve
-// requested table order and sort each table's triggers by timing then exact
-// name. Missing or invisible tables are absent.
+// requested table order and sort each table's triggers by firing order —
+// BEFORE ahead of AFTER — and then by exact name. Missing or invisible tables
+// are absent.
 //
 // Triggers is safe for concurrent use when the Inspector's Querier is safe for
 // concurrent use and tables is not mutated concurrently.
@@ -44,6 +45,11 @@ func (i *Inspector) Triggers(
 		return nil, nil
 	}
 
+	// ORDER BY ACTION_TIMING sorts BEFORE ahead of AFTER because the column is
+	// ENUM('BEFORE','AFTER') and MySQL orders ENUM values by declaration index,
+	// not by their text — a plain string sort would invert the pair. Do not
+	// "fix" this into a lexical ordering; see docs/COMPAT.md entry 10, pinned by
+	// TestTriggerTimingEnumOrderIntegration.
 	const query = `
 		SELECT EVENT_OBJECT_TABLE, TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING
 		FROM information_schema.TRIGGERS

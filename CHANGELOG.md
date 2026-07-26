@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repository-owned MySQL fixture, unit and smoke coverage, 8.0 / 8.4 / 9.7
   integration pins, and nine E2E golden-finding scenarios. The per-commit
   workflow now runs the MySQL 8.4 smoke suite alongside `make check`.
+- `docs/COMPAT.md` entry 10: `information_schema.TRIGGERS.ACTION_TIMING` is an
+  `ENUM`, so MySQL orders it by declaration index and `Inspector.Triggers`
+  reports BEFORE ahead of AFTER. The reliance is now recorded and pinned by
+  `TestTriggerTimingEnumOrderIntegration`.
 
 The new `pkg/validations` API is part of the `v0.x` line and may change before
 `v1.0.0`.

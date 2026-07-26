@@ -50,6 +50,7 @@ behavior *is*, and how the library handles it, is documented in
 | Primary-key absence, type, unsigned flag, key order, and secondary-index overlap | `TestPrimaryKeysIntegration` |
 | Plain and generated invisible columns | `TestInvisibleColumnsIntegration` |
 | Trigger event separation, exact names, timing, and ordering | `TestTriggersIntegration` |
+| `ACTION_TIMING` declared as `ENUM`, ordering BEFORE ahead of AFTER | `TestTriggerTimingEnumOrderIntegration` |
 | InnoDB and MyISAM engine spelling | `TestStorageEngineIntegration` |
 | Views as existing objects with a NULL storage engine | `TestViewsIntegration` |
 | Unknown and privilege-invisible schemas producing indistinguishable facts | `TestUnknownAndInvisibleSchemaIntegration` |

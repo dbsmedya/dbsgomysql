@@ -279,12 +279,25 @@ func TestTriggersIntegration(t *testing.T) {
 	inspector := validations.NewInspector(db, schema)
 
 	tests := []struct {
-		event validations.TriggerEvent
-		names []string
+		event   validations.TriggerEvent
+		names   []string
+		timings []string
 	}{
-		{event: validations.TriggerDelete, names: []string{"ADeleteBefore", "BDeleteBefore", "ZDeleteAfter"}},
-		{event: validations.TriggerInsert, names: []string{"InsertBefore"}},
-		{event: validations.TriggerUpdate, names: []string{"UpdateAfter"}},
+		{
+			event:   validations.TriggerDelete,
+			names:   []string{"ADeleteBefore", "BDeleteBefore", "ZDeleteAfter"},
+			timings: []string{"BEFORE", "BEFORE", "AFTER"},
+		},
+		{
+			event:   validations.TriggerInsert,
+			names:   []string{"InsertBefore"},
+			timings: []string{"BEFORE"},
+		},
+		{
+			event:   validations.TriggerUpdate,
+			names:   []string{"UpdateAfter"},
+			timings: []string{"AFTER"},
+		},
 	}
 	for _, test := range tests {
 		got, err := inspector.Triggers(t.Context(), []string{"delete_trigger"}, test.event)
@@ -292,8 +305,10 @@ func TestTriggersIntegration(t *testing.T) {
 			t.Fatalf("Triggers(%s): %v", test.event, err)
 		}
 		names := make([]string, 0, len(got))
+		timings := make([]string, 0, len(got))
 		for _, trigger := range got {
 			names = append(names, trigger.Name)
+			timings = append(timings, trigger.Timing)
 			if trigger.Event != test.event.String() {
 				t.Errorf("trigger %q event = %q, want %q", trigger.Name, trigger.Event, test.event)
 			}
@@ -301,6 +316,65 @@ func TestTriggersIntegration(t *testing.T) {
 		if !slices.Equal(names, test.names) {
 			t.Errorf("Triggers(%s) names = %v, want %v", test.event, names, test.names)
 		}
+		if !slices.Equal(timings, test.timings) {
+			t.Errorf("Triggers(%s) timings = %v, want %v", test.event, timings, test.timings)
+		}
+	}
+}
+
+// TestTriggerTimingEnumOrderIntegration pins docs/COMPAT.md entry 10: the
+// BEFORE-ahead-of-AFTER order that Inspector.Triggers reports comes from
+// information_schema.TRIGGERS.ACTION_TIMING being ENUM('BEFORE','AFTER') and
+// MySQL sorting an ENUM by declaration index. If a server ever exposed that
+// column as text, ORDER BY would invert the pair and this test fails rather
+// than the ordering silently regressing.
+func TestTriggerTimingEnumOrderIntegration(t *testing.T) {
+	db, schema := validationDatabase(t)
+
+	const columnType = `
+		SELECT COLUMN_TYPE
+		FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = 'information_schema'
+		  AND TABLE_NAME = 'TRIGGERS'
+		  AND COLUMN_NAME = 'ACTION_TIMING'`
+	var declared string
+	if err := db.QueryRowContext(t.Context(), columnType).Scan(&declared); err != nil {
+		t.Fatalf("read ACTION_TIMING column type: %v", err)
+	}
+	if declared != "enum('BEFORE','AFTER')" {
+		t.Errorf("ACTION_TIMING type = %q, want %q", declared, "enum('BEFORE','AFTER')")
+	}
+
+	// The server's own ordering, independent of the library, so a change in
+	// ENUM sort semantics is caught here and not only through the fact method.
+	const ordered = `
+		SELECT ACTION_TIMING
+		FROM information_schema.TRIGGERS
+		WHERE EVENT_OBJECT_SCHEMA = ?
+		  AND EVENT_OBJECT_TABLE = 'delete_trigger'
+		  AND EVENT_MANIPULATION = 'DELETE'
+		ORDER BY ACTION_TIMING, TRIGGER_NAME`
+	rows, err := db.QueryContext(t.Context(), ordered, schema)
+	if err != nil {
+		t.Fatalf("order triggers by timing: %v", err)
+	}
+	defer rows.Close()
+
+	timings := make([]string, 0, 3)
+	for rows.Next() {
+		var timing string
+		if err := rows.Scan(&timing); err != nil {
+			t.Fatalf("scan timing: %v", err)
+		}
+		timings = append(timings, timing)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate timings: %v", err)
+	}
+
+	want := []string{"BEFORE", "BEFORE", "AFTER"}
+	if !slices.Equal(timings, want) {
+		t.Errorf("ORDER BY ACTION_TIMING = %v, want %v", timings, want)
 	}
 }
 
