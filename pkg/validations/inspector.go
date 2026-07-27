@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	opInvisibleColumns = "invisible_columns"
 	opForeignKeys      = "foreign_keys"
 	opGrants           = "grants"
+	opInvisibleColumns = "invisible_columns"
 	opPrimaryKeys      = "primary_keys"
 	opTables           = "tables"
 	opTriggers         = "triggers"

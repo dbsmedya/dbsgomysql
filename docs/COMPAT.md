@@ -260,6 +260,63 @@ resulting name order.
 
 ---
 
+## 11. Partial revokes hide restrictions from the privilege tables ⚠️
+
+**Affected:** 8.0.16 and newer, whenever `@@global.partial_revokes` is enabled.
+**This is a bounded limitation, not a claim that restrictions are resolved.**
+
+**Symptom:** `REVOKE SELECT ON db.* FROM u` after `GRANT SELECT ON *.* TO u`
+stores the restriction in `mysql.user.User_attributes`, not in the
+`*_PRIVILEGES` tables. `information_schema.USER_PRIVILEGES` keeps reporting the
+unrestricted global `SELECT`, so a global row can coexist with a schema the
+account cannot read at all.
+
+**Handling:** while partial revokes are enabled, a global privilege row proves
+nothing on its own. Schema and table answers are `GrantUnconfirmed` until a
+direct schema or table grant proves the requested object, and the global answer
+is `GrantUnconfirmed` too, because this package deliberately does not read
+`mysql.user` or parse `SHOW GRANTS`, and no more-specific row can prove a
+global-scope question.
+
+The degradation stops there. Restrictions only ever subtract from an existing
+grant, so a privilege with **no** row at any scope is still reported
+`GrantAbsent` on a pinned, role-free session — enabling partial revokes
+instance-wide must not make every negative answer unprovable. The pure state
+table is pinned by
+[`TestPartialRevokesDegradeEveryAnswerBackedByGlobalRow`](../pkg/validations/grants_test.go)
+and
+[`TestPartialRevokesDoNotHideProvableAbsence`](../pkg/validations/grants_test.go),
+and the live behavior by
+[`TestPartialRevokesPrivilegeResolutionIntegration`](../pkg/validations/validations_integration_test.go).
+
+## 12. Schema grants may be stored as wildcard patterns ⚠️
+
+**Affected:** all supported versions, while `@@global.partial_revokes` is
+disabled. **This is a bounded limitation: patterns downgrade an answer, they
+never resolve one.**
+
+**Symptom:** the schema column of `mysql.db` may hold SQL pattern characters —
+`GRANT SELECT ON \`shop%\`.* TO u` is legal, and MySQL matches real database
+names against that pattern. `information_schema.SCHEMA_PRIVILEGES.TABLE_SCHEMA`
+surfaces the pattern literally, so an exact-name lookup misses a grant the
+account genuinely holds. Note that `_` is a wildcard too: a grant recorded on
+`my_db` also covers `myXdb`. Enabling `partial_revokes` makes MySQL treat both
+characters literally, which closes the gap. Table-level rows are unaffected:
+MySQL requires a literal schema name in `mysql.tables_priv`.
+
+**Handling:** `Grants.Schema` and `Grants.Table` consult stored schema keys as
+patterns only to weaken an answer. When the exact lookup finds nothing and a
+stored pattern matches the requested schema, the answer becomes
+`GrantUnconfirmed` instead of `GrantAbsent`, so the privilege checks report
+uncertainty rather than a spurious "privilege is absent" finding. A pattern
+never yields `GrantPresent`: choosing which of several matching `mysql.db` rows
+MySQL applies is not modeled here. Matching is case-exact, like every other
+identifier comparison in the package. Pinned by
+[`TestWildcardSchemaGrantDowngradesAbsenceOnly`](../pkg/validations/grants_test.go)
+and [`TestLikePatternMatches`](../pkg/validations/grants_test.go).
+
+---
+
 ## Adding an entry
 
 Every version-specific behavior the code accommodates gets an entry here **and**

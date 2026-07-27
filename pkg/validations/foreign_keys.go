@@ -6,8 +6,41 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
+
+// MetadataVisibility reports whether foreign-key discovery is complete for
+// registered InnoDB constraints.
+//
+// The zero value means the fact was not populated. MetadataVisibility is a
+// plain value and is safe for concurrent use.
+type MetadataVisibility uint8
+
+const (
+	// VisibilityUnknown means no metadata-completeness proof was populated.
+	VisibilityUnknown MetadataVisibility = iota
+	// VisibilityComplete means the PROCESS-gated InnoDB query succeeded.
+	VisibilityComplete
+	// VisibilityUnconfirmed means the visibility-filtered fallback was used.
+	VisibilityUnconfirmed
+)
+
+// String returns a stable human spelling for the visibility state.
+//
+// String is safe for concurrent use.
+func (v MetadataVisibility) String() string {
+	switch v {
+	case VisibilityUnknown:
+		return unknownEnum
+	case VisibilityComplete:
+		return "complete"
+	case VisibilityUnconfirmed:
+		return grantStateUnconfirmedName
+	default:
+		return "MetadataVisibility(" + strconv.Itoa(int(v)) + ")"
+	}
+}
 
 const (
 	fkRuleCascade  = "CASCADE"

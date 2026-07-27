@@ -21,7 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pkg/validations`: `Grants`, `GrantState`, `Privilege`, and
   `PrivilegeFact`. Resolution accounts for enabled-role uncertainty and
   partial revokes, and mechanically degrades answers from pooled or opaque
-  `Querier` implementations that cannot substantiate session state.
+  `Querier` implementations that cannot substantiate session state. While
+  partial revokes are enabled, a global privilege row proves nothing on its own
+  at any scope, including `Global`; a privilege with no grant row at any scope
+  is still reported absent.
+- `pkg/validations`: wildcard schema grants such as `` `shop%` `` downgrade an
+  otherwise-absent `Schema` or `Table` answer to `GrantUnconfirmed` instead of
+  producing a spurious "privilege is absent" finding. A pattern never proves a
+  privilege.
 - The six remaining catalog checks: `FK_INDEXED`, `FK_CLOSURE`,
   `FK_METADATA_VISIBILITY`, `CASCADE_RULES`, `TABLE_PRIVILEGES`, and
   `SCHEMA_PRIVILEGES`. Every published catalog ID is now implemented.
@@ -37,7 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state on a registered InnoDB foreign key.
 - `docs/COMPAT.md` entries 3 and 5 are handled and pinned. Entry 4 is now an
   explicit bounded limitation: nested role closure is not resolved, and an
-  otherwise-negative answer with enabled roles is unconfirmed.
+  otherwise-negative answer with enabled roles is unconfirmed. Entries 11
+  (partial revokes) and 12 (wildcard schema grants) are new bounded
+  limitations, both pinned.
 
 ## [0.2.0] - 2026-07-26
 

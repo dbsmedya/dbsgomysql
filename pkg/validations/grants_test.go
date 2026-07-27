@@ -141,6 +141,137 @@ func TestGrantResolutionNegativesAndPartialRevokes(t *testing.T) {
 	}
 }
 
+func TestPartialRevokesDoNotHideProvableAbsence(t *testing.T) {
+	t.Parallel()
+
+	// Restrictions only ever subtract from an existing global grant, so a
+	// privilege with no row at any scope stays provably absent no matter what
+	// @@global.partial_revokes says.
+	fact := Grants{
+		populated:      true,
+		affinity:       affinityPinned,
+		partialRevokes: true,
+		global:         map[Privilege]grantSources{},
+		schema:         map[schemaPrivilegeKey]grantSources{},
+		table:          map[tablePrivilegeKey]grantSources{},
+	}
+
+	if got := fact.Global(PrivilegeDelete); got != GrantAbsent {
+		t.Errorf("global answer with no grant row = %s, want absent", got)
+	}
+	if got := fact.Schema("shop", PrivilegeDelete); got != GrantAbsent {
+		t.Errorf("schema answer with no grant row = %s, want absent", got)
+	}
+	if got := fact.Table("shop", "orders", PrivilegeDelete); got != GrantAbsent {
+		t.Errorf("table answer with no grant row = %s, want absent", got)
+	}
+}
+
+func TestPartialRevokesDegradeEveryAnswerBackedByGlobalRow(t *testing.T) {
+	t.Parallel()
+
+	fact := Grants{
+		populated:      true,
+		affinity:       affinityPinned,
+		partialRevokes: true,
+		global: map[Privilege]grantSources{
+			PrivilegeSelect: grantSourceAccount,
+		},
+		schema: map[schemaPrivilegeKey]grantSources{},
+		table:  map[tablePrivilegeKey]grantSources{},
+	}
+
+	// The global answer degrades too: this package never reads the restriction
+	// list, so a global row cannot prove an unrestricted privilege, and no
+	// more-specific row exists that could prove a global-scope question.
+	if got := fact.Global(PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("global row under partial revokes = %s, want unconfirmed", got)
+	}
+	if got := fact.Schema("shop", PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("schema answer from global row = %s, want unconfirmed", got)
+	}
+	if got := fact.Table("shop", "orders", PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("table answer from global row = %s, want unconfirmed", got)
+	}
+}
+
+func TestWildcardSchemaGrantDowngradesAbsenceOnly(t *testing.T) {
+	t.Parallel()
+
+	fact := Grants{
+		populated:      true,
+		affinity:       affinityPinned,
+		accountGrantee: "'app'@'%'",
+		global:         map[Privilege]grantSources{},
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: "shop%", privilege: PrivilegeSelect}: grantSourceAccount,
+		},
+		table: map[tablePrivilegeKey]grantSources{},
+	}
+
+	if got := fact.Schema("shop_eu", PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("pattern-covered schema = %s, want unconfirmed", got)
+	}
+	if got := fact.Table("shop_eu", "orders", PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("pattern-covered table = %s, want unconfirmed", got)
+	}
+	if got := fact.Schema("archive", PrivilegeSelect); got != GrantAbsent {
+		t.Errorf("schema outside the pattern = %s, want absent", got)
+	}
+	if got := fact.Schema("shop_eu", PrivilegeDelete); got != GrantAbsent {
+		t.Errorf("pattern recorded for another privilege = %s, want absent", got)
+	}
+
+	// A pattern never proves an object; only an exact stored key does.
+	exact := fact
+	exact.schema = map[schemaPrivilegeKey]grantSources{
+		{schema: "shop", privilege: PrivilegeSelect}: grantSourceAccount,
+	}
+	if got := exact.Schema("shop", PrivilegeSelect); got != GrantPresent {
+		t.Errorf("exact schema grant = %s, want present", got)
+	}
+	if got := exact.Schema("shopping", PrivilegeSelect); got != GrantAbsent {
+		t.Errorf("literal key against a longer name = %s, want absent", got)
+	}
+}
+
+func TestLikePatternMatches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		pattern string
+		name    string
+		want    bool
+	}{
+		{pattern: "shop", name: "shop", want: true},
+		{pattern: "shop", name: "shopping", want: false},
+		{pattern: "shop%", name: "shop", want: true},
+		{pattern: "shop%", name: "shop_eu", want: true},
+		{pattern: "%", name: "", want: true},
+		{pattern: "%shop%", name: "eu_shop_1", want: true},
+		{pattern: "my_db", name: "myXdb", want: true},
+		{pattern: "my_db", name: "my_db", want: true},
+		{pattern: "my_db", name: "mydb", want: false},
+		{pattern: `my\_db`, name: "my_db", want: true},
+		{pattern: `my\_db`, name: "myXdb", want: false},
+		{pattern: `100\%`, name: "100%", want: true},
+		{pattern: `100\%`, name: "100x", want: false},
+		{pattern: "a%b%c", name: "axxbyyc", want: true},
+		{pattern: "a%b%c", name: "abcd", want: false},
+		{pattern: "", name: "", want: true},
+		{pattern: "", name: "x", want: false},
+		{pattern: "ünï%", name: "ünïcode", want: true},
+	}
+	for _, test := range tests {
+		if got := likePatternMatches(test.pattern, test.name); got != test.want {
+			t.Errorf(
+				"likePatternMatches(%q, %q) = %t, want %t",
+				test.pattern, test.name, got, test.want,
+			)
+		}
+	}
+}
+
 func TestPrivilegeChecksTotalStateTable(t *testing.T) {
 	t.Parallel()
 

@@ -190,10 +190,19 @@ the fact requires several statements. MySQL does not expose an enabled role's
 grant rows through the ordinary privilege tables visible to that account, so
 every answer depending only on a role is unconfirmed even on the pinned
 session. Nested role closure is also deliberately not resolved: any enabled
-role makes an otherwise-negative answer unconfirmed. While
-`@@global.partial_revokes` is enabled, a global grant alone is unconfirmed for
-schema/table answers; a direct matching schema or table grant can still prove
-that object.
+role makes an otherwise-negative answer unconfirmed.
+
+While `@@global.partial_revokes` is enabled, a global grant alone proves
+nothing: schema and table answers are unconfirmed until a direct matching
+schema or table grant proves that object, and `Global` is unconfirmed as well,
+because the restriction list is not something this library reads. A privilege
+with no grant row at any scope is still reported absent — enabling partial
+revokes does not make every negative unprovable.
+
+A schema grant may also be stored as a wildcard pattern, such as `shop%` or
+`my_db`. Where an exact lookup finds nothing and a stored pattern matches the
+requested schema, the answer is unconfirmed rather than absent. A pattern never
+proves a privilege. See [COMPAT.md](COMPAT.md) entries 11 and 12.
 
 ## Table specifications and diffs
 

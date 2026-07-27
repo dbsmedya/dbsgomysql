@@ -202,6 +202,25 @@ func TestForeignKeyChecks(t *testing.T) {
 	if got := CheckFKClosure(ForeignKeyResult{}, "shop", nil); got != nil {
 		t.Errorf("empty closure = %#v, want nil", got)
 	}
+	// An empty target is vacuously closed under every visibility state, and
+	// that short-circuit outranks both external keys and incomplete discovery.
+	for _, visibility := range []MetadataVisibility{
+		VisibilityUnknown,
+		VisibilityComplete,
+		VisibilityUnconfirmed,
+		MetadataVisibility(99),
+	} {
+		if got := CheckFKClosure(
+			ForeignKeyResult{
+				Keys:       []ForeignKey{sameSchemaExternal},
+				Visibility: visibility,
+			},
+			"shop",
+			nil,
+		); got != nil {
+			t.Errorf("empty target under %s = %#v, want nil", visibility, got)
+		}
+	}
 	for _, visibility := range []MetadataVisibility{
 		VisibilityUnknown,
 		VisibilityUnconfirmed,
@@ -260,6 +279,40 @@ func TestForeignKeyChecks(t *testing.T) {
 	names := []string{first.ConstraintName, second.ConstraintName}
 	if !slices.Equal(names, []string{"fk_cross", "fk_external"}) {
 		t.Errorf("external closure order = %v, want [fk_cross fk_external]", names)
+	}
+
+	// Closure membership is case-exact: a child differing only in case is not
+	// in the target set, and a parent differing only in case is not the target.
+	caseVariantChild := internal
+	caseVariantChild.ConstraintName = "fk_case_child"
+	caseVariantChild.ChildTable = "Items"
+	caseFindings := CheckFKClosure(
+		ForeignKeyResult{
+			Keys:       []ForeignKey{caseVariantChild},
+			Visibility: VisibilityComplete,
+		},
+		"shop",
+		[]string{"orders", "items"},
+	)
+	if len(caseFindings) != 1 {
+		t.Fatalf(
+			"case-variant child findings = %d, want 1: %#v",
+			len(caseFindings), caseFindings,
+		)
+	}
+
+	caseVariantParent := internal
+	caseVariantParent.ConstraintName = "fk_case_parent"
+	caseVariantParent.ParentTable = "Orders"
+	if got := CheckFKClosure(
+		ForeignKeyResult{
+			Keys:       []ForeignKey{caseVariantParent},
+			Visibility: VisibilityComplete,
+		},
+		"shop",
+		[]string{"orders", "items"},
+	); got != nil {
+		t.Errorf("case-variant parent = %#v, want nil", got)
 	}
 
 	unindexed := sameSchemaExternal

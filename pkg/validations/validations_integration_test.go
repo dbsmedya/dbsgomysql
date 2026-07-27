@@ -685,18 +685,33 @@ func TestForeignKeyVisibilityAccountsIntegration(t *testing.T) {
 		"GRANT PROCESS ON *.* TO "+testsupport.GrantAccountSQL(processAccount),
 	)
 
-	var ordinarySelects int
-	if err := admin.QueryRowContext(
-		t.Context(),
-		`SELECT COUNT(*)
-		 FROM information_schema.USER_PRIVILEGES
-		 WHERE GRANTEE = ? AND PRIVILEGE_TYPE = 'SELECT'`,
-		"'"+processAccount.User+"'@'%'",
-	).Scan(&ordinarySelects); err != nil {
-		t.Fatalf("count PROCESS-account SELECT grants: %v", err)
-	}
-	if ordinarySelects != 0 {
-		t.Fatalf("PROCESS-only account has %d global SELECT rows, want 0", ordinarySelects)
+	// The account must hold exactly PROCESS. Asserting the absence at all three
+	// ordinary scopes is what makes this test evidence for the minimum foreign-key
+	// metadata grant rather than an accident of the container's admin account.
+	for _, scope := range []struct {
+		name  string
+		table string
+	}{
+		{name: "global", table: "USER_PRIVILEGES"},
+		{name: "schema", table: "SCHEMA_PRIVILEGES"},
+		{name: "table", table: "TABLE_PRIVILEGES"},
+	} {
+		var selects int
+		if err := admin.QueryRowContext(
+			t.Context(),
+			`SELECT COUNT(*)
+			 FROM information_schema.`+scope.table+`
+			 WHERE GRANTEE = ? AND PRIVILEGE_TYPE = 'SELECT'`,
+			"'"+processAccount.User+"'@'%'",
+		).Scan(&selects); err != nil {
+			t.Fatalf("count PROCESS-account %s SELECT grants: %v", scope.name, err)
+		}
+		if selects != 0 {
+			t.Fatalf(
+				"PROCESS-only account has %d %s SELECT rows, want 0",
+				selects, scope.name,
+			)
+		}
 	}
 
 	processDB := testsupport.MySQLDBAs(t, processAccount)
@@ -975,6 +990,20 @@ func TestPartialRevokesPrivilegeResolutionIntegration(t *testing.T) {
 		validations.PrivilegeSelect,
 	); got != validations.GrantUnconfirmed {
 		t.Errorf("partially revoked table SELECT = %s, want unconfirmed", got)
+	}
+	if got := grants.Global(
+		validations.PrivilegeSelect,
+	); got != validations.GrantUnconfirmed {
+		t.Errorf("global SELECT under partial revokes = %s, want unconfirmed", got)
+	}
+	// DELETE was never granted at any scope, so partial revokes leave nothing
+	// for a restriction to have removed and the negative stays provable.
+	if got := grants.Table(
+		schema,
+		"fk_parent",
+		validations.PrivilegeDelete,
+	); got != validations.GrantAbsent {
+		t.Errorf("never-granted DELETE under partial revokes = %s, want absent", got)
 	}
 }
 
