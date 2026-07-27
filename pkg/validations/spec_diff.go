@@ -1,6 +1,9 @@
 package validations
 
-import "strconv"
+import (
+	"sort"
+	"strconv"
+)
 
 // DiffSide names which side of a comparison a difference concerns. Its zero
 // value is SideUnknown.
@@ -129,6 +132,7 @@ type SpecDiff struct {
 func DiffSpecs(a, b TableSpec) []SpecDiff {
 	var diffs []SpecDiff
 	diffs = append(diffs, diffTableLevel(a, b)...)
+	diffs = append(diffs, diffColumns(a.Columns, b.Columns)...)
 
 	return diffs
 }
@@ -182,4 +186,140 @@ func sectionAgreement(a, b TableSpec, section SpecSections) (side DiffSide, both
 	default:
 		return SideUnknown, false
 	}
+}
+
+// diffColumns matches columns by name. Positional matching would compare
+// unrelated columns against each other and report type mismatches that name the
+// wrong problem; a differing ordinal is reported as ColumnOrderMismatch
+// instead, because column order still matters to a caller issuing
+// INSERT INTO dest SELECT * FROM src.
+func diffColumns(a, b []ColumnSpec) []SpecDiff {
+	byNameB := make(map[string]ColumnSpec, len(b))
+	for _, column := range b {
+		byNameB[column.Name] = column
+	}
+
+	var diffs []SpecDiff
+	matched := make(map[string]struct{}, len(a))
+	for _, columnA := range a {
+		columnB, ok := byNameB[columnA.Name]
+		if !ok {
+			diffs = append(diffs, SpecDiff{
+				Kind: ColumnAbsent, Side: SideB, Column: columnA.Name,
+				A: columnA.Type,
+			})
+
+			continue
+		}
+		matched[columnA.Name] = struct{}{}
+		diffs = append(diffs, diffColumnPair(columnA, columnB)...)
+	}
+
+	var onlyInB []ColumnSpec
+	for _, columnB := range b {
+		if _, ok := matched[columnB.Name]; !ok {
+			onlyInB = append(onlyInB, columnB)
+		}
+	}
+	sort.Slice(onlyInB, func(i, j int) bool {
+		return onlyInB[i].Name < onlyInB[j].Name
+	})
+	for _, columnB := range onlyInB {
+		diffs = append(diffs, SpecDiff{
+			Kind: ColumnAbsent, Side: SideA, Column: columnB.Name, B: columnB.Type,
+		})
+	}
+
+	return diffs
+}
+
+// diffColumnPair compares two columns of the same name. Comparison uses
+// NormalizedType while A and B carry the raw COLUMN_TYPE, so a diff shows what
+// the servers actually said rather than what this package normalized it to.
+//
+// ColumnSpec.Extra is deliberately not compared: it is a composite string whose
+// facts are compared individually through the typed fields, and diffing it too
+// would report every one of them twice.
+func diffColumnPair(a, b ColumnSpec) []SpecDiff {
+	var diffs []SpecDiff
+
+	emit := func(kind SpecDiffKind, valueA, valueB string) {
+		diffs = append(diffs, SpecDiff{
+			Kind: kind, Side: SideBoth, Column: a.Name, A: valueA, B: valueB,
+		})
+	}
+
+	if a.NormalizedType != b.NormalizedType {
+		emit(ColumnTypeMismatch, a.Type, b.Type)
+	}
+	if a.Nullable != b.Nullable {
+		emit(ColumnNullabilityMismatch, boolText(a.Nullable), boolText(b.Nullable))
+	}
+	if a.Charset != b.Charset {
+		emit(ColumnCharsetMismatch, a.Charset, b.Charset)
+	}
+	if a.Collation != b.Collation {
+		emit(ColumnCollationMismatch, a.Collation, b.Collation)
+	}
+	if !sameDefault(a, b) {
+		emit(ColumnDefaultMismatch, defaultText(a), defaultText(b))
+	}
+	if a.Ordinal != b.Ordinal {
+		emit(ColumnOrderMismatch, strconv.Itoa(a.Ordinal), strconv.Itoa(b.Ordinal))
+	}
+	if a.Invisible != b.Invisible {
+		emit(ColumnVisibilityMismatch, boolText(a.Invisible), boolText(b.Invisible))
+	}
+	if a.Generated != b.Generated {
+		emit(ColumnGeneratedMismatch, a.Generated.String(), b.Generated.String())
+	}
+	if a.GenerationExpr != b.GenerationExpr {
+		emit(ColumnGenerationExprMismatch, a.GenerationExpr, b.GenerationExpr)
+	}
+	if a.AutoIncrement != b.AutoIncrement {
+		emit(ColumnAutoIncrementMismatch,
+			boolText(a.AutoIncrement), boolText(b.AutoIncrement))
+	}
+	if a.OnUpdate != b.OnUpdate {
+		emit(ColumnOnUpdateMismatch, boolText(a.OnUpdate), boolText(b.OnUpdate))
+	}
+
+	return diffs
+}
+
+// sameDefault compares defaults including whether each is an expression. A
+// literal default of the text "curdate()" and an expression default that the
+// server rewrote to "curdate()" hold the same string and are different
+// defaults; see docs/COMPAT.md entry 14.
+func sameDefault(a, b ColumnSpec) bool {
+	if a.DefaultIsExpression != b.DefaultIsExpression {
+		return false
+	}
+	switch {
+	case a.Default == nil && b.Default == nil:
+		return true
+	case a.Default == nil || b.Default == nil:
+		return false
+	default:
+		return *a.Default == *b.Default
+	}
+}
+
+func defaultText(c ColumnSpec) string {
+	if c.Default == nil {
+		return ""
+	}
+	if c.DefaultIsExpression {
+		return "(" + *c.Default + ")"
+	}
+
+	return *c.Default
+}
+
+func boolText(v bool) string {
+	if v {
+		return "true"
+	}
+
+	return "false"
 }

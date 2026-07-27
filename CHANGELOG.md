@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constraints.
 - `pkg/validations`: `DiffSpecs` reports table-level and unconfirmed
   differences.
+- `pkg/validations`: `DiffSpecs` matches columns by name and reports order
+  separately.
 
 ### Changed
 
