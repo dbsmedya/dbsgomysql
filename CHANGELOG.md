@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pkg/validations`: `GeneratedKind` and typed decomposition of
+  `COLUMNS.EXTRA`.
+
 ### Changed
 
 - `pkg/validations`: normalize legacy integer display widths while preserving
