@@ -12,26 +12,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `pkg/validations`: `GeneratedKind` and typed decomposition of
-  `COLUMNS.EXTRA`.
-- `pkg/validations`: `TableSpec`, `TableRef`, `Ref`, and optional spec
-  sections.
-- `pkg/validations`: `Inspector.TableSpec` captures base-table and column
-  facts.
-- `pkg/validations`: `WithIndexes` captures ordered index key parts.
-- `pkg/validations`: `WithConstraints` captures CHECK and foreign-key
-  constraints.
-- `pkg/validations`: `DiffSpecs` reports table-level and unconfirmed
-  differences.
-- `pkg/validations`: `DiffSpecs` matches columns by name and reports order
-  separately.
-- `pkg/validations`: `DiffSpecs` compares indexes and constraints by typed
-  payload.
+- `pkg/validations`: `TableSpec`, `Ref`, `SpecOption` with `WithIndexes`,
+  `WithConstraints`, and `WithComment`, and `Inspector.TableSpec`. A spec
+  records which optional sections were captured, so an empty section is
+  distinguishable from a question nobody asked.
+- `pkg/validations`: `DiffSpecs`, `SpecDiff`, `SpecDiffKind`, and `DiffSide`.
+  Comparison is a pure function over two specs — no connection, no query, no
+  error — and reports differences symmetrically, naming the side that lacks
+  something rather than treating either as authoritative. Where only one side
+  captured a section, the result carries `IndexUnconfirmed`,
+  `ConstraintUnconfirmed`, or `CommentUnconfirmed` instead of silently
+  reporting agreement.
+- `pkg/validations`: `GeneratedKind`; columns are matched by name, so a
+  reordering reports `ColumnOrderMismatch` rather than a cascade of spurious
+  type mismatches. `COLUMNS.EXTRA` is decomposed into typed `Invisible`,
+  `Generated`, `AutoIncrement`, and `OnUpdate` facts, each compared
+  independently.
+- `pkg/validations`: an index is captured as an ordered list of `IndexPart`
+  values carrying prefix length, direction, and functional expression, so
+  `INDEX(name)` and `INDEX(name(10))` are not reported as identical.
+  Constraints are matched on name and kind, and carry `Enforced`.
+- `pkg/validations`: `TableSpec` describes base tables only. A view is reported
+  as `ErrUnsupportedTableType` rather than described partially —
+  `information_schema` exposes a view's columns but not its defining query, so
+  a view spec would compare equal to any other view over the same columns.
+- `docs/COMPAT.md` entries 13-17: discarded PRIMARY KEY constraint names,
+  expression defaults distinguishable only by `DEFAULT_GENERATED`,
+  server-normalized `CHECK_CLAUSE`, the supporting index MySQL creates for a
+  foreign key, and `NOT ENFORCED` CHECK constraints, which the server records
+  but never evaluates. All five verified identical on 8.0, 8.4, and 9.7.
+- Two-schema E2E fixtures and golden diffs, plus matrix pins for every new
+  COMPAT entry.
 
 ### Changed
 
-- `pkg/validations`: normalize legacy integer display widths while preserving
-  `tinyint(1)`.
+- `docs/COMPAT.md` entry 1 is handled and pinned, with a carve-out: integer
+  display-width normalization **preserves `tinyint(1)`**, because `BOOLEAN` is
+  an alias for it and MySQL keeps that width where it strips every other.
+  Normalizing it away would report a `BOOLEAN` and a plain `TINYINT` as
+  identical.
+
+### Notes
+
+- `TableSpec` does not capture `information_schema.TABLES.AUTO_INCREMENT`. It
+  is the next counter value rather than a schema property, so two otherwise
+  identical tables always differ on it.
+- Partition capture is not part of this release.
 
 ## [0.3.0] - 2026-07-27
 

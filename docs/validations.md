@@ -1,8 +1,7 @@
 # pkg/validations — Consumer Guide
 
-> **Status:** the package foundation, foreign-key and privilege facts, and all
-> 15 catalog checks are implemented. `TableSpec` and `DiffSpecs` remain in
-> design; that section is marked accordingly. Track shipped changes in
+> **Status:** the facts layer, all 15 catalog checks, `TableSpec`, and
+> `DiffSpecs` are implemented. Track shipped changes in
 > [CHANGELOG.md](../CHANGELOG.md).
 
 `pkg/validations` has two layers built on one connection:
@@ -82,9 +81,9 @@ case and primary-key order, and a single-column key reports its `DataType`,
 `IsInteger`, and `Unsigned` facts.
 
 Names come back in the server's exact case, and the library compares names in
-Go rather than in SQL — `information_schema` collates case-insensitively, so a
-SQL-side comparison would match `LOG_ID` against `log_id`. See
-[COMPAT.md §2](COMPAT.md).
+Go rather than relying on SQL predicates. `information_schema` name collations
+vary by category and configuration: some are binary while others fold case.
+See [COMPAT.md §2](COMPAT.md).
 
 ## Foreign keys and completeness
 
@@ -206,24 +205,76 @@ proves a privilege. See [COMPAT.md](COMPAT.md) entries 11 and 12.
 
 ## Table specifications and diffs
 
-> **Pending:** `TableSpec`, `Ref`, the option functions, and `DiffSpecs` land in
-> phase 1d and are not part of the current package.
-
-`TableSpec` describes a table completely enough to compare it with any other
-table, on any server:
+Capture and comparison are separate layers. `Inspector.TableSpec` reads one
+base table and returns `(TableSpec, error)`. `DiffSpecs` is a pure function over
+two captured values: it opens no connection, issues no query, and returns no
+error because it inspects nothing. The specs normally come from two
+`Inspector`s on two servers:
 
 ```go
-spec, err := insp.TableSpec(ctx, validations.Ref("sakila", "payment"),
+specA, err := sourceInspector.TableSpec(
+    ctx,
+    validations.Ref("sakila", "payment"),
     validations.WithIndexes(),
     validations.WithConstraints(),
-    validations.WithPartitions(),
+    validations.WithComment(),
 )
+if err != nil {
+    return err
+}
+
+specB, err := destinationInspector.TableSpec(
+    ctx,
+    validations.Ref("archive", "payment"),
+    validations.WithIndexes(),
+    validations.WithConstraints(),
+    validations.WithComment(),
+)
+if err != nil {
+    return err
+}
 
 diffs := validations.DiffSpecs(specA, specB)
 ```
 
-`DiffSpecs` returns typed differences and attaches **no severity**. Whether a
-collation mismatch blocks your operation is your decision.
+Columns and table facts are always captured. Optional sections declare what the
+comparison is allowed to claim:
+
+- `WithIndexes()` captures primary, unique, ordinary, and MySQL-created
+  supporting indexes as ordered `IndexPart` values.
+- `WithConstraints()` captures CHECK and FOREIGN KEY constraints, including
+  CHECK enforcement and referential rules.
+- `WithComment()` declares comments in scope. It costs no query because the
+  table row already contains the comment.
+
+`TableSpec.Captured` records those choices. If only one side captured an
+optional section, `DiffSpecs` emits `IndexUnconfirmed`,
+`ConstraintUnconfirmed`, or `CommentUnconfirmed` naming the side that did not
+look. If neither side opted in, the section is outside the comparison and is
+silent. This makes an empty diff list trustworthy: every in-scope question was
+asked on both sides.
+
+Columns match by exact name, not position. A reordering therefore produces
+`ColumnOrderMismatch` instead of comparing unrelated columns and cascading
+spurious type differences. Integer display widths are normalized for
+comparison while the raw server values remain available in the diff. Index
+parts preserve prefix length, direction, and functional expression.
+
+Only base tables are supported. A view returns
+`ErrUnsupportedTableType` rather than a partial spec:
+`information_schema.COLUMNS` exposes view columns but the table metadata query
+does not describe the defining query, so two different views could otherwise
+compare equal.
+
+`TableSpec` deliberately omits `information_schema.TABLES.AUTO_INCREMENT`.
+That value is the next counter, not stable schema: it advances with inserts and
+is approximate for InnoDB. Partition capture and `WithPartitions()` are not
+part of this API.
+
+`SpecDiff` carries **no severity**, not even a default. Whether a collation,
+index, or constraint difference blocks an operation is consumer policy. See
+[COMPAT.md](COMPAT.md) entries 1 and 13–17 for the MySQL behavior that shapes
+capture and comparison.
 
 ## Findings
 
