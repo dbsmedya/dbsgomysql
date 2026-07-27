@@ -7,6 +7,8 @@ import (
 	"sort"
 )
 
+const metadataYes = "YES"
+
 // TableSpec returns a specification for one base table, complete enough to
 // compare it with a table on any other server via DiffSpecs. The ref names the
 // table and need not lie in the Inspector's own schema, so one Inspector per
@@ -209,7 +211,7 @@ func (i *Inspector) captureColumns(ctx context.Context, ref TableRef) ([]ColumnS
 		}
 
 		column.NormalizedType = normalizeColumnType(column.Type)
-		column.Nullable = nullable == "YES"
+		column.Nullable = nullable == metadataYes
 		column.Charset = charset.String
 		column.Collation = collation.String
 		if columnDefault.Valid {
@@ -296,7 +298,7 @@ func (i *Inspector) captureIndexes(ctx context.Context, ref TableRef) ([]IndexSp
 				Name:    name,
 				Unique:  nonUnique == 0,
 				Type:    indexType,
-				Visible: visible == "YES",
+				Visible: visible == metadataYes,
 			})
 		}
 
@@ -339,7 +341,9 @@ func (i *Inspector) captureConstraints(
 		return nil, err
 	}
 
-	constraints := append(checks, foreignKeys...)
+	constraints := make([]ConstraintSpec, 0, len(checks)+len(foreignKeys))
+	constraints = append(constraints, checks...)
+	constraints = append(constraints, foreignKeys...)
 	sort.Slice(constraints, func(a, b int) bool {
 		return constraints[a].Name < constraints[b].Name
 	})
@@ -382,7 +386,7 @@ func (i *Inspector) captureCheckConstraints(
 		if !matchesResolved(ref, rowSchema, rowTable) {
 			continue
 		}
-		constraint.Enforced = enforced == "YES"
+		constraint.Enforced = enforced == metadataYes
 		constraints = append(constraints, constraint)
 	}
 	if err := rows.Err(); err != nil {

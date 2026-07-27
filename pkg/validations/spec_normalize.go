@@ -40,19 +40,19 @@ func normalizeColumnType(columnType string) string {
 	if !isASCIIDigits(width) {
 		return columnType
 	}
-	if strings.EqualFold(base, "tinyint") && width == "1" {
+	if strings.EqualFold(base, dataTypeTinyint) && width == "1" {
 		return columnType
 	}
 
 	return base + columnType[closing+1:]
 }
 
-// hasDisplayWidth reports whether an integer type carries a display width MySQL
-// deprecated in 8.0.17. It is a switch rather than a package-level set because
-// library rules forbid global mutable state.
+// hasDisplayWidth reports whether an integer type carries the legacy display
+// width MySQL stopped emitting in 8.0.17. It is a switch rather than a
+// package-level set because library rules forbid global mutable state.
 func hasDisplayWidth(base string) bool {
 	switch base {
-	case "bigint", "int", "integer", "mediumint", "smallint", "tinyint":
+	case "bigint", dataTypeInt, "integer", "mediumint", "smallint", dataTypeTinyint:
 		return true
 	default:
 		return false

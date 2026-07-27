@@ -2,6 +2,8 @@ package validations
 
 import "strconv"
 
+const constraintKindCheckName = "check"
+
 // TableRef names one table by schema and table, both case-exact. Its zero value
 // is invalid; construct one with Ref.
 //
@@ -109,7 +111,7 @@ func (k ConstraintKind) String() string {
 	case ConstraintUnknown:
 		return unknownEnum
 	case ConstraintCheck:
-		return "check"
+		return constraintKindCheckName
 	case ConstraintForeignKey:
 		return "foreign_key"
 	default:

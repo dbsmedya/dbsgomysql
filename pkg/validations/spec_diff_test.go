@@ -27,18 +27,18 @@ func TestDiffSpecsTableLevelMismatches(t *testing.T) {
 		wantB    string
 	}{
 		{
-			name:   "engine",
-			mutate: func(s *TableSpec) { s.Engine = "MyISAM" },
+			name:     "engine",
+			mutate:   func(s *TableSpec) { s.Engine = "MyISAM" },
 			wantKind: EngineMismatch, wantA: "InnoDB", wantB: "MyISAM",
 		},
 		{
-			name:   "charset",
-			mutate: func(s *TableSpec) { s.Charset = "latin1" },
+			name:     "charset",
+			mutate:   func(s *TableSpec) { s.Charset = "latin1" },
 			wantKind: CharsetMismatch, wantA: "utf8mb4", wantB: "latin1",
 		},
 		{
-			name:   "collation",
-			mutate: func(s *TableSpec) { s.Collation = "utf8mb4_bin" },
+			name:     "collation",
+			mutate:   func(s *TableSpec) { s.Collation = "utf8mb4_bin" },
 			wantKind: CollationMismatch,
 			wantA:    "utf8mb4_0900_ai_ci", wantB: "utf8mb4_bin",
 		},
@@ -259,43 +259,43 @@ func TestDiffSpecsColumnAttributeMismatches(t *testing.T) {
 		wantKind SpecDiffKind
 	}{
 		{
-			name:   "nullability",
-			mutate: func(c *ColumnSpec) { c.Nullable = true },
+			name:     "nullability",
+			mutate:   func(c *ColumnSpec) { c.Nullable = true },
 			wantKind: ColumnNullabilityMismatch,
 		},
 		{
-			name:   "charset",
-			mutate: func(c *ColumnSpec) { c.Charset = "latin1" },
+			name:     "charset",
+			mutate:   func(c *ColumnSpec) { c.Charset = "latin1" },
 			wantKind: ColumnCharsetMismatch,
 		},
 		{
-			name:   "collation",
-			mutate: func(c *ColumnSpec) { c.Collation = "utf8mb4_bin" },
+			name:     "collation",
+			mutate:   func(c *ColumnSpec) { c.Collation = "utf8mb4_bin" },
 			wantKind: ColumnCollationMismatch,
 		},
 		{
-			name:   "invisible",
-			mutate: func(c *ColumnSpec) { c.Invisible = true },
+			name:     "invisible",
+			mutate:   func(c *ColumnSpec) { c.Invisible = true },
 			wantKind: ColumnVisibilityMismatch,
 		},
 		{
-			name:   "generated kind",
-			mutate: func(c *ColumnSpec) { c.Generated = GeneratedStored },
+			name:     "generated kind",
+			mutate:   func(c *ColumnSpec) { c.Generated = GeneratedStored },
 			wantKind: ColumnGeneratedMismatch,
 		},
 		{
-			name:   "generation expression",
-			mutate: func(c *ColumnSpec) { c.GenerationExpr = "(`a` + 1)" },
+			name:     "generation expression",
+			mutate:   func(c *ColumnSpec) { c.GenerationExpr = "(`a` + 1)" },
 			wantKind: ColumnGenerationExprMismatch,
 		},
 		{
-			name:   "auto increment",
-			mutate: func(c *ColumnSpec) { c.AutoIncrement = true },
+			name:     "auto increment",
+			mutate:   func(c *ColumnSpec) { c.AutoIncrement = true },
 			wantKind: ColumnAutoIncrementMismatch,
 		},
 		{
-			name:   "on update",
-			mutate: func(c *ColumnSpec) { c.OnUpdate = true },
+			name:     "on update",
+			mutate:   func(c *ColumnSpec) { c.OnUpdate = true },
 			wantKind: ColumnOnUpdateMismatch,
 		},
 	}
@@ -397,4 +397,349 @@ func sameDiffs(a, b []SpecDiff) bool {
 	}
 
 	return true
+}
+
+func TestDiffSpecsIndexesRequireBothSidesToOptIn(t *testing.T) {
+	t.Parallel()
+
+	index := IndexSpec{
+		Name: "idx_email", Parts: []IndexPart{{Column: "email"}}, Unique: true,
+		Type: "BTREE", Visible: true,
+	}
+
+	specA := TableSpec{Indexes: []IndexSpec{index}, Captured: SectionIndexes}
+	specB := TableSpec{}
+
+	diffs := DiffSpecs(specA, specB)
+	if len(diffs) != 1 {
+		t.Fatalf("DiffSpecs returned %d diffs, want 1: %+v", len(diffs), diffs)
+	}
+	if diffs[0].Kind != IndexUnconfirmed || diffs[0].Side != SideB {
+		t.Errorf("(Kind, Side) = (%v, %v), want (IndexUnconfirmed, SideB); "+
+			"a spec captured without WithIndexes cannot prove index agreement",
+			diffs[0].Kind, diffs[0].Side)
+	}
+}
+
+func TestDiffSpecsIndexesUncapturedOnBothSidesIsSilent(t *testing.T) {
+	t.Parallel()
+
+	if diffs := DiffSpecs(TableSpec{}, TableSpec{}); len(diffs) != 0 {
+		t.Errorf("neither side captured indexes and DiffSpecs returned %+v, want none; "+
+			"a question nobody asked is not a gap", diffs)
+	}
+}
+
+func TestDiffSpecsIndexDifferences(t *testing.T) {
+	t.Parallel()
+
+	base := IndexSpec{
+		Name:   "idx",
+		Parts:  []IndexPart{{Column: "a"}, {Column: "b"}},
+		Unique: true, Type: "BTREE", Visible: true,
+	}
+
+	tests := []struct {
+		name     string
+		mutate   func(*IndexSpec)
+		wantKind SpecDiffKind
+	}{
+		{
+			name: "part order",
+			mutate: func(i *IndexSpec) {
+				i.Parts = []IndexPart{{Column: "b"}, {Column: "a"}}
+			},
+			wantKind: IndexPartsMismatch,
+		},
+		{
+			name: "prefix length",
+			mutate: func(i *IndexSpec) {
+				i.Parts = []IndexPart{{Column: "a", SubPart: 10}, {Column: "b"}}
+			},
+			wantKind: IndexPartsMismatch,
+		},
+		{
+			name: "direction",
+			mutate: func(i *IndexSpec) {
+				i.Parts = []IndexPart{{Column: "a"}, {Column: "b", Descending: true}}
+			},
+			wantKind: IndexPartsMismatch,
+		},
+		{
+			name: "functional expression",
+			mutate: func(i *IndexSpec) {
+				i.Parts = []IndexPart{{Expression: "(`a` + 1)"}, {Column: "b"}}
+			},
+			wantKind: IndexPartsMismatch,
+		},
+		{
+			name:     "uniqueness",
+			mutate:   func(i *IndexSpec) { i.Unique = false },
+			wantKind: IndexUniquenessMismatch,
+		},
+		{
+			name:     "type",
+			mutate:   func(i *IndexSpec) { i.Type = "HASH" },
+			wantKind: IndexTypeMismatch,
+		},
+		{
+			name:     "visibility",
+			mutate:   func(i *IndexSpec) { i.Visible = false },
+			wantKind: IndexVisibilityMismatch,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			changed := base
+			changed.Parts = append([]IndexPart(nil), base.Parts...)
+			test.mutate(&changed)
+
+			specA := TableSpec{Indexes: []IndexSpec{base}, Captured: SectionIndexes}
+			specB := TableSpec{Indexes: []IndexSpec{changed}, Captured: SectionIndexes}
+
+			diffs := DiffSpecs(specA, specB)
+			if len(diffs) != 1 {
+				t.Fatalf("DiffSpecs returned %d diffs, want 1: %+v", len(diffs), diffs)
+			}
+			if diffs[0].Kind != test.wantKind {
+				t.Errorf("Kind = %v, want %v", diffs[0].Kind, test.wantKind)
+			}
+			if diffs[0].Index != "idx" {
+				t.Errorf("Index = %q, want \"idx\"", diffs[0].Index)
+			}
+		})
+	}
+}
+
+func TestDiffSpecsIndexAbsenceNamesTheSideThatLacksIt(t *testing.T) {
+	t.Parallel()
+
+	specA := TableSpec{
+		Indexes: []IndexSpec{{
+			Name: "only_a", Parts: []IndexPart{{Column: "x"}},
+			Type: "BTREE", Visible: true,
+		}},
+		Captured: SectionIndexes,
+	}
+	specB := TableSpec{
+		Indexes: []IndexSpec{{
+			Name: "only_b", Parts: []IndexPart{{Column: "x"}},
+			Type: "BTREE", Visible: true,
+		}},
+		Captured: SectionIndexes,
+	}
+
+	found := map[string]DiffSide{}
+	for _, diff := range DiffSpecs(specA, specB) {
+		if diff.Kind == IndexAbsent {
+			found[diff.Index] = diff.Side
+		}
+	}
+	if found["only_a"] != SideB || found["only_b"] != SideA {
+		t.Errorf("index absence sides = %v, want only_a→SideB and only_b→SideA", found)
+	}
+}
+
+func TestDiffSpecsConstraintDifferences(t *testing.T) {
+	t.Parallel()
+
+	check := ConstraintSpec{
+		Name: "chk_age", Kind: ConstraintCheck, CheckClause: "(`age` >= 16)",
+		Enforced: true,
+	}
+	foreignKey := ConstraintSpec{
+		Name: "fk_course", Kind: ConstraintForeignKey,
+		Columns: []string{"course_id"}, RefSchema: "s", RefTable: "courses",
+		RefColumns: []string{"id"}, UpdateRule: "CASCADE", DeleteRule: "SET NULL",
+		Enforced: true,
+	}
+
+	tests := []struct {
+		name     string
+		a, b     ConstraintSpec
+		wantKind SpecDiffKind
+	}{
+		{
+			name: "check clause",
+			a:    check,
+			b: ConstraintSpec{
+				Name: "chk_age", Kind: ConstraintCheck, CheckClause: "(`age` >= 18)",
+				Enforced: true,
+			},
+			wantKind: CheckClauseMismatch,
+		},
+		{
+			// Identical clause, opposite enforcement: one server validates the
+			// data and the other does not.
+			name: "check enforcement",
+			a:    check,
+			b: ConstraintSpec{
+				Name: "chk_age", Kind: ConstraintCheck, CheckClause: "(`age` >= 16)",
+				Enforced: false,
+			},
+			wantKind: CheckEnforcementMismatch,
+		},
+		{
+			name: "foreign key columns",
+			a:    foreignKey,
+			b: func() ConstraintSpec {
+				changed := foreignKey
+				changed.Columns = []string{"other_id"}
+				return changed
+			}(),
+			wantKind: ForeignKeyColumnsMismatch,
+		},
+		{
+			name: "foreign key reference",
+			a:    foreignKey,
+			b: func() ConstraintSpec {
+				changed := foreignKey
+				changed.RefTable = "programs"
+				return changed
+			}(),
+			wantKind: ForeignKeyReferenceMismatch,
+		},
+		{
+			name: "foreign key rule",
+			a:    foreignKey,
+			b: func() ConstraintSpec {
+				changed := foreignKey
+				changed.DeleteRule = "CASCADE"
+				return changed
+			}(),
+			wantKind: ForeignKeyRuleMismatch,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			specA := TableSpec{
+				Constraints: []ConstraintSpec{test.a}, Captured: SectionConstraints,
+			}
+			specB := TableSpec{
+				Constraints: []ConstraintSpec{test.b}, Captured: SectionConstraints,
+			}
+
+			diffs := DiffSpecs(specA, specB)
+			if len(diffs) != 1 {
+				t.Fatalf("DiffSpecs returned %d diffs, want 1: %+v", len(diffs), diffs)
+			}
+			if diffs[0].Kind != test.wantKind {
+				t.Errorf("Kind = %v, want %v", diffs[0].Kind, test.wantKind)
+			}
+		})
+	}
+}
+
+func TestDiffSpecsConstraintKindChangeIsReportedAlone(t *testing.T) {
+	t.Parallel()
+
+	// The same name is a CHECK on one server and a FOREIGN KEY on the other.
+	check := ConstraintSpec{
+		Name: "c_orders", Kind: ConstraintCheck, CheckClause: "(`total` >= 0)",
+	}
+	foreignKey := ConstraintSpec{
+		Name: "c_orders", Kind: ConstraintForeignKey,
+		Columns: []string{"customer_id"}, RefSchema: "s", RefTable: "customers",
+		RefColumns: []string{"id"}, UpdateRule: "CASCADE", DeleteRule: "RESTRICT",
+	}
+
+	specA := TableSpec{
+		Constraints: []ConstraintSpec{check}, Captured: SectionConstraints,
+	}
+	specB := TableSpec{
+		Constraints: []ConstraintSpec{foreignKey}, Captured: SectionConstraints,
+	}
+
+	diffs := DiffSpecs(specA, specB)
+	if len(diffs) != 1 {
+		t.Fatalf("DiffSpecs returned %d diffs, want exactly 1: %+v; comparing a "+
+			"CHECK against a FOREIGN KEY field by field reports differences in "+
+			"attributes neither side shares", len(diffs), diffs)
+	}
+	if diffs[0].Kind != ConstraintKindMismatch {
+		t.Errorf("Kind = %v, want ConstraintKindMismatch", diffs[0].Kind)
+	}
+	if diffs[0].A != "check" || diffs[0].B != "foreign_key" {
+		t.Errorf("(A, B) = (%q, %q), want (\"check\", \"foreign_key\")",
+			diffs[0].A, diffs[0].B)
+	}
+}
+
+func TestDiffSpecsIgnoresFieldsIrrelevantToConstraintKind(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a, b ConstraintSpec
+	}{
+		{
+			name: "check ignores foreign-key payload",
+			a: ConstraintSpec{
+				Name: "c", Kind: ConstraintCheck,
+				CheckClause: "(`a` > 0)", Enforced: true,
+			},
+			b: ConstraintSpec{
+				Name: "c", Kind: ConstraintCheck,
+				CheckClause: "(`a` > 0)", Enforced: true,
+				Columns: []string{"other_id"}, RefSchema: "s",
+				RefTable: "other", RefColumns: []string{"id"},
+				UpdateRule: "CASCADE", DeleteRule: "RESTRICT",
+			},
+		},
+		{
+			name: "foreign key ignores check payload",
+			a: ConstraintSpec{
+				Name: "c", Kind: ConstraintForeignKey,
+				Columns: []string{"other_id"}, RefSchema: "s",
+				RefTable: "other", RefColumns: []string{"id"},
+				UpdateRule: "CASCADE", DeleteRule: "RESTRICT",
+				Enforced: true,
+			},
+			b: ConstraintSpec{
+				Name: "c", Kind: ConstraintForeignKey,
+				CheckClause: "(`a` > 0)",
+				Columns:     []string{"other_id"}, RefSchema: "s",
+				RefTable: "other", RefColumns: []string{"id"},
+				UpdateRule: "CASCADE", DeleteRule: "RESTRICT",
+				Enforced: false,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			specA := TableSpec{
+				Constraints: []ConstraintSpec{test.a}, Captured: SectionConstraints,
+			}
+			specB := TableSpec{
+				Constraints: []ConstraintSpec{test.b}, Captured: SectionConstraints,
+			}
+			if diffs := DiffSpecs(specA, specB); len(diffs) != 0 {
+				t.Errorf("DiffSpecs returned irrelevant payload diffs: %+v", diffs)
+			}
+		})
+	}
+}
+
+func TestDiffSpecsConstraintsRequireBothSidesToOptIn(t *testing.T) {
+	t.Parallel()
+
+	specA := TableSpec{
+		Constraints: []ConstraintSpec{{Name: "chk", Kind: ConstraintCheck}},
+		Captured:    SectionConstraints,
+	}
+
+	diffs := DiffSpecs(specA, TableSpec{})
+	if len(diffs) != 1 ||
+		diffs[0].Kind != ConstraintUnconfirmed || diffs[0].Side != SideB {
+		t.Fatalf("DiffSpecs returned %+v, want one ConstraintUnconfirmed on SideB", diffs)
+	}
 }

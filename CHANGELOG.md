@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   differences.
 - `pkg/validations`: `DiffSpecs` matches columns by name and reports order
   separately.
+- `pkg/validations`: `DiffSpecs` compares indexes and constraints by typed
+  payload.
 
 ### Changed
 
