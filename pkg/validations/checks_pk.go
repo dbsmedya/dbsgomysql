@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	dataTypeBigint  = "bigint"
 	dataTypeInt     = "int"
 	dataTypeTinyint = "tinyint"
 )
@@ -305,7 +306,7 @@ func asciiFoldEqual(left, right string) bool {
 
 func isIntegerDataType(dataType string) bool {
 	switch strings.ToLower(dataType) {
-	case dataTypeTinyint, "smallint", "mediumint", dataTypeInt, "integer", "bigint":
+	case dataTypeTinyint, "smallint", "mediumint", dataTypeInt, "integer", dataTypeBigint:
 		return true
 	default:
 		return false

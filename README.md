@@ -52,8 +52,8 @@ go get github.com/dbsmedya/dbsgomysql
 
 Available now: `pkg/sqlutil` for MySQL identifier validation and quoting, plus
 the `pkg/validations` metadata, foreign-key, and privilege facts and all 15 pure
-catalog checks. Table specification/diff facts are the remaining
-`pkg/validations` slice; `pkg/replication` follows later.
+catalog checks, including table specification and diff facts. General column
+facts are in development for `v0.5.0`; `pkg/replication` follows later.
 
 Planned consumers: [goarchive](https://github.com/dbsmedya/goarchive), gocdc.
 
