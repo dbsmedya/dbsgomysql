@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 )
 
 // TableSpec returns a specification for one base table, complete enough to
@@ -62,6 +63,12 @@ func (i *Inspector) TableSpec(
 	}
 	if request.sections.Has(SectionIndexes) {
 		spec.Indexes, err = i.captureIndexes(ctx, ref)
+		if err != nil {
+			return TableSpec{}, err
+		}
+	}
+	if request.sections.Has(SectionConstraints) {
+		spec.Constraints, err = i.captureConstraints(ctx, ref)
 		if err != nil {
 			return TableSpec{}, err
 		}
@@ -313,4 +320,148 @@ func (i *Inspector) captureIndexes(ctx context.Context, ref TableRef) ([]IndexSp
 	}
 
 	return indexes, nil
+}
+
+// captureConstraints reads CHECK and FOREIGN KEY constraints. Primary and
+// unique keys are indexes and are captured by captureIndexes instead, so no
+// object is reported twice and no difference is reported twice.
+//
+// Results are ordered by name so DiffSpecs output is deterministic.
+func (i *Inspector) captureConstraints(
+	ctx context.Context, ref TableRef,
+) ([]ConstraintSpec, error) {
+	checks, err := i.captureCheckConstraints(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	foreignKeys, err := i.captureForeignKeyConstraints(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	constraints := append(checks, foreignKeys...)
+	sort.Slice(constraints, func(a, b int) bool {
+		return constraints[a].Name < constraints[b].Name
+	})
+
+	return constraints, nil
+}
+
+func (i *Inspector) captureCheckConstraints(
+	ctx context.Context, ref TableRef,
+) ([]ConstraintSpec, error) {
+	// ENFORCED lives on TABLE_CONSTRAINTS, which this query already joins.
+	const query = `
+		SELECT tc.TABLE_SCHEMA, tc.TABLE_NAME, cc.CONSTRAINT_NAME,
+		       cc.CHECK_CLAUSE, tc.ENFORCED
+		FROM information_schema.CHECK_CONSTRAINTS AS cc
+		JOIN information_schema.TABLE_CONSTRAINTS AS tc
+		  ON tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+		 AND tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
+		WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?
+		ORDER BY cc.CONSTRAINT_NAME`
+
+	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
+	if err != nil {
+		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+			fmt.Errorf("query check-constraint metadata: %w", err))
+	}
+	defer rows.Close()
+
+	var constraints []ConstraintSpec
+	for rows.Next() {
+		var rowSchema, rowTable, enforced string
+		constraint := ConstraintSpec{Kind: ConstraintCheck}
+		if err := rows.Scan(
+			&rowSchema, &rowTable, &constraint.Name, &constraint.CheckClause,
+			&enforced,
+		); err != nil {
+			return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+				fmt.Errorf("scan check-constraint metadata: %w", err))
+		}
+		if !matchesResolved(ref, rowSchema, rowTable) {
+			continue
+		}
+		constraint.Enforced = enforced == "YES"
+		constraints = append(constraints, constraint)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+			fmt.Errorf("iterate check-constraint metadata: %w", err))
+	}
+
+	return constraints, nil
+}
+
+func (i *Inspector) captureForeignKeyConstraints(
+	ctx context.Context, ref TableRef,
+) ([]ConstraintSpec, error) {
+	const query = `
+		SELECT kcu.TABLE_SCHEMA, kcu.TABLE_NAME,
+		       rc.CONSTRAINT_NAME, rc.UPDATE_RULE, rc.DELETE_RULE,
+		       kcu.COLUMN_NAME, kcu.REFERENCED_TABLE_SCHEMA,
+		       kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME
+		FROM information_schema.REFERENTIAL_CONSTRAINTS AS rc
+		JOIN information_schema.KEY_COLUMN_USAGE AS kcu
+		  ON kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+		 AND kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+		WHERE rc.CONSTRAINT_SCHEMA = ? AND rc.TABLE_NAME = ?
+		ORDER BY rc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION`
+
+	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
+	if err != nil {
+		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+			fmt.Errorf("query foreign-key metadata: %w", err))
+	}
+	defer rows.Close()
+
+	var constraints []ConstraintSpec
+	for rows.Next() {
+		var (
+			rowSchema  string
+			rowTable   string
+			name       string
+			updateRule string
+			deleteRule string
+			column     sql.NullString
+			refSchema  sql.NullString
+			refTable   sql.NullString
+			refColumn  sql.NullString
+		)
+		if err := rows.Scan(
+			&rowSchema, &rowTable, &name, &updateRule, &deleteRule,
+			&column, &refSchema, &refTable, &refColumn,
+		); err != nil {
+			return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+				fmt.Errorf("scan foreign-key metadata: %w", err))
+		}
+		if !matchesResolved(ref, rowSchema, rowTable) {
+			continue
+		}
+
+		if len(constraints) == 0 || constraints[len(constraints)-1].Name != name {
+			constraints = append(constraints, ConstraintSpec{
+				Name:       name,
+				Kind:       ConstraintForeignKey,
+				RefSchema:  refSchema.String,
+				RefTable:   refTable.String,
+				UpdateRule: updateRule,
+				DeleteRule: deleteRule,
+				// A foreign key is always enforced; MySQL rejects
+				// NOT ENFORCED on one. Setting it true keeps the field
+				// meaningful for every kind rather than defaulting a
+				// foreign key to "not enforced".
+				Enforced: true,
+			})
+		}
+		last := &constraints[len(constraints)-1]
+		last.Columns = append(last.Columns, column.String)
+		last.RefColumns = append(last.RefColumns, refColumn.String)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+			fmt.Errorf("iterate foreign-key metadata: %w", err))
+	}
+
+	return constraints, nil
 }

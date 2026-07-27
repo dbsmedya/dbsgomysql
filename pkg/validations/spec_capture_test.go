@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
@@ -321,5 +322,166 @@ func TestTableSpecCapturesIndexParts(t *testing.T) {
 	if !mixed.Parts[1].Descending {
 		t.Error("part 1 did not report descending; COLLATION 'D' is a descending " +
 			"key part and a real schema difference")
+	}
+}
+
+const (
+	checkConstraintQueryMarker = "information_schema.CHECK_CONSTRAINTS"
+	foreignKeyQueryMarker      = "information_schema.REFERENTIAL_CONSTRAINTS"
+)
+
+func TestTableSpecCheckConstraintQueryFailureIsWrapped(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("check-constraint metadata unavailable")
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("sakila", "payment"),
+		testsupport.ScriptedQuery{Match: checkConstraintQueryMarker, Err: cause},
+	)
+	inspector := NewInspector(db, "sakila")
+
+	_, err := inspector.TableSpec(
+		context.Background(), Ref("sakila", "payment"), WithConstraints())
+	if !errors.Is(err, cause) {
+		t.Errorf("TableSpec with WithConstraints returned %v, which does not wrap "+
+			"the check-constraint cause", err)
+	}
+}
+
+func TestTableSpecForeignKeyQueryFailureIsWrapped(t *testing.T) {
+	t.Parallel()
+
+	// The CHECK query is scripted to succeed so only the foreign-key query can
+	// be the source of the failure. Two statements, two separate assertions.
+	cause := errors.New("foreign-key metadata unavailable")
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("sakila", "payment"),
+		testsupport.ScriptedQuery{
+			Match: checkConstraintQueryMarker,
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "CHECK_CLAUSE",
+				"ENFORCED",
+			},
+		},
+		testsupport.ScriptedQuery{Match: foreignKeyQueryMarker, Err: cause},
+	)
+	inspector := NewInspector(db, "sakila")
+
+	_, err := inspector.TableSpec(
+		context.Background(), Ref("sakila", "payment"), WithConstraints())
+	if !errors.Is(err, cause) {
+		t.Errorf("TableSpec with WithConstraints returned %v, which does not wrap "+
+			"the foreign-key cause", err)
+	}
+}
+
+func TestTableSpecDiscardsConstraintsOfACaseVariantTable(t *testing.T) {
+	t.Parallel()
+
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("shop", "items"),
+		testsupport.ScriptedQuery{
+			Match: checkConstraintQueryMarker,
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "CHECK_CLAUSE",
+				"ENFORCED",
+			},
+			Rows: [][]driver.Value{
+				{"shop", "items", "chk_right", "(`a` > 0)", "YES"},
+				{"shop", "Items", "chk_wrong", "(`b` > 0)", "YES"},
+			},
+		},
+		testsupport.ScriptedQuery{
+			Match: foreignKeyQueryMarker,
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME",
+				"UPDATE_RULE", "DELETE_RULE", "COLUMN_NAME",
+				"REFERENCED_TABLE_SCHEMA", "REFERENCED_TABLE_NAME",
+				"REFERENCED_COLUMN_NAME",
+			},
+			Rows: [][]driver.Value{
+				{"shop", "items", "fk_right", "CASCADE", "SET NULL", "cat_id",
+					"shop", "cats", "id"},
+				{"shop", "Items", "fk_wrong", "CASCADE", "CASCADE", "x",
+					"shop", "other", "id"},
+			},
+		},
+	)
+	inspector := NewInspector(db, "shop")
+
+	spec, err := inspector.TableSpec(
+		context.Background(), Ref("shop", "items"), WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+
+	var names []string
+	for _, constraint := range spec.Constraints {
+		names = append(names, constraint.Name)
+	}
+	want := []string{"chk_right", "fk_right"}
+	if !slices.Equal(names, want) {
+		t.Errorf("constraints = %v, want %v; rows belonging to a case-variant table "+
+			"must be discarded from every subordinate query, not just columns and "+
+			"indexes", names, want)
+	}
+}
+
+func TestTableSpecCapturesCheckEnforcement(t *testing.T) {
+	t.Parallel()
+
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("shop", "items"),
+		testsupport.ScriptedQuery{
+			Match: checkConstraintQueryMarker,
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "CHECK_CLAUSE",
+				"ENFORCED",
+			},
+			Rows: [][]driver.Value{
+				{"shop", "items", "chk_off", "(`b` > 0)", "NO"},
+				{"shop", "items", "chk_on", "(`a` > 0)", "YES"},
+			},
+		},
+	)
+	inspector := NewInspector(db, "shop")
+
+	spec, err := inspector.TableSpec(
+		context.Background(), Ref("shop", "items"), WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+	if len(spec.Constraints) != 2 {
+		t.Fatalf("constraints = %+v, want 2", spec.Constraints)
+	}
+	if spec.Constraints[0].Enforced {
+		t.Error("chk_off reported enforced; ENFORCED='NO' means the server never " +
+			"evaluates the constraint, which is a different table than one that does")
+	}
+	if !spec.Constraints[1].Enforced {
+		t.Error("chk_on reported unenforced despite ENFORCED='YES'")
+	}
+}
+
+func TestTableSpecWithoutConstraintsIssuesNoConstraintQuery(t *testing.T) {
+	t.Parallel()
+
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("sakila", "payment"),
+		testsupport.ScriptedQuery{
+			Match: checkConstraintQueryMarker,
+			Err:   errors.New("check-constraint metadata unavailable"),
+		},
+		testsupport.ScriptedQuery{
+			Match: foreignKeyQueryMarker,
+			Err:   errors.New("foreign-key metadata unavailable"),
+		},
+	)
+	inspector := NewInspector(db, "sakila")
+
+	if _, err := inspector.TableSpec(
+		context.Background(), Ref("sakila", "payment")); err != nil {
+		t.Errorf("TableSpec without WithConstraints returned %v; both constraint "+
+			"queries are opt-in and must not run", err)
 	}
 }
