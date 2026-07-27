@@ -1,5 +1,15 @@
 # dbsgomysql
 
+> ## ⚠️ Under heavy development — use at your own risk
+>
+> This library is pre-1.0. **Anything may break before v1.0.0**: exported types,
+> function signatures, check identifiers, and finding payloads are all subject to
+> change without a deprecation period. Pin an exact tag and read the changelog
+> before every bump.
+>
+> `v1.0.0` is the stability announcement. Until then, treat this repository as a
+> preview.
+
 **A reference library of MySQL schema facts and validations for Go.**
 
 Module: `github.com/dbsmedya/dbsgomysql` · Go 1.24+ · Status: **phase 1
