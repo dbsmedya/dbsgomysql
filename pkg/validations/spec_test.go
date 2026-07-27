@@ -79,12 +79,12 @@ func TestSpecOptionsAccumulate(t *testing.T) {
 			want: SectionIndexes,
 		},
 		{
-			name: "all three",
+			name:    "all three",
 			options: []SpecOption{WithIndexes(), WithConstraints(), WithComment()},
 			want:    SectionIndexes | SectionConstraints | SectionComment,
 		},
 		{
-			name: "repeated option is idempotent",
+			name:    "repeated option is idempotent",
 			options: []SpecOption{WithIndexes(), WithIndexes()},
 			want:    SectionIndexes,
 		},

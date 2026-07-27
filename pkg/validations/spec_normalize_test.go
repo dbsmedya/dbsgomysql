@@ -16,13 +16,13 @@ func TestNormalizeColumnType(t *testing.T) {
 			explanation: "a column created before 8.0.17 must compare equal to one created after",
 		},
 		{
-			name: "bigint width stripped, unsigned preserved",
+			name:       "bigint width stripped, unsigned preserved",
 			columnType: "bigint(20) unsigned", want: "bigint unsigned",
 			explanation: "unsigned changes the value range and is a real difference",
 		},
 		{
 			name: "zerofill preserved", columnType: "int(11) unsigned zerofill",
-			want: "int unsigned zerofill",
+			want:        "int unsigned zerofill",
 			explanation: "zerofill is an attribute, not formatting noise",
 		},
 		{
@@ -35,7 +35,7 @@ func TestNormalizeColumnType(t *testing.T) {
 		},
 		{
 			name: "tinyint(1) unsigned preserved", columnType: "tinyint(1) unsigned",
-			want: "tinyint(1) unsigned",
+			want:        "tinyint(1) unsigned",
 			explanation: "the carve-out survives trailing attributes",
 		},
 		{
