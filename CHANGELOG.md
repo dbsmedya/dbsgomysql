@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-28
+
+Documentation only. The public surface is identical to `v0.4.0`.
+
+### Changed
+
+- `README.md`: added a pre-1.0 disclaimer stating that exported types, function
+  signatures, check identifiers, and finding payloads may all change without a
+  deprecation period before `v1.0.0`. The repository is public from this tag on,
+  so the warning has to be the first thing a reader sees. It is removed on the
+  commit that becomes `v1.0.0`.
+
 ## [0.4.0] - 2026-07-27
 
 ### Added
@@ -165,7 +177,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/dbsmedya/dbsgomysql/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.1.0...v0.2.0
