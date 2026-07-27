@@ -1,9 +1,9 @@
 # pkg/validations — Consumer Guide
 
-> **Status:** the package foundation, metadata facts, and nine checks described
-> below are implemented. Foreign-key and privilege facts plus `TableSpec` and
-> `DiffSpecs` remain in design; those sections are marked accordingly. Track
-> shipped changes in [CHANGELOG.md](../CHANGELOG.md).
+> **Status:** the package foundation, foreign-key and privilege facts, and all
+> 15 catalog checks are implemented. `TableSpec` and `DiffSpecs` remain in
+> design; that section is marked accordingly. Track shipped changes in
+> [CHANGELOG.md](../CHANGELOG.md).
 
 `pkg/validations` has two layers built on one connection:
 
@@ -56,8 +56,9 @@ insp := validations.NewInspector(db, "sakila")
 ```
 
 `NewInspector` accepts anything with `QueryContext` and `QueryRowContext`, so a
-`*sql.DB` and a `*sql.Tx` both work. Passing a transaction is how you make the
-inspection observe uncommitted schema changes.
+`*sql.DB`, `*sql.Conn`, and `*sql.Tx` all work. Passing a transaction is how you
+make inspection observe uncommitted schema changes. A pinned connection matters
+for role-sensitive privilege facts, described below.
 
 ## Asking factual questions
 
@@ -70,6 +71,8 @@ tableFacts, err := insp.Tables(ctx, tables)
 pks, err := insp.PrimaryKeys(ctx, tables)
 invisible, err := insp.InvisibleColumns(ctx, tables)
 deleteTriggers, err := insp.Triggers(ctx, tables, validations.TriggerDelete)
+incoming, err := insp.ForeignKeys(ctx, validations.IncomingTo(tables...))
+grants, err := insp.Grants(ctx)
 ```
 
 Each fact returns a slice in requested table order. Missing or invisible
@@ -83,7 +86,114 @@ Go rather than in SQL — `information_schema` collates case-insensitively, so a
 SQL-side comparison would match `LOG_ID` against `log_id`. See
 [COMPAT.md §2](COMPAT.md).
 
-Foreign-key and effective-privilege facts are planned for the next slice.
+## Foreign keys and completeness
+
+An `Inspector` is bound to the target-set schema. Foreign-key selectors copy
+their arguments and use exact qualified `(schema, table)` identity:
+
+```go
+incoming, err := insp.ForeignKeys(ctx, validations.IncomingTo(tables...))
+outgoing, err := insp.ForeignKeys(ctx, validations.OutgoingFrom(tables...))
+within, err := insp.ForeignKeys(ctx, validations.Within(tables...))
+```
+
+- `IncomingTo` selects parent-in-set constraints, including same-schema and
+  cross-schema children.
+- `OutgoingFrom` selects child-in-set constraints.
+- `Within` requires both endpoints to belong to the target set.
+
+The zero `FKSelector` is invalid; use a constructor even for an empty set.
+Constructors copy the input, preserve duplicates, and an empty constructed
+selector returns a zero result without querying. Duplicate requested tables
+repeat matching constraints at that requested position. Composite constraints
+remain one `ForeignKey` with ordered child and parent column slices.
+
+`ForeignKeys` first executes one
+`INNODB_FOREIGN JOIN INNODB_FOREIGN_COLS` statement. Both metadata tables are
+gated directly by MySQL's `PROCESS` privilege, so statement success proves that
+the returned registered InnoDB constraints are complete and sets
+`VisibilityComplete` — including for an empty result. **`PROCESS` is the only
+grant required for this complete source.** Table `SELECT`, partial revokes,
+active roles, and whether the `Querier` is pooled do not upgrade or downgrade a
+successful primary query.
+
+If that statement fails for any reason, the library tries the standard
+`KEY_COLUMN_USAGE JOIN REFERENTIAL_CONSTRAINTS` source. Its rows are filtered by
+the account's object visibility, so fallback success is always
+`VisibilityUnconfirmed`. If both sources fail, the returned `ObjectError`
+preserves both causes.
+
+Completeness is explicitly InnoDB-scoped. MyISAM parses and ignores foreign-key
+declarations, so it has no enforced constraints to discover. NDB Cluster uses a
+different registry and is outside the supported and tested server matrix.
+
+Closure keeps the facts and their proof coupled:
+
+```go
+incoming, err := insp.ForeignKeys(ctx, validations.IncomingTo(tables...))
+if err != nil {
+    return err
+}
+closure := validations.CheckFKClosure(incoming, "sakila", tables)
+visibility := validations.CheckFKMetadataVisibility(incoming.Visibility)
+
+within, err := insp.ForeignKeys(ctx, validations.Within(tables...))
+cascades := validations.CheckCascadeRules(within.Keys)
+```
+
+`CheckFKClosure` reports same-schema children outside `tables` and every
+cross-schema child as external. For a non-empty set it also reports closure as
+unconfirmed unless visibility is complete. A `nil` closure result is trustworthy
+only when the argument is the matching, unmodified complete result of
+`ForeignKeys(ctx, IncomingTo(tables...))` from the Inspector bound to the same
+schema. The pure check cannot detect a caller-authored, truncated, substituted,
+or wrong-selector result.
+
+## Privileges and session affinity
+
+`Grants` resolves the current account and structured rows from
+`information_schema.ENABLED_ROLES`, then records supported privileges at global,
+schema, and table scope:
+
+```go
+grants, err := insp.Grants(ctx)
+read := grants.Table("sakila", "film", validations.PrivilegeSelect)
+create := grants.Schema("jobs", validations.PrivilegeCreate)
+
+tableFindings := validations.CheckTablePrivileges(
+    grants, "sakila", tables, validations.PrivilegeDelete,
+)
+schemaFindings := validations.CheckSchemaPrivileges(
+    grants,
+    "jobs",
+    []validations.Privilege{
+        validations.PrivilegeCreate,
+        validations.PrivilegeSelect,
+        validations.PrivilegeInsert,
+        validations.PrivilegeUpdate,
+    },
+)
+```
+
+Answers are `GrantPresent`, `GrantAbsent`, `GrantUnconfirmed`, or
+`GrantUnknown`. The source connection determines how strong an answer can be:
+
+- exact `*sql.Conn` and `*sql.Tx` values are pinned;
+- exact `*sql.DB` values are known pools: a direct current-account positive may
+  remain present, but a role-only positive and every negative are unconfirmed;
+- wrappers and custom `Querier` implementations are opaque, so even a
+  direct-account positive is unconfirmed.
+
+After `SET ROLE`, call `Grants` through the exact pinned `*sql.Conn` or
+`*sql.Tx` on which the role was enabled. Enabled roles are session-scoped, and
+the fact requires several statements. MySQL does not expose an enabled role's
+grant rows through the ordinary privilege tables visible to that account, so
+every answer depending only on a role is unconfirmed even on the pinned
+session. Nested role closure is also deliberately not resolved: any enabled
+role makes an otherwise-negative answer unconfirmed. While
+`@@global.partial_revokes` is enabled, a global grant alone is unconfirmed for
+schema/table answers; a direct matching schema or table grant can still prove
+that object.
 
 ## Table specifications and diffs
 
@@ -135,6 +245,15 @@ findings = append(findings, validations.CheckPKSingleColumn(pks)...)
 findings = append(findings, validations.CheckPKMatchesExpected(pks, expected)...)
 findings = append(findings, validations.CheckPKNameCase(pks, expected)...)
 findings = append(findings, validations.CheckPKIntegerType(pks)...)
+findings = append(findings, validations.CheckFKIndexed(incoming.Keys)...)
+findings = append(findings,
+    validations.CheckFKClosure(incoming, "sakila", tables)...)
+findings = append(findings,
+    validations.CheckFKMetadataVisibility(incoming.Visibility)...)
+findings = append(findings,
+    validations.CheckTablePrivileges(
+        grants, "sakila", tables, validations.PrivilegeDelete,
+    )...)
 ```
 
 A check returns `[]Finding` and no error — it inspects nothing, so there is

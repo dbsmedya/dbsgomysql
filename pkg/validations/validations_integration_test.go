@@ -41,6 +41,24 @@ func TestInspectorSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Triggers smoke call: %v", err)
 	}
+	incoming, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_parent"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys IncomingTo smoke call: %v", err)
+	}
+	within, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.Within("fk_parent", "fk_internal_child", "fk_cascade_child"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys Within smoke call: %v", err)
+	}
+	grants, err := inspector.Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants smoke call: %v", err)
+	}
 
 	expected := smokeExpectedPKs()
 	_ = validations.CheckTablesExist(tables, tableFacts)
@@ -52,6 +70,21 @@ func TestInspectorSmoke(t *testing.T) {
 	_ = validations.CheckPKMatchesExpected(pkFacts, expected)
 	_ = validations.CheckPKNameCase(pkFacts, expected)
 	_ = validations.CheckPKIntegerType(pkFacts)
+	_ = validations.CheckFKIndexed(incoming.Keys)
+	_ = validations.CheckFKClosure(incoming, schema, []string{"fk_parent"})
+	_ = validations.CheckFKMetadataVisibility(incoming.Visibility)
+	_ = validations.CheckCascadeRules(within.Keys)
+	_ = validations.CheckTablePrivileges(
+		grants,
+		schema,
+		[]string{"fk_parent"},
+		validations.PrivilegeSelect,
+	)
+	_ = validations.CheckSchemaPrivileges(
+		grants,
+		schema,
+		[]validations.Privilege{validations.PrivilegeCreate},
+	)
 }
 
 func TestFindingsSmoke(t *testing.T) {
@@ -75,6 +108,20 @@ func TestFindingsSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Triggers smoke call: %v", err)
 	}
+	incoming, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_parent"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys smoke call: %v", err)
+	}
+	within, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.Within("fk_parent", "fk_cascade_child"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys Within smoke call: %v", err)
+	}
 
 	expected := smokeExpectedPKs()
 	var findings []validations.Finding
@@ -87,18 +134,51 @@ func TestFindingsSmoke(t *testing.T) {
 	findings = append(findings, validations.CheckPKMatchesExpected(pkFacts, expected)...)
 	findings = append(findings, validations.CheckPKNameCase(pkFacts, expected)...)
 	findings = append(findings, validations.CheckPKIntegerType(pkFacts)...)
+	findings = append(findings, validations.CheckFKClosure(
+		incoming,
+		schema,
+		[]string{"fk_parent"},
+	)...)
+	findings = append(findings, validations.CheckCascadeRules(within.Keys)...)
+	findings = append(findings, validations.CheckFKIndexed([]validations.ForeignKey{{
+		ConstraintName: "synthetic_nonconforming",
+		ChildSchema:    schema,
+		ChildTable:     "fk_external_child",
+	}})...)
+	findings = append(findings, validations.CheckFKMetadataVisibility(
+		validations.VisibilityUnconfirmed,
+	)...)
+	findings = append(findings, validations.CheckTablePrivileges(
+		validations.Grants{},
+		schema,
+		[]string{"fk_parent"},
+		validations.PrivilegeDelete,
+	)...)
+	findings = append(findings, validations.CheckSchemaPrivileges(
+		validations.Grants{},
+		schema,
+		[]validations.Privilege{validations.PrivilegeCreate},
+	)...)
 
 	got := findingIDs(findings)
 	slices.Sort(got)
 	want := []string{
 		validations.IDInvisibleColumns,
+		validations.IDCascadeRules,
+		validations.IDFKClosure,
+		validations.IDFKClosure,
+		validations.IDFKClosure,
+		validations.IDFKIndexed,
+		validations.IDFKMetadataVisibility,
 		validations.IDPKExists,
 		validations.IDPKIntegerType,
 		validations.IDPKMatchesExpected,
 		validations.IDPKNameCase,
 		validations.IDPKSingleColumn,
 		validations.IDStorageEngine,
+		validations.IDSchemaPrivileges,
 		validations.IDTablesExist,
+		validations.IDTablePrivileges,
 		validations.IDTriggersPresent,
 	}
 	slices.Sort(want)
@@ -413,6 +493,534 @@ func TestViewsIntegration(t *testing.T) {
 	}
 	if findings := validations.CheckStorageEngine(got, "InnoDB"); findings != nil {
 		t.Errorf("CheckStorageEngine(view) = %#v, want nil", findings)
+	}
+}
+
+func TestForeignKeysIntegration(t *testing.T) {
+	db, schema := validationDatabase(t)
+	externalDB, externalSchema := testsupport.MySQLDatabase(t, "dbsgomysql_fk_external")
+	testsupport.ExecSQL(
+		t,
+		externalDB,
+		"CREATE TABLE "+sqlutil.QuoteQualified(externalSchema, "fk_internal_child")+
+			" (id INT NOT NULL PRIMARY KEY, parent_id INT NOT NULL, "+
+			"CONSTRAINT `fk_cross_parent` FOREIGN KEY (parent_id) REFERENCES "+
+			sqlutil.QuoteQualified(schema, "fk_parent")+" (id)) ENGINE=InnoDB",
+	)
+
+	inspector := validations.NewInspector(db, schema)
+	incoming, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_parent"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys IncomingTo: %v", err)
+	}
+	if incoming.Visibility != validations.VisibilityComplete {
+		t.Errorf("IncomingTo visibility = %s, want complete", incoming.Visibility)
+	}
+	if len(incoming.Keys) != 4 {
+		t.Fatalf("IncomingTo keys = %d, want 4: %#v", len(incoming.Keys), incoming.Keys)
+	}
+	byConstraint := make(map[string]validations.ForeignKey, len(incoming.Keys))
+	for _, key := range incoming.Keys {
+		byConstraint[key.ConstraintName] = key
+		if !key.Indexed {
+			t.Errorf("authoritative key %q Indexed = false", key.ConstraintName)
+		}
+	}
+	cross, ok := byConstraint["fk_cross_parent"]
+	if !ok || cross.ChildSchema != externalSchema ||
+		cross.ChildTable != "fk_internal_child" {
+		t.Errorf("cross-schema key = %#v, want exact external identity", cross)
+	}
+
+	within, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.Within("fk_parent", "fk_internal_child"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys Within: %v", err)
+	}
+	if len(within.Keys) != 1 ||
+		within.Keys[0].ConstraintName != "fk_internal_parent" {
+		t.Errorf("Within keys = %#v, want internal constraint only", within.Keys)
+	}
+
+	outgoing, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.OutgoingFrom("fk_internal_child"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys OutgoingFrom: %v", err)
+	}
+	if len(outgoing.Keys) != 1 ||
+		outgoing.Keys[0].ConstraintName != "fk_internal_parent" {
+		t.Errorf("OutgoingFrom keys = %#v, want internal constraint", outgoing.Keys)
+	}
+
+	closure := validations.CheckFKClosure(
+		incoming,
+		schema,
+		[]string{"fk_parent", "fk_internal_child"},
+	)
+	if len(closure) != 3 {
+		t.Errorf("closure findings = %d, want 3 external children: %#v", len(closure), closure)
+	}
+
+	composite, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_composite_parent"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys composite: %v", err)
+	}
+	wantComposite := validations.ForeignKey{
+		ConstraintName: "fk_composite_parent",
+		ChildSchema:    schema,
+		ChildTable:     "fk_composite_child",
+		ChildColumns:   []string{"tenant_id", "parent_id"},
+		ParentSchema:   schema,
+		ParentTable:    "fk_composite_parent",
+		ParentColumns:  []string{"tenant_id", "id"},
+		OnDelete:       "SET NULL",
+		OnUpdate:       "NO ACTION",
+		Indexed:        true,
+	}
+	if len(composite.Keys) != 1 || !reflect.DeepEqual(composite.Keys[0], wantComposite) {
+		t.Errorf("composite keys = %#v, want %#v", composite.Keys, wantComposite)
+	}
+
+	assertLeftmostCompositeIndex(t, db, schema)
+
+	ruleKeys, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_rule_parent"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys rule matrix: %v", err)
+	}
+	wantRules := map[string][2]string{
+		"fk_rule_cascade":   {"CASCADE", "CASCADE"},
+		"fk_rule_no_action": {"NO ACTION", "NO ACTION"},
+		"fk_rule_restrict":  {"RESTRICT", "RESTRICT"},
+		"fk_rule_set_null":  {"SET NULL", "SET NULL"},
+	}
+	if len(ruleKeys.Keys) != len(wantRules) {
+		t.Fatalf("rule matrix keys = %d, want %d: %#v", len(ruleKeys.Keys), len(wantRules), ruleKeys.Keys)
+	}
+	for _, key := range ruleKeys.Keys {
+		want, ok := wantRules[key.ConstraintName]
+		if !ok {
+			t.Errorf("unexpected rule-matrix constraint %#v", key)
+			continue
+		}
+		if key.OnDelete != want[0] || key.OnUpdate != want[1] {
+			t.Errorf(
+				"constraint %q rules = (%s, %s), want (%s, %s)",
+				key.ConstraintName,
+				key.OnDelete,
+				key.OnUpdate,
+				want[0],
+				want[1],
+			)
+		}
+	}
+
+	mixedParent := "FK.Parent-Mixed"
+	mixedChild := "Child.Mixed-Case"
+	mixedConstraint := "FK-Mixed.dot"
+	testsupport.ExecSQL(
+		t,
+		db,
+		"CREATE TABLE "+sqlutil.QuoteQualified(schema, mixedParent)+
+			" (id INT NOT NULL PRIMARY KEY) ENGINE=InnoDB",
+	)
+	testsupport.ExecSQL(
+		t,
+		db,
+		"CREATE TABLE "+sqlutil.QuoteQualified(schema, mixedChild)+
+			" (id INT NOT NULL PRIMARY KEY, parent_id INT NOT NULL, CONSTRAINT "+
+			sqlutil.QuoteIdentifier(mixedConstraint)+" FOREIGN KEY (parent_id) REFERENCES "+
+			sqlutil.QuoteQualified(schema, mixedParent)+" (id)) ENGINE=InnoDB",
+	)
+	mixed, err := inspector.ForeignKeys(t.Context(), validations.IncomingTo(mixedParent))
+	if err != nil {
+		t.Fatalf("ForeignKeys mixed identifiers: %v", err)
+	}
+	wantMixed := validations.ForeignKey{
+		ConstraintName: mixedConstraint,
+		ChildSchema:    schema,
+		ChildTable:     mixedChild,
+		ChildColumns:   []string{"parent_id"},
+		ParentSchema:   schema,
+		ParentTable:    mixedParent,
+		ParentColumns:  []string{"id"},
+		OnDelete:       "NO ACTION",
+		OnUpdate:       "NO ACTION",
+		Indexed:        true,
+	}
+	if len(mixed.Keys) != 1 || !reflect.DeepEqual(mixed.Keys[0], wantMixed) {
+		t.Errorf("mixed identifier key = %#v, want %#v", mixed.Keys, wantMixed)
+	}
+
+	myisam, err := inspector.ForeignKeys(
+		t.Context(),
+		validations.OutgoingFrom("myisam_ignored_fk"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys MyISAM: %v", err)
+	}
+	if len(myisam.Keys) != 0 || myisam.Visibility != validations.VisibilityComplete {
+		t.Errorf("MyISAM ignored FK result = %#v, want empty complete", myisam)
+	}
+}
+
+func TestForeignKeyVisibilityAccountsIntegration(t *testing.T) {
+	admin, schema := validationDatabase(t)
+	processAccount := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_process")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT PROCESS ON *.* TO "+testsupport.GrantAccountSQL(processAccount),
+	)
+
+	var ordinarySelects int
+	if err := admin.QueryRowContext(
+		t.Context(),
+		`SELECT COUNT(*)
+		 FROM information_schema.USER_PRIVILEGES
+		 WHERE GRANTEE = ? AND PRIVILEGE_TYPE = 'SELECT'`,
+		"'"+processAccount.User+"'@'%'",
+	).Scan(&ordinarySelects); err != nil {
+		t.Fatalf("count PROCESS-account SELECT grants: %v", err)
+	}
+	if ordinarySelects != 0 {
+		t.Fatalf("PROCESS-only account has %d global SELECT rows, want 0", ordinarySelects)
+	}
+
+	processDB := testsupport.MySQLDBAs(t, processAccount)
+	completeFromDB, err := validations.NewInspector(processDB, schema).ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_parent"),
+	)
+	if err != nil {
+		t.Fatalf("PROCESS-only ForeignKeys through DB: %v", err)
+	}
+	if completeFromDB.Visibility != validations.VisibilityComplete ||
+		len(completeFromDB.Keys) != 3 {
+		t.Errorf("PROCESS-only DB result = %#v, want three complete keys", completeFromDB)
+	}
+
+	processConn := testsupport.MySQLConnAs(t, processAccount)
+	completeFromConn, err := validations.NewInspector(processConn, schema).ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("clean_table"),
+	)
+	if err != nil {
+		t.Fatalf("PROCESS-only ForeignKeys through Conn: %v", err)
+	}
+	if completeFromConn.Visibility != validations.VisibilityComplete ||
+		completeFromConn.Keys != nil {
+		t.Errorf("PROCESS-only empty result = %#v, want empty complete", completeFromConn)
+	}
+	if got := validations.CheckFKClosure(
+		completeFromConn,
+		schema,
+		[]string{"clean_table"},
+	); got != nil {
+		t.Errorf("complete empty closure = %#v, want nil", got)
+	}
+
+	restrictedAccount := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_fallback")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON "+sqlutil.QuoteQualified(schema, "fk_internal_child")+
+			" TO "+testsupport.GrantAccountSQL(restrictedAccount),
+	)
+	restrictedConn := testsupport.MySQLConnAs(t, restrictedAccount)
+	fallback, err := validations.NewInspector(restrictedConn, schema).ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_parent"),
+	)
+	if err != nil {
+		t.Fatalf("no-PROCESS ForeignKeys: %v", err)
+	}
+	if fallback.Visibility != validations.VisibilityUnconfirmed {
+		t.Errorf("fallback visibility = %s, want unconfirmed", fallback.Visibility)
+	}
+	if len(fallback.Keys) >= len(completeFromDB.Keys) {
+		t.Errorf(
+			"fallback saw %d keys, PROCESS source saw %d; want a strict under-count",
+			len(fallback.Keys),
+			len(completeFromDB.Keys),
+		)
+	}
+
+	fullFallbackAccount := testsupport.CreateMySQLAccount(
+		t,
+		admin,
+		"dbsgomysql_full_fallback",
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON "+sqlutil.QuoteIdentifier(schema)+".* TO "+
+			testsupport.GrantAccountSQL(fullFallbackAccount),
+	)
+	fullFallbackConn := testsupport.MySQLConnAs(t, fullFallbackAccount)
+	fullFallback, err := validations.NewInspector(fullFallbackConn, schema).ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_parent"),
+	)
+	if err != nil {
+		t.Fatalf("full-visible fallback ForeignKeys: %v", err)
+	}
+	if fullFallback.Visibility != validations.VisibilityUnconfirmed {
+		t.Errorf("full fallback visibility = %s, want unconfirmed", fullFallback.Visibility)
+	}
+	if !reflect.DeepEqual(fullFallback.Keys, completeFromDB.Keys) {
+		t.Errorf(
+			"fallback keys =\n%#v\nwant authoritative identity/rules/columns\n%#v",
+			fullFallback.Keys,
+			completeFromDB.Keys,
+		)
+	}
+	completeRules, err := validations.NewInspector(admin, schema).ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_rule_parent"),
+	)
+	if err != nil {
+		t.Fatalf("authoritative rule-matrix ForeignKeys: %v", err)
+	}
+	fallbackRules, err := validations.NewInspector(fullFallbackConn, schema).ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_rule_parent"),
+	)
+	if err != nil {
+		t.Fatalf("fallback rule-matrix ForeignKeys: %v", err)
+	}
+	if !reflect.DeepEqual(fallbackRules.Keys, completeRules.Keys) {
+		t.Errorf(
+			"fallback rule-matrix keys =\n%#v\nwant authoritative keys\n%#v",
+			fallbackRules.Keys,
+			completeRules.Keys,
+		)
+	}
+
+	if got := validations.CheckFKClosure(
+		fallback,
+		schema,
+		[]string{"fk_parent", "fk_internal_child"},
+	); len(got) == 0 {
+		t.Error("unconfirmed fallback closure returned nil")
+	}
+}
+
+func TestGranteeAndRolePrivilegesIntegration(t *testing.T) {
+	admin, schema := validationDatabase(t)
+	quotedAccount := testsupport.CreateNamedMySQLAccount(
+		t,
+		admin,
+		"o'brien_"+schema[len(schema)-8:],
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON *.* TO "+testsupport.GrantAccountSQL(quotedAccount),
+	)
+	wantGrantee := "'" + quotedAccount.User + "'@'%'"
+	var grantee string
+	if err := admin.QueryRowContext(
+		t.Context(),
+		`SELECT GRANTEE
+		 FROM information_schema.USER_PRIVILEGES
+		 WHERE PRIVILEGE_TYPE = 'SELECT' AND GRANTEE = ?`,
+		wantGrantee,
+	).Scan(&grantee); err != nil {
+		t.Fatalf("read embedded-quote GRANTEE: %v", err)
+	}
+	if grantee != wantGrantee {
+		t.Errorf("GRANTEE = %q, want unescaped literal %q", grantee, wantGrantee)
+	}
+
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_roles")
+	outer := testsupport.CreateMySQLRole(t, admin, "dbsgomysql_outer")
+	inner := testsupport.CreateMySQLRole(t, admin, "dbsgomysql_inner")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT DELETE ON "+sqlutil.QuoteIdentifier(schema)+".*"+
+			" TO "+testsupport.GrantAccountSQL(outer),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON "+sqlutil.QuoteIdentifier(schema)+".*"+
+			" TO "+testsupport.GrantAccountSQL(inner),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT "+testsupport.GrantAccountSQL(inner)+
+			" TO "+testsupport.GrantAccountSQL(outer),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT "+testsupport.GrantAccountSQL(outer)+
+			" TO "+testsupport.GrantAccountSQL(account),
+	)
+	conn := testsupport.MySQLConnAs(t, account)
+	if _, err := conn.ExecContext(t.Context(), "SET ROLE ALL"); err != nil {
+		t.Fatalf("enable roles: %v", err)
+	}
+	grants, err := validations.NewInspector(conn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants with enabled role: %v", err)
+	}
+	if _, execErr := conn.ExecContext(
+		t.Context(),
+		"DELETE FROM "+sqlutil.QuoteQualified(schema, "fk_parent")+" WHERE 1 = 0",
+	); execErr != nil {
+		t.Fatalf("execute direct enabled-role DELETE: %v", execErr)
+	}
+	var visibleRows int
+	if queryErr := conn.QueryRowContext(
+		t.Context(),
+		"SELECT COUNT(*) FROM "+sqlutil.QuoteQualified(schema, "fk_parent"),
+	).Scan(&visibleRows); queryErr != nil {
+		t.Fatalf("execute transitive enabled-role SELECT: %v", queryErr)
+	}
+	if got := grants.Schema(schema, validations.PrivilegeDelete); got != validations.GrantUnconfirmed {
+		t.Errorf("direct enabled-role DELETE = %s, want unconfirmed", got)
+	}
+	if got := grants.Schema(schema, validations.PrivilegeSelect); got != validations.GrantUnconfirmed {
+		t.Errorf("nested-role SELECT = %s, want unconfirmed", got)
+	}
+
+	roleFree := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_rolefree")
+	roleFreeConn := testsupport.MySQLConnAs(t, roleFree)
+	roleFreeGrants, err := validations.NewInspector(roleFreeConn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants with zero enabled roles: %v", err)
+	}
+	if got := roleFreeGrants.Table(
+		schema,
+		"fk_parent",
+		validations.PrivilegeDelete,
+	); got != validations.GrantAbsent {
+		t.Errorf("pinned role-free negative = %s, want absent", got)
+	}
+}
+
+func TestPartialRevokesPrivilegeResolutionIntegration(t *testing.T) {
+	admin, schema := validationDatabase(t)
+
+	var original int
+	if err := admin.QueryRowContext(
+		t.Context(),
+		"SELECT @@global.partial_revokes",
+	).Scan(&original); err != nil {
+		t.Fatalf("read original partial_revokes: %v", err)
+	}
+	if _, err := admin.ExecContext(
+		t.Context(),
+		"SET GLOBAL partial_revokes = ON",
+	); err != nil {
+		t.Fatalf("enable partial_revokes: %v", err)
+	}
+	t.Cleanup(func() {
+		value := "OFF"
+		if original != 0 {
+			value = "ON"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := admin.ExecContext(
+			ctx,
+			"SET GLOBAL partial_revokes = "+value,
+		); err != nil {
+			t.Errorf("restore partial_revokes=%s: %v", value, err)
+		}
+	})
+
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_partial")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON *.* TO "+testsupport.GrantAccountSQL(account),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"REVOKE SELECT ON "+sqlutil.QuoteIdentifier(schema)+".* FROM "+
+			testsupport.GrantAccountSQL(account),
+	)
+	conn := testsupport.MySQLConnAs(t, account)
+	grants, err := validations.NewInspector(conn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants under partial revokes: %v", err)
+	}
+	if got := grants.Schema(
+		schema,
+		validations.PrivilegeSelect,
+	); got != validations.GrantUnconfirmed {
+		t.Errorf("partially revoked schema SELECT = %s, want unconfirmed", got)
+	}
+	if got := grants.Table(
+		schema,
+		"fk_parent",
+		validations.PrivilegeSelect,
+	); got != validations.GrantUnconfirmed {
+		t.Errorf("partially revoked table SELECT = %s, want unconfirmed", got)
+	}
+}
+
+func assertLeftmostCompositeIndex(
+	t *testing.T,
+	db *sql.DB,
+	schema string,
+) {
+	t.Helper()
+
+	const query = `
+		SELECT INDEX_NAME, COLUMN_NAME
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA = ?
+		  AND TABLE_NAME = 'fk_composite_child'
+		ORDER BY INDEX_NAME, SEQ_IN_INDEX`
+	rows, err := db.QueryContext(t.Context(), query, schema)
+	if err != nil {
+		t.Fatalf("query composite indexes: %v", err)
+	}
+	defer rows.Close()
+
+	byIndex := make(map[string][]string)
+	for rows.Next() {
+		var index, column string
+		if err := rows.Scan(&index, &column); err != nil {
+			t.Fatalf("scan composite index: %v", err)
+		}
+		byIndex[index] = append(byIndex[index], column)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate composite indexes: %v", err)
+	}
+	found := false
+	for name, columns := range byIndex {
+		if name == "idx_nonleading" {
+			continue
+		}
+		if len(columns) >= 2 &&
+			columns[0] == "tenant_id" &&
+			columns[1] == "parent_id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("indexes = %#v, want an auto-created leftmost (tenant_id,parent_id) index", byIndex)
 	}
 }
 

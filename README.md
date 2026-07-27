@@ -24,8 +24,9 @@ everyone else.
 ## Design principles
 
 - **Zero dependencies.** Library code imports the Go standard library only.
-- **Driver-agnostic.** You supply the connection — a `*sql.DB` or a `*sql.Tx`;
-  the library never opens, configures, or closes one, and never imports a driver.
+- **Driver-agnostic.** You supply the connection — a `*sql.DB`, `*sql.Conn`, or
+  `*sql.Tx`; the library never opens, configures, or closes one, and never
+  imports a driver.
 - **Never panics, never logs.** It returns data and errors. You decide what
   reaches a terminal.
 - **Context-first.** Every call that touches the database takes a
@@ -40,9 +41,9 @@ go get github.com/dbsmedya/dbsgomysql
 ## Status
 
 Available now: `pkg/sqlutil` for MySQL identifier validation and quoting, plus
-the `pkg/validations` foundation, metadata facts, and nine pure checks. Foreign
-keys, privileges, and table specification/diff facts are the remaining
-`pkg/validations` slices; `pkg/replication` follows later.
+the `pkg/validations` metadata, foreign-key, and privilege facts and all 15 pure
+catalog checks. Table specification/diff facts are the remaining
+`pkg/validations` slice; `pkg/replication` follows later.
 
 Planned consumers: [goarchive](https://github.com/dbsmedya/goarchive), gocdc.
 

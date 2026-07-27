@@ -1,0 +1,12 @@
+[
+  {
+    "check": "SCHEMA_PRIVILEGES",
+    "tables": null,
+    "facts": {
+      "schema": "{{target_schema}}",
+      "table": "",
+      "privilege": 1,
+      "state": 3
+    }
+  }
+]

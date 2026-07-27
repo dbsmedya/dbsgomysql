@@ -14,9 +14,10 @@ also listed in the
 [version divergence register](mysql-version-specific-compatibility.md), which
 records nothing else and is currently empty.
 
-> **Status legend** — ✅ handled and pinned by a test · 🔜 registered, handling
-> lands with the package that needs it · 👁 operator guidance only, no library
-> code involved.
+> **Status legend** — ✅ handled and pinned by a test · ⚠️ bounded and pinned
+> limitation (safe behavior exists; the underlying server gap is not solved) ·
+> 🔜 registered, handling lands with the package that needs it · 👁 operator
+> guidance only, no library code involved.
 >
 > An entry becomes ✅ when its handling lands with a linked pinning test.
 
@@ -82,10 +83,9 @@ pinned by
 and
 [`TestTableNameCaseSensitivityIntegration`](../pkg/validations/validations_integration_test.go).
 
-## 3. `GRANTEE` does not escape embedded quotes 🔜
+## 3. `GRANTEE` does not escape embedded quotes ✅
 
-**Affected:** all supported versions (verified on 8.4; 8.0 and 9.7 pinned by
-the matrix).
+**Affected:** all supported versions.
 
 **Symptom:** MySQL builds the `GRANTEE` column of the `*_PRIVILEGES` tables by
 naive concatenation. A user named `o'brien` yields the literal string
@@ -94,25 +94,33 @@ constructs a grantee string with correct SQL escaping will never match.
 
 **Handling:** the library reproduces MySQL's concatenation exactly, including
 the missing escape, rather than producing well-formed SQL. Matching the
-server's actual behavior is the requirement here.
+server's actual behavior is the requirement here. Pure formatting is pinned by
+[`TestFormatGranteeEmbeddedQuote`](../pkg/validations/grants_test.go), and the
+server output is pinned across the matrix by
+[`TestGranteeAndRolePrivilegesIntegration`](../pkg/validations/validations_integration_test.go).
 
-## 4. Privileges held through nested roles are not resolved 🔜
+## 4. Privileges held through nested roles are not resolved ⚠️
 
-**Affected:** all supported versions. **This is a known limitation, not a
-workaround.**
+**Affected:** all supported versions. **This is a bounded limitation, not a
+claim that role closure is solved.**
 
-**Symptom:** the library resolves the effective grantee set from
-`CURRENT_USER()` plus the roles active under `CURRENT_ROLE()`. A privilege held
-via a role that was granted *to another role* is not discovered by that
-resolution, so a privilege check can report a privilege as missing when the
-account does in fact hold it.
+**Symptom:** the library resolves the current account plus structured
+`ROLE_NAME` / `ROLE_HOST` rows from `information_schema.ENABLED_ROLES`. It does
+not walk the role graph. A privilege held only through a role granted *to
+another role* therefore does not appear under any grantee the fact queries.
 
-**Handling:** the library **fails conservatively** — it reports the privilege
-as unconfirmed rather than assuming it is held. Consumers relying on nested
-role grants should activate the relevant roles on the session before calling,
-or grant directly.
+**Handling:** the library reports every role-dependent answer as
+`GrantUnconfirmed`, even on a pinned session, and never reports `GrantAbsent`
+while any role is enabled. This is necessary because the ordinary
+`*_PRIVILEGES` tables visible to the account do not expose the enabled role's
+grant rows; `SHOW GRANTS` proves the privilege is effective, but parsing that
+statement and walking role-specific metadata are outside this slice. The pure
+state table and live direct plus role-granted-to-role cases are pinned by
+[`TestGrantResolutionNegativesAndPartialRevokes`](../pkg/validations/grants_test.go)
+and
+[`TestGranteeAndRolePrivilegesIntegration`](../pkg/validations/validations_integration_test.go).
 
-## 5. Cross-schema foreign key metadata can be invisible 🔜
+## 5. Cross-schema foreign key metadata can be invisible ✅
 
 **Affected:** all supported versions.
 
@@ -122,10 +130,31 @@ some schema cannot see that schema at all — not even in `SCHEMATA`. A query fo
 "which foreign keys point into these tables?" therefore returns an
 under-count with no error and no warning.
 
-**Handling:** completeness of incoming-FK discovery is unprovable without
-global `SELECT`. The `FK_METADATA_VISIBILITY` check probes for that privilege
-and **fails closed**, reporting that the answer cannot be trusted rather than
-returning an incomplete list as if it were complete.
+**Handling:** `Inspector.ForeignKeys` first queries the server-wide
+`INNODB_FOREIGN JOIN INNODB_FOREIGN_COLS` registry. Both tables require
+`PROCESS`, so a successful statement proves complete registered InnoDB FK
+discovery and returns `VisibilityComplete`, even when the account has no
+`SELECT` privilege on either schema. `PROCESS` is the only grant required for
+that source.
+
+Any primary-source failure tries the standard
+`KEY_COLUMN_USAGE JOIN REFERENTIAL_CONSTRAINTS` query. A successful standard
+query remains useful but returns `VisibilityUnconfirmed`, because its rows are
+filtered by privileges on the child table. Closure then emits its own
+unconfirmed finding, and `CheckFKMetadataVisibility` emits the catalog-level
+finding; an empty fallback result is never mistaken for proof that no incoming
+key exists. Partial revokes, active roles, and pooled-session affinity do not
+participate in this FK source proof.
+
+The completeness claim is InnoDB-scoped. MyISAM ignores foreign-key
+declarations and has no enforced keys to discover. NDB Cluster uses different
+metadata and is outside this repository's supported/tested matrix. Primary,
+fallback, same- and cross-schema, `PROCESS`-only, and MyISAM behavior are
+pinned by
+[`TestForeignKeysIntegration`](../pkg/validations/validations_integration_test.go),
+[`TestForeignKeyVisibilityAccountsIntegration`](../pkg/validations/validations_integration_test.go),
+and the phase-1c E2E goldens in
+[`TestPhase1cFindingsE2E`](../tests/e2e/e2e_test.go).
 
 ## 6. Replication status statements and columns were renamed 🔜
 

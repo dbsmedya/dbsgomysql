@@ -1,0 +1,310 @@
+package validations
+
+import (
+	"errors"
+	"reflect"
+	"slices"
+	"testing"
+)
+
+func TestPhase1cEnumStrings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "visibility zero", got: VisibilityUnknown.String(), want: unknownEnum},
+		{name: "visibility complete", got: VisibilityComplete.String(), want: "complete"},
+		{name: "visibility unconfirmed", got: VisibilityUnconfirmed.String(), want: "unconfirmed"},
+		{name: "visibility undeclared", got: MetadataVisibility(99).String(), want: "MetadataVisibility(99)"},
+		{name: "grant zero", got: GrantUnknown.String(), want: unknownEnum},
+		{name: "grant present", got: GrantPresent.String(), want: "present"},
+		{name: "grant absent", got: GrantAbsent.String(), want: "absent"},
+		{name: "grant unconfirmed", got: GrantUnconfirmed.String(), want: "unconfirmed"},
+		{name: "grant undeclared", got: GrantState(99).String(), want: "GrantState(99)"},
+		{name: "privilege zero", got: PrivilegeUnknown.String(), want: unknownEnum},
+		{name: "privilege select", got: PrivilegeSelect.String(), want: "SELECT"},
+		{name: "privilege insert", got: PrivilegeInsert.String(), want: "INSERT"},
+		{name: "privilege update", got: PrivilegeUpdate.String(), want: "UPDATE"},
+		{name: "privilege delete", got: PrivilegeDelete.String(), want: "DELETE"},
+		{name: "privilege create", got: PrivilegeCreate.String(), want: "CREATE"},
+		{name: "privilege undeclared", got: Privilege(99).String(), want: "Privilege(99)"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if test.got != test.want {
+				t.Errorf("String() = %q, want %q", test.got, test.want)
+			}
+		})
+	}
+}
+
+func TestFKSelectorValidationAndOwnership(t *testing.T) {
+	t.Parallel()
+
+	inspector := NewInspector(panicQuerier{}, "shop")
+	for _, selector := range []FKSelector{{}, {kind: fkSelectorKind(99)}} {
+		_, err := inspector.ForeignKeys(t.Context(), selector)
+		assertObjectErrorCause(t, err, ErrInvalidFKSelector, opForeignKeys, "shop")
+	}
+
+	tables := []string{"orders"}
+	selector := IncomingTo(tables...)
+	tables[0] = "mutated"
+	if !reflect.DeepEqual(selector.tables, []string{"orders"}) {
+		t.Errorf("selector tables = %v, want copied [orders]", selector.tables)
+	}
+
+	result, err := inspector.ForeignKeys(t.Context(), IncomingTo())
+	if err != nil {
+		t.Fatalf("empty selector returned error: %v", err)
+	}
+	if !reflect.DeepEqual(result, ForeignKeyResult{}) {
+		t.Errorf("empty selector result = %#v, want zero result", result)
+	}
+
+	_, err = inspector.ForeignKeys(t.Context(), Within("orders", ""))
+	assertObjectErrorCause(t, err, ErrEmptyTableName, opForeignKeys, "shop")
+}
+
+func TestDecodeInnoDBForeignKeyRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		flags      uint64
+		wantDelete string
+		wantUpdate string
+		wantErr    bool
+	}{
+		{flags: 0, wantDelete: "RESTRICT", wantUpdate: "RESTRICT"},
+		{flags: 1, wantDelete: "CASCADE", wantUpdate: "RESTRICT"},
+		{flags: 2, wantDelete: "SET NULL", wantUpdate: "RESTRICT"},
+		{flags: 16, wantDelete: "NO ACTION", wantUpdate: "RESTRICT"},
+		{flags: 4, wantDelete: "RESTRICT", wantUpdate: "CASCADE"},
+		{flags: 8, wantDelete: "RESTRICT", wantUpdate: "SET NULL"},
+		{flags: 32, wantDelete: "RESTRICT", wantUpdate: "NO ACTION"},
+		{flags: 1 | 8, wantDelete: "CASCADE", wantUpdate: "SET NULL"},
+		{flags: 1 | 2, wantErr: true},
+		{flags: 4 | 32, wantErr: true},
+		{flags: 64, wantErr: true},
+	}
+
+	for _, test := range tests {
+		deleteRule, updateRule, err := decodeInnoDBForeignKeyRules(test.flags)
+		if (err != nil) != test.wantErr {
+			t.Errorf("decode flags %d error = %v, wantErr %t", test.flags, err, test.wantErr)
+		}
+		if deleteRule != test.wantDelete || updateRule != test.wantUpdate {
+			t.Errorf(
+				"decode flags %d = (%q, %q), want (%q, %q)",
+				test.flags,
+				deleteRule,
+				updateRule,
+				test.wantDelete,
+				test.wantUpdate,
+			)
+		}
+	}
+}
+
+func TestSplitInnoDBName(t *testing.T) {
+	t.Parallel()
+
+	left, right, err := splitInnoDBName("odd/schema/table")
+	if err != nil {
+		t.Fatalf("split valid name: %v", err)
+	}
+	if left != "odd" || right != "schema/table" {
+		t.Errorf("split = (%q, %q), want (odd, schema/table)", left, right)
+	}
+	if _, _, err := splitInnoDBName("missing"); err == nil {
+		t.Error("split name without slash returned nil error")
+	}
+
+	group := innoDBForeignKeyGroup{
+		id:            "constraint_schema/fk_orders",
+		forName:       "child_schema/orders",
+		refName:       "parent_schema/customers",
+		columnCount:   1,
+		childColumns:  []string{"customer_id"},
+		parentColumns: []string{"id"},
+	}
+	if _, err := group.foreignKey(); err == nil {
+		t.Error("constraint and child schema mismatch returned nil error")
+	}
+}
+
+func TestForeignKeyIndexMatcher(t *testing.T) {
+	t.Parallel()
+
+	indexes := [][]string{
+		{"tenant_id", "order_id", "extra"},
+		{"z", "tenant_id", "order_id"},
+		{"order_id", "tenant_id"},
+		{"tenant_id"},
+	}
+	tests := []struct {
+		columns []string
+		want    bool
+	}{
+		{columns: []string{"tenant_id"}, want: true},
+		{columns: []string{"tenant_id", "order_id"}, want: true},
+		{columns: []string{"order_id", "tenant_id"}, want: true},
+		{columns: []string{"tenant_id", "missing"}, want: false},
+		{columns: []string{"order_id"}, want: true},
+		{columns: []string{"missing"}, want: false},
+	}
+	for _, test := range tests {
+		if got := foreignKeyColumnsIndexed(test.columns, indexes); got != test.want {
+			t.Errorf("foreignKeyColumnsIndexed(%v) = %t, want %t", test.columns, got, test.want)
+		}
+	}
+
+	nonLeadingOnly := [][]string{{"z", "tenant_id", "order_id"}}
+	if foreignKeyColumnsIndexed([]string{"tenant_id", "order_id"}, nonLeadingOnly) {
+		t.Error("non-leading FK columns reported indexed")
+	}
+}
+
+func TestForeignKeyChecks(t *testing.T) {
+	t.Parallel()
+
+	internal := ForeignKey{
+		ConstraintName: "fk_internal",
+		ChildSchema:    "shop",
+		ChildTable:     "items",
+		ParentSchema:   "shop",
+		ParentTable:    "orders",
+		Indexed:        true,
+	}
+	sameSchemaExternal := ForeignKey{
+		ConstraintName: "fk_external",
+		ChildSchema:    "shop",
+		ChildTable:     "audit",
+		ParentSchema:   "shop",
+		ParentTable:    "orders",
+		Indexed:        true,
+	}
+	crossSchemaSameName := ForeignKey{
+		ConstraintName: "fk_cross",
+		ChildSchema:    "archive",
+		ChildTable:     "items",
+		ParentSchema:   "shop",
+		ParentTable:    "orders",
+		Indexed:        true,
+	}
+
+	if got := CheckFKClosure(ForeignKeyResult{}, "shop", nil); got != nil {
+		t.Errorf("empty closure = %#v, want nil", got)
+	}
+	for _, visibility := range []MetadataVisibility{
+		VisibilityUnknown,
+		VisibilityUnconfirmed,
+		MetadataVisibility(99),
+	} {
+		got := CheckFKClosure(
+			ForeignKeyResult{Visibility: visibility},
+			"shop",
+			[]string{"orders"},
+		)
+		if len(got) != 1 || got[0].Check != IDFKClosure || got[0].Facts != visibility {
+			t.Errorf("unconfirmed closure for %s = %#v, want one exact-state finding", visibility, got)
+		}
+	}
+	if got := CheckFKClosure(
+		ForeignKeyResult{
+			Keys:       []ForeignKey{internal},
+			Visibility: VisibilityComplete,
+		},
+		"shop",
+		[]string{"orders", "items"},
+	); got != nil {
+		t.Errorf("complete internal closure = %#v, want nil", got)
+	}
+	if got := CheckFKClosure(
+		ForeignKeyResult{Visibility: VisibilityComplete},
+		"shop",
+		[]string{"orders"},
+	); got != nil {
+		t.Errorf("complete empty closure = %#v, want nil", got)
+	}
+
+	got := CheckFKClosure(
+		ForeignKeyResult{
+			Keys: []ForeignKey{
+				crossSchemaSameName,
+				internal,
+				sameSchemaExternal,
+			},
+			Visibility: VisibilityComplete,
+		},
+		"shop",
+		[]string{"orders", "items"},
+	)
+	if len(got) != 2 {
+		t.Fatalf("external closure findings = %d, want 2: %#v", len(got), got)
+	}
+	first, ok := got[0].Facts.(ForeignKey)
+	if !ok {
+		t.Fatalf("first closure Facts has type %T, want ForeignKey", got[0].Facts)
+	}
+	second, ok := got[1].Facts.(ForeignKey)
+	if !ok {
+		t.Fatalf("second closure Facts has type %T, want ForeignKey", got[1].Facts)
+	}
+	names := []string{first.ConstraintName, second.ConstraintName}
+	if !slices.Equal(names, []string{"fk_cross", "fk_external"}) {
+		t.Errorf("external closure order = %v, want [fk_cross fk_external]", names)
+	}
+
+	unindexed := sameSchemaExternal
+	unindexed.Indexed = false
+	indexedFindings := CheckFKIndexed([]ForeignKey{internal, unindexed})
+	if len(indexedFindings) != 1 || !reflect.DeepEqual(indexedFindings[0].Facts, unindexed) {
+		t.Errorf("CheckFKIndexed() = %#v, want synthetic unindexed fact", indexedFindings)
+	}
+
+	cascade := internal
+	cascade.OnDelete = "CASCADE"
+	rules := CheckCascadeRules([]ForeignKey{
+		cascade,
+		{OnDelete: "RESTRICT"},
+		{OnDelete: "NO ACTION"},
+		{OnDelete: "SET NULL"},
+	})
+	if len(rules) != 1 || !reflect.DeepEqual(rules[0].Facts, cascade) {
+		t.Errorf("CheckCascadeRules() = %#v, want cascade only", rules)
+	}
+}
+
+func TestFKMetadataVisibilityCheck(t *testing.T) {
+	t.Parallel()
+
+	if got := CheckFKMetadataVisibility(VisibilityComplete); got != nil {
+		t.Errorf("complete visibility = %#v, want nil", got)
+	}
+	for _, visibility := range []MetadataVisibility{
+		VisibilityUnknown,
+		VisibilityUnconfirmed,
+		MetadataVisibility(99),
+	} {
+		got := CheckFKMetadataVisibility(visibility)
+		if len(got) != 1 || got[0].Facts != visibility {
+			t.Errorf("visibility %s findings = %#v, want one exact-state finding", visibility, got)
+		}
+	}
+}
+
+func TestInvalidSelectorErrorIsReachable(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewInspector(panicQuerier{}, "shop").ForeignKeys(t.Context(), FKSelector{})
+	if !errors.Is(err, ErrInvalidFKSelector) {
+		t.Errorf("errors.Is(%v, ErrInvalidFKSelector) = false", err)
+	}
+}

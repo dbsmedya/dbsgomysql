@@ -10,6 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pkg/validations`: `ForeignKey`, `ForeignKeyResult`,
+  `MetadataVisibility`, copied opaque selectors (`IncomingTo`,
+  `OutgoingFrom`, `Within`), and `Inspector.ForeignKeys`. Discovery first uses
+  the `PROCESS`-gated `INNODB_FOREIGN*` registry for complete registered
+  InnoDB facts, then falls back to visibility-filtered standard metadata and
+  marks that result unconfirmed.
+- `pkg/validations`: `Grants`, `GrantState`, `Privilege`, and
+  `PrivilegeFact`. Resolution accounts for enabled-role uncertainty and
+  partial revokes, and mechanically degrades answers from pooled or opaque
+  `Querier` implementations that cannot substantiate session state.
+- The six remaining catalog checks: `FK_INDEXED`, `FK_CLOSURE`,
+  `FK_METADATA_VISIBILITY`, `CASCADE_RULES`, `TABLE_PRIVILEGES`, and
+  `SCHEMA_PRIVILEGES`. Every published catalog ID is now implemented.
+- Unit source-orchestration coverage, MySQL 8.0 / 8.4 / 9.7 integration pins,
+  and seven phase-1c E2E golden scenarios covering same- and cross-schema
+  referrers, cascade rules, privilege states, `PROCESS`-only completeness, and
+  no-`PROCESS` fallback visibility.
+
+### Changed
+
+- `FK_INDEXED` now documents MySQL's supporting-index invariant: a finding
+  indicates nonconforming or synthetic facts, not a reproducible slow-query
+  state on a registered InnoDB foreign key.
+- `docs/COMPAT.md` entries 3 and 5 are handled and pinned. Entry 4 is now an
+  explicit bounded limitation: nested role closure is not resolved, and an
+  otherwise-negative answer with enabled roles is unconfirmed.
+
 ## [0.2.0] - 2026-07-26
 
 ### Added

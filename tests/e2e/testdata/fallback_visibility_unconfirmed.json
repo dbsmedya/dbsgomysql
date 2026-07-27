@@ -1,0 +1,12 @@
+[
+  {
+    "check": "FK_CLOSURE",
+    "tables": ["fk_parent", "fk_internal_child"],
+    "facts": 2
+  },
+  {
+    "check": "FK_METADATA_VISIBILITY",
+    "tables": null,
+    "facts": 2
+  }
+]

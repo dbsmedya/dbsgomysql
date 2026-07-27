@@ -49,44 +49,39 @@ type CheckInfo struct {
 	Rationale string
 	// Status reports whether the check is callable in this release.
 	Status CheckStatus
-	// Phase names the implementation slice that delivers the check.
+	// Phase names the implementation slice that delivered the check.
 	Phase string
 }
 
 // Catalog returns every check this package defines or reserves, sorted by ID.
-// Checks that are not implemented yet are included, carrying StatusDeferred, so
-// that the catalog describes the whole published check vocabulary rather than
-// only the part that happens to exist.
+// The catalog describes the whole published check vocabulary.
 //
 // The result is built fresh on each call: a caller may keep or modify it
 // without affecting any other caller. Catalog is safe for concurrent use.
 func Catalog() []CheckInfo {
 	return []CheckInfo{
 		{
-			ID: IDCascadeRules,
-			// Whether this is better modeled as a fact than a check is an open
-			// question, deferred to the phase-1c plan along with the rest of the
-			// foreign-key material.
+			ID:        IDCascadeRules,
 			Rationale: "ON DELETE CASCADE removes rows from tables the caller never named.",
-			Status:    StatusDeferred,
+			Status:    StatusImplemented,
 			Phase:     "1c",
 		},
 		{
 			ID:        IDFKClosure,
 			Rationale: "A foreign key pointing into the table set from outside it can block or cascade a delete the caller did not account for.",
-			Status:    StatusDeferred,
+			Status:    StatusImplemented,
 			Phase:     "1c",
 		},
 		{
 			ID:        IDFKIndexed,
-			Rationale: "An unindexed foreign key column turns every referential check into a full scan of the child table.",
-			Status:    StatusDeferred,
+			Rationale: "MySQL guarantees a leftmost-prefix child index for every foreign key and refuses to drop it, so a finding means the fact did not come from a conforming InnoDB source.",
+			Status:    StatusImplemented,
 			Phase:     "1c",
 		},
 		{
 			ID:        IDFKMetadataVisibility,
-			Rationale: "Foreign key metadata is exposed only to accounts privileged on the child table, so incoming-key discovery cannot be proven complete without global SELECT.",
-			Status:    StatusDeferred,
+			Rationale: "Without a successful PROCESS-gated InnoDB metadata query, the visibility-filtered fallback cannot prove incoming-key discovery complete.",
+			Status:    StatusImplemented,
 			Phase:     "1c",
 		},
 		{
@@ -128,7 +123,7 @@ func Catalog() []CheckInfo {
 		{
 			ID:        IDSchemaPrivileges,
 			Rationale: "Schema-level work fails partway through if the account lacks the privilege, after the operation has already begun.",
-			Status:    StatusDeferred,
+			Status:    StatusImplemented,
 			Phase:     "1c",
 		},
 		{
@@ -146,7 +141,7 @@ func Catalog() []CheckInfo {
 		{
 			ID:        IDTablePrivileges,
 			Rationale: "An operation that discovers a missing table privilege at execution time fails after it has already begun.",
-			Status:    StatusDeferred,
+			Status:    StatusImplemented,
 			Phase:     "1c",
 		},
 		{

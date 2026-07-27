@@ -1,0 +1,18 @@
+[
+  {
+    "check": "FK_CLOSURE",
+    "tables": ["fk_external_child"],
+    "facts": {
+      "constraint_name": "fk_external_parent",
+      "child_schema": "{{target_schema}}",
+      "child_table": "fk_external_child",
+      "child_columns": ["parent_id"],
+      "parent_schema": "{{target_schema}}",
+      "parent_table": "fk_parent",
+      "parent_columns": ["id"],
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "indexed": true
+    }
+  }
+]
