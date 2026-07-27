@@ -204,3 +204,122 @@ func TestTableSpecDiscardsColumnsOfACaseVariantTable(t *testing.T) {
 			"table", spec.Columns)
 	}
 }
+
+const statisticsQueryMarker = "information_schema.STATISTICS"
+
+func TestTableSpecIndexQueryFailureIsWrapped(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("index metadata unavailable")
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("sakila", "payment"),
+		testsupport.ScriptedQuery{Match: statisticsQueryMarker, Err: cause},
+	)
+	inspector := NewInspector(db, "sakila")
+
+	_, err := inspector.TableSpec(
+		context.Background(), Ref("sakila", "payment"), WithIndexes())
+	if !errors.Is(err, cause) {
+		t.Errorf("TableSpec with WithIndexes returned %v, which does not wrap the "+
+			"index-query cause; the table and column queries succeeded, so only the "+
+			"index query can have failed", err)
+	}
+}
+
+func TestTableSpecWithoutIndexesIssuesNoIndexQuery(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("index metadata unavailable")
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("sakila", "payment"),
+		testsupport.ScriptedQuery{Match: statisticsQueryMarker, Err: cause},
+	)
+	inspector := NewInspector(db, "sakila")
+
+	if _, err := inspector.TableSpec(
+		context.Background(), Ref("sakila", "payment")); err != nil {
+		t.Errorf("TableSpec without WithIndexes returned %v; the index query is "+
+			"opt-in and must not run", err)
+	}
+}
+
+func TestTableSpecCapturesIndexParts(t *testing.T) {
+	t.Parallel()
+
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("shop", "items"),
+		testsupport.ScriptedQuery{
+			Match: statisticsQueryMarker,
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "INDEX_NAME", "SEQ_IN_INDEX",
+				"COLUMN_NAME", "SUB_PART", "COLLATION", "EXPRESSION",
+				"NON_UNIQUE", "INDEX_TYPE", "IS_VISIBLE",
+			},
+			// Shapes taken from the probe: a functional part reports
+			// COLUMN_NAME NULL, SUB_PART NULL, and COLLATION 'A'.
+			Rows: [][]driver.Value{
+				{"shop", "items", "idx_func", int64(1), nil, nil, "A", "(`amount` * 2)",
+					int64(1), "BTREE", "YES"},
+				{"shop", "items", "idx_name", int64(1), "name", int64(10), "A", nil,
+					int64(1), "BTREE", "YES"},
+				{"shop", "items", "idx_name", int64(2), "sku", nil, "D", nil,
+					int64(1), "BTREE", "YES"},
+				{"shop", "Items", "idx_wrong", int64(1), "x", nil, "A", nil,
+					int64(1), "BTREE", "YES"},
+			},
+		},
+	)
+	inspector := NewInspector(db, "shop")
+
+	spec, err := inspector.TableSpec(
+		context.Background(), Ref("shop", "items"), WithIndexes())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+
+	if len(spec.Indexes) != 2 {
+		t.Fatalf("indexes = %+v, want exactly two; the idx_wrong row belongs to a "+
+			"case-variant table and must be discarded", spec.Indexes)
+	}
+
+	functional := spec.Indexes[0]
+	if functional.Name != "idx_func" || len(functional.Parts) != 1 {
+		t.Fatalf("functional index = %+v, want idx_func with one part", functional)
+	}
+	if functional.Parts[0].Expression != "(`amount` * 2)" {
+		t.Errorf("functional part Expression = %q, want \"(`amount` * 2)\"; without "+
+			"it two different functional indexes compare equal",
+			functional.Parts[0].Expression)
+	}
+	if functional.Parts[0].Column != "" {
+		t.Errorf("functional part Column = %q, want empty; COLUMN_NAME is NULL for a "+
+			"functional key part", functional.Parts[0].Column)
+	}
+	if functional.Parts[0].Descending {
+		t.Error("functional part reported descending; the probe shows COLLATION 'A' " +
+			"for a functional part, and only 'D' means descending")
+	}
+
+	mixed := spec.Indexes[1]
+	if len(mixed.Parts) != 2 {
+		t.Fatalf("idx_name parts = %+v, want 2", mixed.Parts)
+	}
+	if mixed.Parts[0].Column != "name" {
+		t.Errorf("part 0 column = %q, want \"name\"", mixed.Parts[0].Column)
+	}
+	if mixed.Parts[0].SubPart != 10 {
+		t.Errorf("part 0 SubPart = %d, want 10; INDEX(name(10)) is not INDEX(name) "+
+			"and must not compare equal to it", mixed.Parts[0].SubPart)
+	}
+	if mixed.Parts[0].Descending {
+		t.Error("part 0 reported descending; COLLATION 'A' is ascending")
+	}
+	if mixed.Parts[1].SubPart != 0 {
+		t.Errorf("part 1 SubPart = %d, want 0; a NULL SUB_PART indexes the whole "+
+			"value", mixed.Parts[1].SubPart)
+	}
+	if !mixed.Parts[1].Descending {
+		t.Error("part 1 did not report descending; COLLATION 'D' is a descending " +
+			"key part and a real schema difference")
+	}
+}

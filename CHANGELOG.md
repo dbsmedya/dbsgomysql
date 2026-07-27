@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sections.
 - `pkg/validations`: `Inspector.TableSpec` captures base-table and column
   facts.
+- `pkg/validations`: `WithIndexes` captures ordered index key parts.
 
 ### Changed
 

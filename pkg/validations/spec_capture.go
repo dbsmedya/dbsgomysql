@@ -60,6 +60,12 @@ func (i *Inspector) TableSpec(
 	if err != nil {
 		return TableSpec{}, err
 	}
+	if request.sections.Has(SectionIndexes) {
+		spec.Indexes, err = i.captureIndexes(ctx, ref)
+		if err != nil {
+			return TableSpec{}, err
+		}
+	}
 
 	return spec, nil
 }
@@ -221,4 +227,90 @@ func (i *Inspector) captureColumns(ctx context.Context, ref TableRef) ([]ColumnS
 	}
 
 	return columns, nil
+}
+
+// captureIndexes reads every index, including the primary key and any unique
+// keys. In MySQL a UNIQUE constraint is a unique index — the same object — so
+// it is reported here and not again under constraints.
+//
+// An index is a list of key parts, not a list of column names. SUB_PART carries
+// a prefix length, COLLATION carries the part's direction, and EXPRESSION
+// carries a functional part. Dropping any of them would make INDEX(name) and
+// INDEX(name(10)) — or an ascending and a descending index — compare equal.
+//
+// MySQL creates a supporting index for a foreign key and names it after the
+// constraint; see docs/COMPAT.md entry 16. Such an index is real and is
+// reported like any other.
+func (i *Inspector) captureIndexes(ctx context.Context, ref TableRef) ([]IndexSpec, error) {
+	const query = `
+		SELECT TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX,
+		       COLUMN_NAME, SUB_PART, COLLATION, EXPRESSION,
+		       NON_UNIQUE, INDEX_TYPE, IS_VISIBLE
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+		ORDER BY INDEX_NAME, SEQ_IN_INDEX`
+
+	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
+	if err != nil {
+		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+			fmt.Errorf("query index metadata: %w", err))
+	}
+	defer rows.Close()
+
+	var indexes []IndexSpec
+	for rows.Next() {
+		var (
+			rowSchema  string
+			rowTable   string
+			name       string
+			seq        int
+			column     sql.NullString
+			subPart    sql.NullInt64
+			collation  sql.NullString
+			expression sql.NullString
+			nonUnique  int
+			indexType  string
+			visible    string
+		)
+		if err := rows.Scan(
+			&rowSchema, &rowTable, &name, &seq,
+			&column, &subPart, &collation, &expression,
+			&nonUnique, &indexType, &visible,
+		); err != nil {
+			return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+				fmt.Errorf("scan index metadata: %w", err))
+		}
+		if !matchesResolved(ref, rowSchema, rowTable) {
+			continue
+		}
+
+		if len(indexes) == 0 || indexes[len(indexes)-1].Name != name {
+			indexes = append(indexes, IndexSpec{
+				Name:    name,
+				Unique:  nonUnique == 0,
+				Type:    indexType,
+				Visible: visible == "YES",
+			})
+		}
+
+		part := IndexPart{
+			Column:     column.String,
+			Expression: expression.String,
+			// COLLATION is 'A' ascending, 'D' descending, or NULL for an
+			// unsorted part. Only 'D' is descending.
+			Descending: collation.String == "D",
+		}
+		if subPart.Valid {
+			part.SubPart = int(subPart.Int64)
+		}
+
+		last := &indexes[len(indexes)-1]
+		last.Parts = append(last.Parts, part)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
+			fmt.Errorf("iterate index metadata: %w", err))
+	}
+
+	return indexes, nil
 }
