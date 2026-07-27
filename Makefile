@@ -14,6 +14,15 @@ COVERPROFILE ?= coverage.out
 # how "passes on my machine" happens.
 GOLANGCI_VERSION := v2.12.2
 
+# deadcode is pinned for the same reason as the linter — reachability findings
+# move as x/tools changes — but it is run through `go run` rather than expected
+# on PATH. It builds in seconds, so pinning the invocation removes the "wrong
+# version installed" failure mode that `tools-check` exists to catch for
+# golangci-lint, and no contributor has a second binary to install. `go run
+# pkg@version` resolves outside this module, so go.mod and go.sum are untouched.
+DEADCODE_VERSION := v0.48.0
+DEADCODE         ?= $(GO) run golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION)
+
 # `go vet`, `go test`, and `golangci-lint` all exit non-zero on a module that
 # contains no packages. Until the first package lands, targets guarded by these
 # skip cleanly rather than failing the gate for the wrong reason. The guards
@@ -42,7 +51,7 @@ help: ## Show available targets
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: tools-check fmt-check vet vet-tags lint lint-tags test tidy-check deps-check build ## Full verification gate (AGENTS.md)
+check: tools-check fmt-check vet vet-tags lint lint-tags deadcode-check test tidy-check deps-check build ## Full verification gate (AGENTS.md)
 	@echo ""
 	@echo "make check: PASS"
 
@@ -133,6 +142,44 @@ lint-tags: ## Lint the build-tagged test layers (integration, e2e)
 		$(GOLANGCI) run --build-tags=e2e; \
 	else \
 		echo "lint-tags: skipped (no Go packages yet)"; \
+	fi
+
+# This module ships no `main`, so deadcode has no entry point to walk from and
+# reports "no main packages" on its own. `-test` supplies the roots instead:
+# every Test function becomes one. For a library that turns the question from
+# "can this be deleted?" into "does anything reach this?" — an exported function
+# no test exercises is reported, which is the test-first rule in AGENTS.md §5
+# stated as a build failure.
+#
+# Unlike vet and lint, this pass names both tags at once. Reachability is a
+# whole-program property: analysing `integration` alone reports every helper only
+# the `e2e` layer calls as dead, and the reverse. A symbol genuinely duplicated
+# across the two layers stops the load here rather than passing quietly, which is
+# a real conflict worth surfacing, not a false alarm.
+#
+# deadcode exits 0 whether or not it finds anything, so the target fails on
+# non-empty output and keeps a non-zero exit — a tool that could not run at all —
+# separate from a report.
+.PHONY: deadcode-check
+deadcode-check: ## Fail if any function is unreachable from the test suite
+	@if $(HAVE_PKGS); then \
+		if ! out="$$($(DEADCODE) -test -tags=integration,e2e ./... 2>&1)"; then \
+			echo "deadcode-check: FAIL — deadcode could not run:"; \
+			echo "$$out" | sed 's/^/  /'; \
+			exit 1; \
+		fi; \
+		if [ -n "$$out" ]; then \
+			echo "deadcode-check: FAIL — unreachable functions:"; \
+			echo "$$out" | sed 's/^/  /'; \
+			echo ""; \
+			echo "Delete the code, or add the test that reaches it."; \
+			echo "To see why something else is considered live:"; \
+			echo "  $(DEADCODE) -test -tags=integration,e2e -whylive=<func> ./..."; \
+			exit 1; \
+		fi; \
+		echo "deadcode-check: ok"; \
+	else \
+		echo "deadcode-check: skipped (no Go packages yet)"; \
 	fi
 
 # ---------------------------------------------------------------------------

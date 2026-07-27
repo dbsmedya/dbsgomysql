@@ -145,6 +145,12 @@ compose services, ports, and the rule that tests **skip rather than fail** when
 the DSN is unset — are published in [`docs/testing.md`](docs/testing.md), which is
 the only copy. `make help` shows which target runs which layer.
 
+`make check` also runs a reachability pass. The module ships no `main`, so
+`deadcode` is rooted at the test binaries across both build tags: a function
+nothing reaches — including an exported one no test exercises — fails the gate.
+Delete it or write the test that reaches it. This is the test-first rule stated
+as a build failure, not a new obligation.
+
 Supported floor is MySQL 8.0; the 26.x line is watch-only, allowed to fail and
 never depended on. This repo owns its own fixtures and containers. Write the test
 first and watch it fail for the right reason. Handle version drift by normalizing
