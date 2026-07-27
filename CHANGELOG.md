@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pkg/validations`: `WithIndexes` captures ordered index key parts.
 - `pkg/validations`: `WithConstraints` captures CHECK and foreign-key
   constraints.
+- `pkg/validations`: `DiffSpecs` reports table-level and unconfirmed
+  differences.
 
 ### Changed
 
