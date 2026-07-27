@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `pkg/validations`: normalize legacy integer display widths while preserving
+  `tinyint(1)`.
+
 ## [0.3.0] - 2026-07-27
 
 ### Added
