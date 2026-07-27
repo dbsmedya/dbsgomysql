@@ -1,0 +1,67 @@
+[
+  {
+    "kind": 4,
+    "side": 3,
+    "a": "source ledger",
+    "b": "archive"
+  },
+  {
+    "kind": 7,
+    "side": 3,
+    "column": "customer_email",
+    "a": "varchar(100)",
+    "b": "varchar(200)"
+  },
+  {
+    "kind": 7,
+    "side": 3,
+    "column": "is_paid",
+    "a": "tinyint(1)",
+    "b": "tinyint"
+  },
+  {
+    "kind": 11,
+    "side": 3,
+    "column": "note",
+    "a": "none",
+    "b": "n/a"
+  },
+  {
+    "kind": 13,
+    "side": 3,
+    "column": "hidden",
+    "a": "true",
+    "b": "false"
+  },
+  {
+    "kind": 14,
+    "side": 3,
+    "column": "total_cents",
+    "a": "stored",
+    "b": "virtual"
+  },
+  {
+    "kind": 6,
+    "side": 2,
+    "column": "region_id",
+    "a": "int"
+  },
+  {
+    "kind": 6,
+    "side": 1,
+    "column": "archived_at",
+    "b": "datetime"
+  },
+  {
+    "kind": 19,
+    "side": 2,
+    "index": "idx_orders_amount"
+  },
+  {
+    "kind": 27,
+    "side": 3,
+    "index": "chk_orders_amount",
+    "a": "(`amount` >= 0)",
+    "b": "(`amount` >= 1)"
+  }
+]

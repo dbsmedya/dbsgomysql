@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const dataTypeInt = "int"
+const (
+	dataTypeInt     = "int"
+	dataTypeTinyint = "tinyint"
+)
 
 // PKInfo describes one table's primary key.
 //
@@ -302,7 +305,7 @@ func asciiFoldEqual(left, right string) bool {
 
 func isIntegerDataType(dataType string) bool {
 	switch strings.ToLower(dataType) {
-	case "tinyint", "smallint", "mediumint", dataTypeInt, "integer", "bigint":
+	case dataTypeTinyint, "smallint", "mediumint", dataTypeInt, "integer", "bigint":
 		return true
 	default:
 		return false

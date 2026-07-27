@@ -38,10 +38,11 @@ Four principles govern every entry here. They are deliberately conservative:
 
 ---
 
-## 1. Integer display widths dropped 🔜
+## 1. Integer display widths dropped ✅
 
-**Affected:** 8.0.17 and newer report integer types without display width;
-earlier servers and dumps taken from them include it.
+**Affected:** all supported versions can expose legacy widths after an in-place
+upgrade; 8.0.17 and newer stop recording widths on newly created integer
+columns.
 
 **Symptom:** `information_schema.COLUMNS.COLUMN_TYPE` returns `bigint(20)` on
 an older server and `bigint` on a current one. A naive string comparison
@@ -49,9 +50,19 @@ between a schema captured before 8.0.17 and one captured after reports a false
 type mismatch on every integer column.
 
 **Handling:** `ColumnSpec.NormalizedType` strips the display width from
-`tinyint`, `smallint`, `mediumint`, `int`, `integer`, and `bigint`. The
-`unsigned` and `zerofill` attributes are **preserved** — they change the value
-range and are therefore real differences, not formatting noise.
+`smallint`, `mediumint`, `int`, `integer`, and `bigint`, and from `tinyint`
+except for **`tinyint(1)`**. `BOOLEAN` is an alias for `TINYINT(1)`, and MySQL
+preserves that width where it strips every other; erasing it would report a
+boolean and a plain `TINYINT` as identical. The `unsigned` and `zerofill`
+attributes are preserved because they change the value range.
+
+A fresh current server cannot reproduce `int(11)`, so legacy-form
+normalization is pinned synthetically by
+[`TestNormalizeColumnType`](../pkg/validations/spec_normalize_test.go). The
+matrix pins that new integers are bare, `tinyint(1)` survives, and decimal
+precision is untouched in
+[`TestTableSpecCompatPinsIntegration`](../pkg/validations/validations_integration_test.go),
+verified on 8.0.46, 8.4.9, and 9.7.1.
 
 ## 2. `information_schema` name collations vary by category ✅
 
@@ -314,6 +325,83 @@ MySQL applies is not modeled here. Matching is case-exact, like every other
 identifier comparison in the package. Pinned by
 [`TestWildcardSchemaGrantDowngradesAbsenceOnly`](../pkg/validations/grants_test.go)
 and [`TestLikePatternMatches`](../pkg/validations/grants_test.go).
+
+---
+
+## 13. PRIMARY KEY constraint names are discarded ✅
+
+**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+
+**Symptom:** MySQL stores every primary key under the fixed name `PRIMARY`.
+Writing `CONSTRAINT pk_orders PRIMARY KEY (id)` does not preserve `pk_orders`,
+although names declared for CHECK, FOREIGN KEY, and UNIQUE constraints do
+survive.
+
+**Handling:** `WithIndexes()` reports the server fact: the primary index is
+named `PRIMARY`. Consumers must not compare or reconstruct a declared
+primary-key constraint name that MySQL discarded. The behavior and the
+survival of other declared names are pinned by
+[`TestTableSpecCompatPinsIntegration`](../pkg/validations/validations_integration_test.go).
+
+## 14. Expression defaults are rewritten and marked only in `EXTRA` ✅
+
+**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+
+**Symptom:** a declaration such as `DEFAULT (CURRENT_DATE)` is exposed through
+`COLUMN_DEFAULT` as `curdate()`. That value alone is indistinguishable from a
+literal default containing the same text; only `DEFAULT_GENERATED` in
+`COLUMNS.EXTRA` identifies the expression.
+
+**Handling:** `ColumnSpec.Default` preserves the rewritten server value and
+`DefaultIsExpression` records `DEFAULT_GENERATED`. `DiffSpecs` compares both,
+so a literal and an expression with equal text do not compare equal. Pinned by
+[`TestTableSpecCompatPinsIntegration`](../pkg/validations/validations_integration_test.go)
+and
+[`TestDiffSpecsExpressionDefaultDiffersFromLiteral`](../pkg/validations/spec_diff_test.go).
+
+## 15. `CHECK_CLAUSE` is server-normalized ✅
+
+**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+
+**Symptom:** `information_schema.CHECK_CONSTRAINTS.CHECK_CLAUSE` is not the
+source text. MySQL backticks identifiers and rewrites keyword case; for
+example, `CHECK (gpa BETWEEN 0.00 AND 4.00)` becomes
+`` (`gpa` between 0.00 and 4.00) ``.
+
+**Handling:** `ConstraintSpec.CheckClause` preserves the normalized server
+form and `DiffSpecs` compares it verbatim. The exact rewrites are pinned by
+[`TestTableSpecCompatPinsIntegration`](../pkg/validations/validations_integration_test.go).
+
+## 16. Foreign keys create a supporting index named after the constraint 👁
+
+**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+
+**Symptom:** when no suitable child index exists, MySQL creates one and names
+it after the foreign-key constraint. The index is visible in
+`information_schema.STATISTICS` even though no separate index appeared in the
+DDL.
+
+**Handling:** none is needed: the supporting index is real, and
+`WithIndexes()` reports it like every other index. A caller that captures only
+indexes can therefore see a foreign-key difference as `IndexAbsent`; capture
+constraints too when the relationship itself is in scope. Pinned by
+[`TestForeignKeyCreatesSupportingIndexIntegration`](../pkg/validations/validations_integration_test.go).
+
+## 17. A `NOT ENFORCED` CHECK is recorded but never evaluated ✅
+
+**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+
+**Symptom:** `CHECK (a > 0) NOT ENFORCED` remains present in metadata with the
+same clause as an enforced check, but `TABLE_CONSTRAINTS.ENFORCED` is `NO` and
+the server does not validate rows against it. Comparing the clause alone
+produces a false all-clear.
+
+**Handling:** `ConstraintSpec.Enforced` records the metadata flag for CHECK
+constraints, and `DiffSpecs` emits `CheckEnforcementMismatch` independently of
+the clause. Live behavior is pinned by
+[`TestTableSpecCompatEnforcementIntegration`](../pkg/validations/validations_integration_test.go);
+the pure comparison is pinned by
+[`TestDiffSpecsConstraintDifferences`](../pkg/validations/spec_diff_test.go).
 
 ---
 

@@ -5,6 +5,7 @@ package validations_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"reflect"
 	"slices"
@@ -58,6 +59,27 @@ func TestInspectorSmoke(t *testing.T) {
 	grants, err := inspector.Grants(t.Context())
 	if err != nil {
 		t.Fatalf("Grants smoke call: %v", err)
+	}
+	spec, err := inspector.TableSpec(t.Context(),
+		validations.Ref(schema, "clean_table"),
+		validations.WithIndexes(), validations.WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+	if spec.Table != "clean_table" {
+		t.Errorf("TableSpec.Table = %q, want \"clean_table\"", spec.Table)
+	}
+	if spec.Engine != "InnoDB" {
+		t.Errorf("TableSpec.Engine = %q, want \"InnoDB\"", spec.Engine)
+	}
+	if len(spec.Columns) == 0 {
+		t.Error("TableSpec returned no columns for a table that has one")
+	}
+	if !spec.Captured.Has(validations.SectionIndexes) {
+		t.Error("Captured does not record SectionIndexes despite WithIndexes")
+	}
+	if diffs := validations.DiffSpecs(spec, spec); len(diffs) != 0 {
+		t.Errorf("DiffSpecs against itself returned %+v, want none", diffs)
 	}
 
 	expected := smokeExpectedPKs()
@@ -1137,6 +1159,261 @@ func factsForSchema(
 	}
 
 	return schemaFacts{tables: tables, pks: pks, invisible: invisible, triggers: triggers}
+}
+
+func TestTableSpecCompatPinsIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_spec_compat")
+
+	testsupport.ExecSQL(t, db, `
+		CREATE TABLE `+schema+`.compat_pins (
+			widths        TINYINT(1),
+			plain_tiny    TINYINT,
+			big           BIGINT(20) UNSIGNED,
+			exact         DECIMAL(3,2),
+			created       DATE DEFAULT (CURRENT_DATE),
+			literal_text  VARCHAR(20) DEFAULT 'Active',
+			checked       INT,
+			gpa           DECIMAL(3,2),
+			CONSTRAINT pk_declared_name PRIMARY KEY (plain_tiny),
+			CONSTRAINT uq_declared_name UNIQUE (literal_text),
+			CONSTRAINT chk_declared_name CHECK (checked >= 16),
+			CONSTRAINT chk_declared_range CHECK (gpa BETWEEN 0.00 AND 4.00)
+		) ENGINE=InnoDB`)
+
+	inspector := validations.NewInspector(db, schema)
+	spec, err := inspector.TableSpec(t.Context(),
+		validations.Ref(schema, "compat_pins"),
+		validations.WithIndexes(), validations.WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+
+	byName := make(map[string]validations.ColumnSpec, len(spec.Columns))
+	for _, column := range spec.Columns {
+		byName[column.Name] = column
+	}
+
+	t.Run("compat 1: tinyint(1) survives normalization", func(t *testing.T) {
+		if got := byName["widths"].NormalizedType; got != "tinyint(1)" {
+			t.Errorf("NormalizedType for TINYINT(1) = %q, want \"tinyint(1)\"; "+
+				"BOOLEAN is an alias for it and the width carries that meaning", got)
+		}
+		if got := byName["plain_tiny"].NormalizedType; got != "tinyint" {
+			t.Errorf("NormalizedType for TINYINT = %q, want \"tinyint\"", got)
+		}
+		if byName["widths"].NormalizedType == byName["plain_tiny"].NormalizedType {
+			t.Error("TINYINT(1) and TINYINT normalized to the same type; a BOOLEAN " +
+				"and a plain TINYINT would compare equal")
+		}
+	})
+
+	t.Run("compat 1: bigint width stripped, unsigned kept", func(t *testing.T) {
+		if got := byName["big"].NormalizedType; got != "bigint unsigned" {
+			t.Errorf("NormalizedType = %q, want \"bigint unsigned\"", got)
+		}
+	})
+
+	t.Run("compat 1: decimal precision untouched", func(t *testing.T) {
+		if got := byName["exact"].NormalizedType; got != "decimal(3,2)" {
+			t.Errorf("NormalizedType = %q, want \"decimal(3,2)\"; precision and scale "+
+				"are semantic, not display width", got)
+		}
+	})
+
+	t.Run("compat 13: declared primary key name is discarded", func(t *testing.T) {
+		var names []string
+		for _, index := range spec.Indexes {
+			names = append(names, index.Name)
+		}
+		found := false
+		for _, name := range names {
+			if name == "PRIMARY" {
+				found = true
+			}
+			if name == "pk_declared_name" {
+				t.Error("the declared primary-key name survived; MySQL stores it as " +
+					"PRIMARY and this package must not expect otherwise")
+			}
+		}
+		if !found {
+			t.Errorf("indexes = %v, want one named PRIMARY", names)
+		}
+	})
+
+	t.Run("compat 13: other constraint names survive", func(t *testing.T) {
+		var constraintNames []string
+		for _, constraint := range spec.Constraints {
+			constraintNames = append(constraintNames, constraint.Name)
+		}
+		if !slices.Contains(constraintNames, "chk_declared_name") {
+			t.Errorf("constraints = %v, want chk_declared_name; MySQL discards only "+
+				"the primary-key name", constraintNames)
+		}
+	})
+
+	t.Run("compat 14: expression default is rewritten and marked", func(t *testing.T) {
+		created := byName["created"]
+		if !created.DefaultIsExpression {
+			t.Error("DEFAULT (CURRENT_DATE) was not marked as an expression; without " +
+				"DEFAULT_GENERATED it is indistinguishable from a literal of the same text")
+		}
+		if created.Default == nil {
+			t.Fatal("expression default was not captured")
+		}
+		if *created.Default != "curdate()" {
+			t.Errorf("Default = %q, want \"curdate()\"", *created.Default)
+		}
+
+		literal := byName["literal_text"]
+		if literal.DefaultIsExpression {
+			t.Error("a literal default was marked as an expression")
+		}
+		if literal.Default == nil || *literal.Default != "Active" {
+			t.Errorf("literal Default = %v, want \"Active\"; COLUMN_DEFAULT holds the "+
+				"value, not its SQL literal form", literal.Default)
+		}
+	})
+
+	t.Run("compat 15: check clause is server-normalized", func(t *testing.T) {
+		var clause string
+		for _, constraint := range spec.Constraints {
+			if constraint.Name == "chk_declared_name" {
+				clause = constraint.CheckClause
+			}
+		}
+		if clause != "(`checked` >= 16)" {
+			t.Errorf("CHECK_CLAUSE = %q, want \"(`checked` >= 16)\"", clause)
+		}
+	})
+
+	t.Run("compat 15: BETWEEN is lowercased", func(t *testing.T) {
+		var clause string
+		for _, constraint := range spec.Constraints {
+			if constraint.Name == "chk_declared_range" {
+				clause = constraint.CheckClause
+			}
+		}
+		if clause != "(`gpa` between 0.00 and 4.00)" {
+			t.Errorf("CHECK_CLAUSE = %q, want \"(`gpa` between 0.00 and 4.00)\"; the "+
+				"server rewrites keyword case and this package compares the rewritten "+
+				"form verbatim", clause)
+		}
+	})
+}
+
+func TestTableSpecCompatEnforcementIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_spec_enforced")
+
+	testsupport.ExecSQL(t, db, `
+		CREATE TABLE `+schema+`.enforced_t (
+			a INT,
+			CONSTRAINT chk_on  CHECK (a > 0),
+			CONSTRAINT chk_off CHECK (a > 0) NOT ENFORCED
+		) ENGINE=InnoDB`)
+
+	inspector := validations.NewInspector(db, schema)
+	spec, err := inspector.TableSpec(t.Context(),
+		validations.Ref(schema, "enforced_t"), validations.WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+
+	byName := make(map[string]validations.ConstraintSpec, len(spec.Constraints))
+	for _, constraint := range spec.Constraints {
+		byName[constraint.Name] = constraint
+	}
+	if !byName["chk_on"].Enforced {
+		t.Error("chk_on reported unenforced despite being declared without NOT ENFORCED")
+	}
+	if byName["chk_off"].Enforced {
+		t.Error("chk_off reported enforced; the server records ENFORCED='NO' and " +
+			"never evaluates the constraint")
+	}
+	if byName["chk_on"].CheckClause != byName["chk_off"].CheckClause {
+		t.Errorf("clauses differ: chk_on=%q chk_off=%q; the fixture declares "+
+			"identical clauses so enforcement is the only semantic difference",
+			byName["chk_on"].CheckClause, byName["chk_off"].CheckClause)
+	}
+}
+
+func TestTableSpecRejectsAViewIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_spec_view")
+
+	testsupport.ExecSQL(t, db, `
+		CREATE TABLE `+schema+`.base_t (id INT PRIMARY KEY, amount INT) ENGINE=InnoDB`)
+	testsupport.ExecSQL(t, db, `
+		CREATE VIEW `+schema+`.v_positive AS
+			SELECT id, amount FROM `+schema+`.base_t WHERE amount > 0`)
+
+	inspector := validations.NewInspector(db, schema)
+	_, err := inspector.TableSpec(t.Context(), validations.Ref(schema, "v_positive"))
+	if !errors.Is(err, validations.ErrUnsupportedTableType) {
+		t.Errorf("TableSpec for a view returned %v, want ErrUnsupportedTableType; "+
+			"information_schema exposes a view's columns but not its defining query, "+
+			"so a view spec would compare equal to any other view over the same "+
+			"columns", err)
+	}
+}
+
+func TestTableSpecRejectsCaseVariantIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_spec_case")
+
+	testsupport.ExecSQL(t, db, `
+		CREATE TABLE `+schema+`.CaseTable (id INT PRIMARY KEY) ENGINE=InnoDB`)
+
+	inspector := validations.NewInspector(db, schema)
+	if _, err := inspector.TableSpec(
+		t.Context(), validations.Ref(schema, "CaseTable")); err != nil {
+		t.Fatalf("TableSpec for the exact name: %v", err)
+	}
+	if _, err := inspector.TableSpec(
+		t.Context(), validations.Ref(schema, "casetable")); !errors.Is(
+		err, validations.ErrTableNotFound) {
+		t.Errorf("TableSpec for \"casetable\" returned %v, want ErrTableNotFound; "+
+			"name matching is case-exact", err)
+	}
+}
+
+func TestForeignKeyCreatesSupportingIndexIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_spec_fkindex")
+
+	testsupport.ExecSQL(t, db, `
+		CREATE TABLE `+schema+`.parent (id INT PRIMARY KEY) ENGINE=InnoDB`)
+	testsupport.ExecSQL(t, db, `
+		CREATE TABLE `+schema+`.child (
+			id INT PRIMARY KEY,
+			parent_id INT,
+			CONSTRAINT fk_child_parent FOREIGN KEY (parent_id)
+				REFERENCES `+schema+`.parent(id) ON DELETE SET NULL
+		) ENGINE=InnoDB`)
+
+	inspector := validations.NewInspector(db, schema)
+	spec, err := inspector.TableSpec(t.Context(), validations.Ref(schema, "child"),
+		validations.WithIndexes(), validations.WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+
+	var indexNames []string
+	for _, index := range spec.Indexes {
+		indexNames = append(indexNames, index.Name)
+	}
+	if !slices.Contains(indexNames, "fk_child_parent") {
+		t.Errorf("indexes = %v, want one named fk_child_parent; MySQL creates a "+
+			"supporting index for a foreign key and names it after the constraint",
+			indexNames)
+	}
+
+	var rule string
+	for _, constraint := range spec.Constraints {
+		if constraint.Name == "fk_child_parent" {
+			rule = constraint.DeleteRule
+		}
+	}
+	if rule != "SET NULL" {
+		t.Errorf("DeleteRule = %q, want \"SET NULL\"; referential rules are a real "+
+			"schema difference and must reach DiffSpecs", rule)
+	}
 }
 
 func validationDatabase(t *testing.T) (db *sql.DB, schema string) {

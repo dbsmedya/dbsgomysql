@@ -12,6 +12,7 @@ const (
 	opGrants           = "grants"
 	opInvisibleColumns = "invisible_columns"
 	opPrimaryKeys      = "primary_keys"
+	opTableSpec        = "table_spec"
 	opTables           = "tables"
 	opTriggers         = "triggers"
 )

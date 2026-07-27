@@ -324,6 +324,57 @@ func TestPhase1cFindingsE2E(t *testing.T) {
 	})
 }
 
+func TestTableSpecDiffE2E(t *testing.T) {
+	sourceDB, sourceSchema := testsupport.MySQLDatabase(t, "dbsgomysql_e2e_src")
+	testsupport.LoadSQLFixture(t, sourceDB, sourceSchema, "../fixtures/phase1d_source.sql")
+
+	destDB, destSchema := testsupport.MySQLDatabase(t, "dbsgomysql_e2e_dst")
+	testsupport.LoadSQLFixture(t, destDB, destSchema, "../fixtures/phase1d_dest.sql")
+
+	sourceInspector := validations.NewInspector(sourceDB, sourceSchema)
+	destInspector := validations.NewInspector(destDB, destSchema)
+
+	t.Run("full_capture", func(t *testing.T) {
+		options := []validations.SpecOption{
+			validations.WithIndexes(),
+			validations.WithConstraints(),
+			validations.WithComment(),
+		}
+
+		specA, err := sourceInspector.TableSpec(
+			t.Context(), validations.Ref(sourceSchema, "orders"), options...)
+		if err != nil {
+			t.Fatalf("source TableSpec: %v", err)
+		}
+		specB, err := destInspector.TableSpec(
+			t.Context(), validations.Ref(destSchema, "orders"), options...)
+		if err != nil {
+			t.Fatalf("destination TableSpec: %v", err)
+		}
+
+		diffs := validations.DiffSpecs(specA, specB)
+		assertDiffIdentities(t, diffs, expectedFullCaptureDiffs())
+		assertGoldenDiffs(t, diffs, "testdata/spec_diff_full.json")
+	})
+
+	t.Run("indexes_unconfirmed", func(t *testing.T) {
+		specA, err := sourceInspector.TableSpec(
+			t.Context(), validations.Ref(sourceSchema, "orders"), validations.WithIndexes())
+		if err != nil {
+			t.Fatalf("source TableSpec: %v", err)
+		}
+		specB, err := destInspector.TableSpec(
+			t.Context(), validations.Ref(destSchema, "orders"))
+		if err != nil {
+			t.Fatalf("destination TableSpec: %v", err)
+		}
+
+		diffs := validations.DiffSpecs(specA, specB)
+		assertDiffIdentities(t, diffs, expectedIndexesUnconfirmedDiffs())
+		assertGoldenDiffs(t, diffs, "testdata/spec_diff_indexes_unconfirmed.json")
+	})
+}
+
 type phase1cFacts struct {
 	incoming         *validations.ForeignKeyResult
 	within           *validations.ForeignKeyResult
@@ -585,6 +636,100 @@ func assertGoldenFindings(t *testing.T, findings []validations.Finding, path str
 	if !reflect.DeepEqual(actual, expected) {
 		t.Errorf("findings differ from %s:\n got %s\nwant %s", path, actualJSON, expectedJSON)
 	}
+}
+
+func assertGoldenDiffs(t *testing.T, diffs []validations.SpecDiff, path string) {
+	t.Helper()
+
+	actualJSON, err := json.Marshal(diffs)
+	if err != nil {
+		t.Fatalf("marshal diffs: %v", err)
+	}
+	expectedJSON, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden %q: %v", path, err)
+	}
+
+	var actual, expected any
+	if err := json.Unmarshal(actualJSON, &actual); err != nil {
+		t.Fatalf("parse actual diffs JSON: %v", err)
+	}
+	if err := json.Unmarshal(expectedJSON, &expected); err != nil {
+		t.Fatalf("parse golden diffs JSON: %v", err)
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Errorf("diffs differ from %s:\n got %s\nwant %s", path, actualJSON, expectedJSON)
+	}
+}
+
+type diffIdentity struct {
+	Kind   validations.SpecDiffKind
+	Side   validations.DiffSide
+	Column string
+	Index  string
+}
+
+// assertDiffIdentities pins the exact ordered set of differences a scenario is
+// built to produce. Every entry corresponds to one line in the comment block at
+// the top of phase1d_dest.sql.
+func assertDiffIdentities(t *testing.T, diffs []validations.SpecDiff, want []diffIdentity) {
+	t.Helper()
+
+	got := make([]diffIdentity, 0, len(diffs))
+	for _, diff := range diffs {
+		got = append(got, diffIdentity{
+			Kind: diff.Kind, Side: diff.Side, Column: diff.Column, Index: diff.Index,
+		})
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d diffs, want %d\n got: %+v\nwant: %+v",
+			len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("diff %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func expectedColumnDiffs() []diffIdentity {
+	return []diffIdentity{
+		{Kind: validations.ColumnTypeMismatch, Side: validations.SideBoth,
+			Column: "customer_email"},
+		{Kind: validations.ColumnTypeMismatch, Side: validations.SideBoth,
+			Column: "is_paid"},
+		{Kind: validations.ColumnDefaultMismatch, Side: validations.SideBoth,
+			Column: "note"},
+		{Kind: validations.ColumnVisibilityMismatch, Side: validations.SideBoth,
+			Column: "hidden"},
+		{Kind: validations.ColumnGeneratedMismatch, Side: validations.SideBoth,
+			Column: "total_cents"},
+		{Kind: validations.ColumnAbsent, Side: validations.SideB, Column: "region_id"},
+		{Kind: validations.ColumnAbsent, Side: validations.SideA, Column: "archived_at"},
+	}
+}
+
+func expectedFullCaptureDiffs() []diffIdentity {
+	want := []diffIdentity{
+		{Kind: validations.CommentMismatch, Side: validations.SideBoth},
+	}
+	want = append(want, expectedColumnDiffs()...)
+
+	return append(want,
+		diffIdentity{Kind: validations.IndexAbsent, Side: validations.SideB,
+			Index: "idx_orders_amount"},
+		diffIdentity{Kind: validations.CheckClauseMismatch, Side: validations.SideBoth,
+			Index: "chk_orders_amount"},
+	)
+}
+
+func expectedIndexesUnconfirmedDiffs() []diffIdentity {
+	want := expectedColumnDiffs()
+
+	return append(want,
+		diffIdentity{Kind: validations.IndexUnconfirmed, Side: validations.SideB},
+	)
 }
 
 func assertPhase1cGolden(

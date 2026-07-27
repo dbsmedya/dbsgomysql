@@ -20,6 +20,15 @@ var (
 	// ErrInvalidFKSelector means ForeignKeys received a selector not produced
 	// by IncomingTo, OutgoingFrom, or Within.
 	ErrInvalidFKSelector = errors.New("validations: invalid foreign-key selector")
+	// ErrInvalidTableRef means TableSpec received a TableRef that was not
+	// produced by Ref, or one naming an empty schema or table.
+	ErrInvalidTableRef = errors.New("validations: invalid table reference")
+	// ErrTableNotFound means TableSpec was asked for a table the inspected
+	// server does not expose under that exact name.
+	ErrTableNotFound = errors.New("validations: table not found")
+	// ErrUnsupportedTableType means TableSpec resolved an object that is not a
+	// BASE TABLE, such as a view.
+	ErrUnsupportedTableType = errors.New("validations: unsupported table type")
 )
 
 // ObjectError reports a failed schema inspection or invalid inspection
@@ -31,10 +40,13 @@ var (
 // provided callers do not mutate its exported fields.
 type ObjectError struct {
 	// Op names the facts operation that failed: "tables", "primary_keys",
-	// "triggers", "invisible_columns", "foreign_keys", or "grants".
+	// "triggers", "invisible_columns", "foreign_keys", "grants", or
+	// "table_spec".
 	Op string
-	// Schema is the Inspector's schema. It is empty only when the schema
-	// argument itself is invalid.
+	// Schema names the schema the failure concerns. For every op that reads the
+	// Inspector's own schema it is that schema; for "table_spec" it is the
+	// requested TableRef's schema, which need not be the one the Inspector is
+	// bound to. It is empty only when the schema argument itself is invalid.
 	Schema string
 	// Table names the affected table when attribution is possible.
 	Table string

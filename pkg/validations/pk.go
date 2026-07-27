@@ -31,7 +31,7 @@ func (k PKKind) String() string {
 	case PKUnknown:
 		return unknownEnum
 	case PKNone:
-		return pkKindNone
+		return enumNoneName
 	case PKSingle:
 		return "single"
 	case PKComposite:
