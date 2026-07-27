@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `COLUMNS.EXTRA`.
 - `pkg/validations`: `TableSpec`, `TableRef`, `Ref`, and optional spec
   sections.
+- `pkg/validations`: `Inspector.TableSpec` captures base-table and column
+  facts.
 
 ### Changed
 
