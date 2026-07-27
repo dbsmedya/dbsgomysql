@@ -43,8 +43,10 @@ type ObjectError struct {
 	// "triggers", "invisible_columns", "foreign_keys", "grants", or
 	// "table_spec".
 	Op string
-	// Schema is the Inspector's schema. It is empty only when the schema
-	// argument itself is invalid.
+	// Schema names the schema the failure concerns. For every op that reads the
+	// Inspector's own schema it is that schema; for "table_spec" it is the
+	// requested TableRef's schema, which need not be the one the Inspector is
+	// bound to. It is empty only when the schema argument itself is invalid.
 	Schema string
 	// Table names the affected table when attribution is possible.
 	Table string
