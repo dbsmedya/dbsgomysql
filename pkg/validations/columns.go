@@ -2,8 +2,132 @@ package validations
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"slices"
 )
+
+// ColumnInfo describes one column of a requested table or view.
+//
+// ColumnInfo is a plain value and is safe for concurrent use.
+type ColumnInfo struct {
+	// Name is the column's exact server-side spelling.
+	Name string `json:"name"`
+	// Ordinal is the column's one-based ORDINAL_POSITION.
+	Ordinal int `json:"ordinal"`
+	// DataType is information_schema.COLUMNS.DATA_TYPE verbatim.
+	DataType string `json:"data_type"`
+	// Invisible reports whether SELECT * omits the column.
+	Invisible bool `json:"invisible"`
+	// Generated reports whether the column is virtual or stored generated.
+	Generated bool `json:"generated"`
+}
+
+// TableColumns describes every column of one requested table or view.
+//
+// TableColumns is safe for concurrent reads. Callers must synchronize
+// mutations to Columns.
+type TableColumns struct {
+	// Table is the object's exact server-side spelling.
+	Table string `json:"table"`
+	// Columns contains every column in ordinal order.
+	Columns []ColumnInfo `json:"columns"`
+}
+
+// Columns returns every column for requested tables and views in the
+// Inspector's schema. Results preserve requested object order, including
+// duplicates, and column order follows ORDINAL_POSITION. Missing or invisible
+// objects are absent.
+//
+// Names retain exact server spelling and requested objects are matched by exact
+// Go string equality. DataType is information_schema.COLUMNS.DATA_TYPE
+// verbatim. Generated does not treat DEFAULT_GENERATED as a generated column.
+//
+// Columns is safe for concurrent use when the Inspector's Querier is safe for
+// concurrent use and tables is not mutated concurrently.
+func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumns, error) {
+	if err := i.validate(opColumns, tables); err != nil {
+		return nil, err
+	}
+	if len(tables) == 0 {
+		return nil, nil
+	}
+
+	query := `
+		SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, EXTRA
+		FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = ?
+		  AND TABLE_NAME IN (` + sqlPlaceholders(len(tables)) + `)
+		ORDER BY TABLE_NAME, ORDINAL_POSITION`
+
+	args := make([]any, 0, len(tables)+1)
+	args = append(args, i.schema)
+	for _, table := range tables {
+		args = append(args, table)
+	}
+
+	rows, err := i.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, newObjectError(
+			opColumns,
+			i.schema,
+			"",
+			fmt.Errorf("query metadata: %w", err),
+		)
+	}
+	defer rows.Close()
+
+	byTable := make(map[string][]ColumnInfo)
+	for rows.Next() {
+		var (
+			table  string
+			column ColumnInfo
+			extra  sql.NullString
+		)
+		if err := rows.Scan(
+			&table,
+			&column.Name,
+			&column.Ordinal,
+			&column.DataType,
+			&extra,
+		); err != nil {
+			return nil, newObjectError(
+				opColumns,
+				i.schema,
+				"",
+				fmt.Errorf("scan metadata: %w", err),
+			)
+		}
+
+		decomposed := parseColumnExtra(extra.String)
+		column.Invisible = decomposed.invisible
+		column.Generated = decomposed.generated == GeneratedVirtual ||
+			decomposed.generated == GeneratedStored
+		byTable[table] = append(byTable[table], column)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, newObjectError(
+			opColumns,
+			i.schema,
+			"",
+			fmt.Errorf("iterate metadata: %w", err),
+		)
+	}
+
+	found := make([]TableColumns, 0, len(tables))
+	for _, table := range tables {
+		columns, ok := byTable[table]
+		if !ok {
+			continue
+		}
+		found = append(found, TableColumns{
+			Table:   table,
+			Columns: slices.Clone(columns),
+		})
+	}
+
+	return found, nil
+}
 
 // InvisibleColumns reports one table having at least one invisible column.
 // Columns are in ordinal order and retain the server's exact spelling.

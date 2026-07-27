@@ -30,6 +30,13 @@ func TestInspectorSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tables smoke call: %v", err)
 	}
+	columnFacts, err := inspector.Columns(t.Context(), tables)
+	if err != nil {
+		t.Fatalf("Columns smoke call: %v", err)
+	}
+	if len(columnFacts) == 0 {
+		t.Error("Columns returned no facts for the smoke tables")
+	}
 	pkFacts, err := inspector.PrimaryKeys(t.Context(), tables)
 	if err != nil {
 		t.Fatalf("PrimaryKeys smoke call: %v", err)
@@ -295,7 +302,7 @@ func TestTableNameCaseSensitivityIntegration(t *testing.T) {
 	testsupport.ExecSQL(
 		t,
 		db,
-		"CREATE TABLE "+sqlutil.QuoteQualified(schema, "T1")+" (id INT PRIMARY KEY)",
+		"CREATE TABLE "+sqlutil.QuoteQualified(schema, "T1")+" (UPPER_ID INT PRIMARY KEY)",
 	)
 
 	got, err := validations.NewInspector(db, schema).Tables(t.Context(), []string{"T1", "t1"})
@@ -308,6 +315,75 @@ func TestTableNameCaseSensitivityIntegration(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Tables() = %#v, want %#v", got, want)
+	}
+
+	columns, err := validations.NewInspector(db, schema).Columns(
+		t.Context(),
+		[]string{"T1", "t1"},
+	)
+	if err != nil {
+		t.Fatalf("Columns: %v", err)
+	}
+	wantColumns := []validations.TableColumns{
+		{
+			Table: "T1",
+			Columns: []validations.ColumnInfo{{
+				Name: "UPPER_ID", Ordinal: 1, DataType: "int",
+			}},
+		},
+		{
+			Table: "t1",
+			Columns: []validations.ColumnInfo{{
+				Name: "id", Ordinal: 1, DataType: "int",
+			}},
+		},
+	}
+	if !reflect.DeepEqual(columns, wantColumns) {
+		t.Errorf("Columns() = %#v, want %#v", columns, wantColumns)
+	}
+}
+
+func TestColumnsIntegration(t *testing.T) {
+	db, schema := validationDatabase(t)
+
+	got, err := validations.NewInspector(db, schema).Columns(
+		t.Context(),
+		[]string{"report_view", "missing", "invisible_columns", "clean_table"},
+	)
+	if err != nil {
+		t.Fatalf("Columns: %v", err)
+	}
+	want := []validations.TableColumns{
+		{
+			Table: "report_view",
+			Columns: []validations.ColumnInfo{{
+				Name: "id", Ordinal: 1, DataType: "int",
+			}},
+		},
+		{
+			Table: "invisible_columns",
+			Columns: []validations.ColumnInfo{
+				{Name: "id", Ordinal: 1, DataType: "int"},
+				{Name: "plain_secret", Ordinal: 2, DataType: "int", Invisible: true},
+				{
+					Name: "generated_secret", Ordinal: 3, DataType: "int",
+					Invisible: true, Generated: true,
+				},
+				{
+					Name: "visible_generated", Ordinal: 4, DataType: "int",
+					Generated: true,
+				},
+			},
+		},
+		{
+			Table: "clean_table",
+			Columns: []validations.ColumnInfo{{
+				Name: "id", Ordinal: 1, DataType: "int",
+			}},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Columns() =\n%#v\nwant\n%#v", got, want)
 	}
 }
 

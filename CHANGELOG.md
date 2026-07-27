@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pkg/validations`: `Inspector.Columns`, `TableColumns`, and `ColumnInfo`.
+  One metadata query returns every column for requested tables or views,
+  preserving requested-object and ordinal order and exact server-side names.
+  Each column reports `ORDINAL_POSITION`, `DATA_TYPE`, visibility, and whether
+  it is generated. Missing or metadata-invisible objects are absent rather
+  than errors.
+- Unit, smoke, and MySQL 8.0 / 8.4 / 9.7 integration coverage for general
+  columns, including views, generated and invisible columns, duplicate
+  requests, missing objects, and exact-case table separation.
+
+### Notes
+
+- The general column fact is deliberately separate from `TableSpec`, which
+  supports base tables only and performs table-level resolution. This lets a
+  consumer distinguish a missing configured column, a case-only match on any
+  column, and an existing non-primary column without changing its inspection
+  failure order.
+- This public API addition takes the next pre-1.0 compatibility unit,
+  `v0.5.0`. Existing exported APIs are unchanged, but pre-1.0 consumers should
+  continue to pin exact tags.
+
 ## [0.4.1] - 2026-07-28
 
 Documentation only. The public surface is identical to `v0.4.0`.

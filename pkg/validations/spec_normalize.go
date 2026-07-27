@@ -52,7 +52,7 @@ func normalizeColumnType(columnType string) string {
 // package-level set because library rules forbid global mutable state.
 func hasDisplayWidth(base string) bool {
 	switch base {
-	case "bigint", dataTypeInt, "integer", "mediumint", "smallint", dataTypeTinyint:
+	case dataTypeBigint, dataTypeInt, "integer", "mediumint", "smallint", dataTypeTinyint:
 		return true
 	default:
 		return false

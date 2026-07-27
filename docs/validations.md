@@ -67,6 +67,7 @@ Every call takes a `context.Context` first.
 tables := []string{"film", "film_actor"}
 
 tableFacts, err := insp.Tables(ctx, tables)
+columns, err := insp.Columns(ctx, tables)
 pks, err := insp.PrimaryKeys(ctx, tables)
 invisible, err := insp.InvisibleColumns(ctx, tables)
 deleteTriggers, err := insp.Triggers(ctx, tables, validations.TriggerDelete)
@@ -84,6 +85,35 @@ Names come back in the server's exact case, and the library compares names in
 Go rather than relying on SQL predicates. `information_schema` name collations
 vary by category and configuration: some are binary while others fold case.
 See [COMPAT.md §2](COMPAT.md).
+
+## General column facts
+
+`Columns` returns every column for each requested table or view:
+
+```go
+facts, err := insp.Columns(ctx, []string{"film", "film_list"})
+for _, object := range facts {
+    for _, column := range object.Columns {
+        // column.Name is exact server spelling.
+        // Ordinal is one-based; DataType is COLUMNS.DATA_TYPE verbatim.
+        // Invisible and Generated are independent facts.
+    }
+}
+```
+
+Results preserve requested-object order, including duplicate requests, and
+columns follow `ORDINAL_POSITION`. Missing or metadata-invisible objects are
+absent. Requested object identity is matched by exact Go string equality, so a
+case-only table variant cannot contribute columns to the requested object.
+
+`Columns` includes views and performs no table-level resolution. It is
+deliberately separate from `TableSpec`, which supports base tables only and
+captures one table deeply enough for schema comparison. Use `Columns` when the
+question is whether an exact, case-only, or differently purposed column exists
+without changing the surrounding inspection order.
+
+The `Generated` flag covers virtual and stored generated columns.
+`DEFAULT_GENERATED` describes an expression default and does not set it.
 
 ## Foreign keys and completeness
 

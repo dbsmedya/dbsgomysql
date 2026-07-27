@@ -57,6 +57,15 @@ func TestArgumentValidation(t *testing.T) {
 				op: opPrimaryKeys,
 			},
 			{
+				name: "columns",
+				call: func() error {
+					_, err := inspector.Columns(t.Context(), []string{"orders", ""})
+
+					return err
+				},
+				op: opColumns,
+			},
+			{
 				name: "invisible columns",
 				call: func() error {
 					_, err := inspector.InvisibleColumns(t.Context(), []string{"orders", ""})
@@ -118,6 +127,14 @@ func TestEmptyTableSetsDoNotQuery(t *testing.T) {
 			name: "primary keys",
 			call: func() (int, error) {
 				got, err := inspector.PrimaryKeys(t.Context(), nil)
+
+				return len(got), err
+			},
+		},
+		{
+			name: "columns",
+			call: func() (int, error) {
+				got, err := inspector.Columns(t.Context(), nil)
 
 				return len(got), err
 			},
@@ -187,6 +204,15 @@ func TestFactQueryErrorsAreWrapped(t *testing.T) {
 				return err
 			},
 			op: opPrimaryKeys,
+		},
+		{
+			name: "columns",
+			call: func() error {
+				_, err := inspector.Columns(t.Context(), []string{"orders"})
+
+				return err
+			},
+			op: opColumns,
 		},
 		{
 			name: "invisible columns",

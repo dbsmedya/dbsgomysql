@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	opColumns          = "columns"
 	opForeignKeys      = "foreign_keys"
 	opGrants           = "grants"
 	opInvisibleColumns = "invisible_columns"
