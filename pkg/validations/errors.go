@@ -20,6 +20,9 @@ var (
 	// ErrInvalidFKSelector means ForeignKeys received a selector not produced
 	// by IncomingTo, OutgoingFrom, or Within.
 	ErrInvalidFKSelector = errors.New("validations: invalid foreign-key selector")
+	// ErrInvalidTableRef means TableSpec received a TableRef that was not
+	// produced by Ref, or one naming an empty schema or table.
+	ErrInvalidTableRef = errors.New("validations: invalid table reference")
 )
 
 // ObjectError reports a failed schema inspection or invalid inspection

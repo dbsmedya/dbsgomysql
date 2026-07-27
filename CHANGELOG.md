@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `pkg/validations`: `GeneratedKind` and typed decomposition of
   `COLUMNS.EXTRA`.
+- `pkg/validations`: `TableSpec`, `TableRef`, `Ref`, and optional spec
+  sections.
 
 ### Changed
 
