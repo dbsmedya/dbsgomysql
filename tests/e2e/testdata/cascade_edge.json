@@ -1,0 +1,18 @@
+[
+  {
+    "check": "CASCADE_RULES",
+    "tables": ["fk_cascade_child"],
+    "facts": {
+      "constraint_name": "fk_cascade_parent",
+      "child_schema": "{{target_schema}}",
+      "child_table": "fk_cascade_child",
+      "child_columns": ["parent_id"],
+      "parent_schema": "{{target_schema}}",
+      "parent_table": "fk_parent",
+      "parent_columns": ["id"],
+      "on_delete": "CASCADE",
+      "on_update": "NO ACTION",
+      "indexed": true
+    }
+  }
+]

@@ -3,6 +3,7 @@ package validations
 import (
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,9 @@ func TestCatalog(t *testing.T) {
 		if entry.Status != StatusImplemented && entry.Status != StatusDeferred {
 			t.Errorf("Catalog() entry %q has status %d, want implemented or deferred", entry.ID, entry.Status)
 		}
+		if entry.Status == StatusDeferred {
+			t.Errorf("Catalog() entry %q remains deferred after phase 1c", entry.ID)
+		}
 		if entry.Phase == "" {
 			t.Errorf("Catalog() entry %q names no phase", entry.ID)
 		}
@@ -67,6 +71,24 @@ func TestCatalog(t *testing.T) {
 		if !seen[id] {
 			t.Errorf("Catalog() is missing %q, which design section 5.4 lists", id)
 		}
+	}
+}
+
+func TestFKIndexedRationaleDescribesSourceInvariant(t *testing.T) {
+	t.Parallel()
+
+	entry, ok := LookupCheck(IDFKIndexed)
+	if !ok {
+		t.Fatalf("LookupCheck(%q) reported no such check", IDFKIndexed)
+	}
+	lower := strings.ToLower(entry.Rationale)
+	for _, obsolete := range []string{"full scan", "slow", "performance"} {
+		if strings.Contains(lower, obsolete) {
+			t.Errorf("FK_INDEXED rationale %q retains obsolete performance claim %q", entry.Rationale, obsolete)
+		}
+	}
+	if !strings.Contains(lower, "mysql guarantees") {
+		t.Errorf("FK_INDEXED rationale %q does not state the MySQL invariant", entry.Rationale)
 	}
 }
 

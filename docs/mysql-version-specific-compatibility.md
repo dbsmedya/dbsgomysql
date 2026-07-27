@@ -11,10 +11,10 @@ absorb the difference. An invariant surprise does not.
 
 ## Current divergences
 
-**None.** Every behavior exercised by `pkg/sqlutil` and the phase-1b
+**None.** Every behavior exercised by `pkg/sqlutil` and the current
 `pkg/validations` facts and checks is identical on all three supported versions.
 
-Last probed 2026-07-26 against:
+Last probed 2026-07-27 against:
 
 | Matrix target | Resolved version | Docker image |
 |---|---:|---|
@@ -53,6 +53,10 @@ behavior *is*, and how the library handles it, is documented in
 | `ACTION_TIMING` declared as `ENUM`, ordering BEFORE ahead of AFTER | `TestTriggerTimingEnumOrderIntegration` |
 | InnoDB and MyISAM engine spelling | `TestStorageEngineIntegration` |
 | Views as existing objects with a NULL storage engine | `TestViewsIntegration` |
+| InnoDB FK identity, 1-based column positions, flag-decoded rules, composite grouping, mixed identifiers, and automatic child indexes | `TestForeignKeysIntegration` |
+| PROCESS-only authoritative FK visibility and privilege-filtered fallback under-counting/equivalence | `TestForeignKeyVisibilityAccountsIntegration` |
+| Embedded quotes in `GRANTEE`, enabled and nested roles, and metadata's inability to attribute role-derived positives | `TestGranteeAndRolePrivilegesIntegration` |
+| Global privilege subtraction by a schema-level partial revoke | `TestPartialRevokesPrivilegeResolutionIntegration` |
 | Unknown and privilege-invisible schemas producing indistinguishable facts | `TestUnknownAndInvisibleSchemaIntegration` |
 
 The identifier pins live in

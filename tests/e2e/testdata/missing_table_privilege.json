@@ -1,0 +1,12 @@
+[
+  {
+    "check": "TABLE_PRIVILEGES",
+    "tables": ["fk_parent"],
+    "facts": {
+      "schema": "{{target_schema}}",
+      "table": "fk_parent",
+      "privilege": 4,
+      "state": 2
+    }
+  }
+]

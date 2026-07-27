@@ -68,6 +68,108 @@ CREATE TABLE {{schema}}.`delete_only_trigger` (
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB;
 
+CREATE TABLE {{schema}}.`fk_parent` (
+    `id` INT NOT NULL,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_internal_child` (
+    `id` INT NOT NULL,
+    `parent_id` INT NOT NULL,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `fk_internal_parent`
+        FOREIGN KEY (`parent_id`) REFERENCES {{schema}}.`fk_parent` (`id`)
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_external_child` (
+    `id` INT NOT NULL,
+    `parent_id` INT NOT NULL,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `fk_external_parent`
+        FOREIGN KEY (`parent_id`) REFERENCES {{schema}}.`fk_parent` (`id`)
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_cascade_child` (
+    `id` INT NOT NULL,
+    `parent_id` INT NOT NULL,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `fk_cascade_parent`
+        FOREIGN KEY (`parent_id`) REFERENCES {{schema}}.`fk_parent` (`id`)
+        ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_composite_parent` (
+    `tenant_id` INT NOT NULL,
+    `id` INT NOT NULL,
+    PRIMARY KEY (`tenant_id`, `id`)
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_composite_child` (
+    `id` INT NOT NULL,
+    `z` INT NOT NULL,
+    `tenant_id` INT,
+    `parent_id` INT,
+    PRIMARY KEY (`id`),
+    KEY `idx_nonleading` (`z`, `tenant_id`, `parent_id`),
+    CONSTRAINT `fk_composite_parent`
+        FOREIGN KEY (`tenant_id`, `parent_id`)
+        REFERENCES {{schema}}.`fk_composite_parent` (`tenant_id`, `id`)
+        ON DELETE SET NULL
+        ON UPDATE NO ACTION
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_rule_parent` (
+    `id` INT NOT NULL,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_rule_cascade` (
+    `id` INT NOT NULL,
+    `parent_id` INT NOT NULL,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `fk_rule_cascade`
+        FOREIGN KEY (`parent_id`) REFERENCES {{schema}}.`fk_rule_parent` (`id`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_rule_set_null` (
+    `id` INT NOT NULL,
+    `parent_id` INT,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `fk_rule_set_null`
+        FOREIGN KEY (`parent_id`) REFERENCES {{schema}}.`fk_rule_parent` (`id`)
+        ON DELETE SET NULL
+        ON UPDATE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_rule_no_action` (
+    `id` INT NOT NULL,
+    `parent_id` INT NOT NULL,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `fk_rule_no_action`
+        FOREIGN KEY (`parent_id`) REFERENCES {{schema}}.`fk_rule_parent` (`id`)
+        ON DELETE NO ACTION
+        ON UPDATE NO ACTION
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_rule_restrict` (
+    `id` INT NOT NULL,
+    `parent_id` INT NOT NULL,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `fk_rule_restrict`
+        FOREIGN KEY (`parent_id`) REFERENCES {{schema}}.`fk_rule_parent` (`id`)
+        ON DELETE RESTRICT
+        ON UPDATE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`myisam_ignored_fk` (
+    `id` INT NOT NULL,
+    `parent_id` INT NOT NULL,
+    PRIMARY KEY (`id`),
+    FOREIGN KEY (`parent_id`) REFERENCES {{schema}}.`fk_parent` (`id`)
+) ENGINE=MyISAM;
+
 CREATE TRIGGER {{schema}}.`ZDeleteAfter`
 AFTER DELETE ON {{schema}}.`delete_trigger`
 FOR EACH ROW SET @dbsgomysql_delete_after = OLD.`id`;

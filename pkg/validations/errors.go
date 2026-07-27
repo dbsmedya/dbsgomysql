@@ -17,6 +17,9 @@ var (
 	// ErrInvalidTriggerEvent means a facts call received an unknown trigger
 	// event value.
 	ErrInvalidTriggerEvent = errors.New("validations: invalid trigger event")
+	// ErrInvalidFKSelector means ForeignKeys received a selector not produced
+	// by IncomingTo, OutgoingFrom, or Within.
+	ErrInvalidFKSelector = errors.New("validations: invalid foreign-key selector")
 )
 
 // ObjectError reports a failed schema inspection or invalid inspection
@@ -28,7 +31,7 @@ var (
 // provided callers do not mutate its exported fields.
 type ObjectError struct {
 	// Op names the facts operation that failed: "tables", "primary_keys",
-	// "triggers", or "invisible_columns".
+	// "triggers", "invisible_columns", "foreign_keys", or "grants".
 	Op string
 	// Schema is the Inspector's schema. It is empty only when the schema
 	// argument itself is invalid.

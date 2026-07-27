@@ -49,11 +49,40 @@ misleading failures.
 
 ## Fixtures
 
-`tests/fixtures/` holds repository-owned seed schemas. The phase-1b fixture
+`tests/fixtures/` holds repository-owned seed schemas. The validations fixture
 covers clean and missing tables, views, InnoDB and MyISAM, absent/single/
 composite/non-integer primary keys, exact-name mismatches, invisible and
-generated columns, and DELETE/INSERT/UPDATE triggers. Later slices extend it
-with foreign-key, privilege, and table-specification scenarios.
+generated columns, DELETE/INSERT/UPDATE triggers, composite and cascade foreign
+keys, MySQL's automatically created supporting FK index, and a MyISAM
+declaration that is parsed and ignored.
+
+Privilege and visibility scenarios create namespaced accounts and roles through
+the configured administrative handle. Each successful create registers
+teardown immediately. Tests authenticate fixture accounts by parsing
+`DBSGOMYSQL_TEST_DSN`, copying its driver configuration, replacing the
+credentials, clearing the default database, and formatting it again; credentials
+are never spliced into a DSN string.
+
+Role-sensitive assertions use a pinned `*sql.Conn`, enable the role on that
+connection, and bind the Inspector to the same connection. Connection and pool
+cleanup is registered after account cleanup, so LIFO test cleanup closes client
+handles before dropping their account.
+
+The FK completeness fixture account receives exactly `PROCESS`: no global,
+schema, or table `SELECT`. That proves the complete `INNODB_FOREIGN*` source
+does not rely on ordinary table visibility. The no-`PROCESS` account exercises
+the visibility-filtered standard fallback.
+
+The partial-revoke integration test is serial. It reads and restores the
+original `@@global.partial_revokes` value with `SET GLOBAL` (never
+`SET PERSIST`) even after an assertion failure. No account test runs in
+parallel with it.
+
+Phase-1c E2E projection copies `ForeignKey` and `PrivilegeFact` payloads before
+replacing the exact generated target and external schema identities with
+`{{target_schema}}` and `{{external_schema}}`. It rewrites no other string, so
+goldens still distinguish same-schema from cross-schema edges and retain exact
+table, column, and constraint names.
 
 This repository owns its fixtures and containers outright. It does not reuse
 another project's test infrastructure in place.
