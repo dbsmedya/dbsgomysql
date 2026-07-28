@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pkg/validations`: `ColumnInfo.Unsigned`, derived from
+  `information_schema.COLUMNS.COLUMN_TYPE` in the existing `Inspector.Columns`
+  metadata query. Callers can now distinguish signed and unsigned configured
+  integer columns without substituting actual primary-key metadata or parsing
+  MySQL type syntax.
+- Unit and MySQL 8.0 / 8.4 / 9.7 integration coverage for signed and unsigned
+  `TINYINT`, `SMALLINT`, `MEDIUMINT`, `INT`, `INTEGER`, and `BIGINT`, including
+  the legacy-form synthetic value `int(10) unsigned zerofill`.
+
+### Notes
+
+- Adding an exported field can break unkeyed `ColumnInfo` struct literals.
+  This pre-1.0 API change takes the next compatibility unit, `v0.6.0`;
+  consumers should continue to pin exact tags.
+
+## [0.5.0] - 2026-07-28
+
+### Added
+
 - `pkg/validations`: `Inspector.Columns`, `TableColumns`, and `ColumnInfo`.
   One metadata query returns every column for requested tables or views,
   preserving requested-object and ordinal order and exact server-side names.
@@ -200,7 +219,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/dbsmedya/dbsgomysql/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.2.0...v0.3.0

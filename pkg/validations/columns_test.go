@@ -14,16 +14,22 @@ func TestColumnsReturnsEveryColumnInRequestedObjectOrder(t *testing.T) {
 	db := testsupport.OpenScriptedDB(testsupport.ScriptedQuery{
 		Match: "information_schema.COLUMNS",
 		Columns: []string{
-			"TABLE_NAME", "COLUMN_NAME", "ORDINAL_POSITION", "DATA_TYPE", "EXTRA",
+			"TABLE_NAME", "COLUMN_NAME", "ORDINAL_POSITION", "DATA_TYPE", "COLUMN_TYPE", "EXTRA",
 		},
 		Rows: [][]driver.Value{
-			{"Alpha", "wrong_case_table", int64(1), "int", ""},
-			{"alpha", "id", int64(1), "bigint", "auto_increment"},
-			{"alpha", "hidden", int64(2), "varchar", "INVISIBLE"},
-			{"alpha", "virtual_value", int64(3), "int", "VIRTUAL GENERATED"},
-			{"alpha", "stored_hidden", int64(4), "int", "STORED GENERATED INVISIBLE"},
-			{"alpha", "expression_default", int64(5), "datetime", "DEFAULT_GENERATED"},
-			{"beta", "code", int64(1), "char", ""},
+			{"Alpha", "wrong_case_table", int64(1), "int", "int", ""},
+			{"alpha", "id", int64(1), "bigint", "bigint unsigned", "auto_increment"},
+			{"alpha", "hidden", int64(2), "varchar", "varchar(20)", "INVISIBLE"},
+			{"alpha", "virtual_value", int64(3), "int", "int", "VIRTUAL GENERATED"},
+			{
+				"alpha", "stored_hidden", int64(4), "int", "int(10) unsigned zerofill",
+				"STORED GENERATED INVISIBLE",
+			},
+			{
+				"alpha", "expression_default", int64(5), "datetime", "datetime",
+				"DEFAULT_GENERATED",
+			},
+			{"beta", "code", int64(1), "char", "char(4)", ""},
 		},
 	})
 	t.Cleanup(func() {
@@ -41,12 +47,12 @@ func TestColumnsReturnsEveryColumnInRequestedObjectOrder(t *testing.T) {
 	}
 
 	alphaColumns := []ColumnInfo{
-		{Name: "id", Ordinal: 1, DataType: "bigint"},
+		{Name: "id", Ordinal: 1, DataType: "bigint", Unsigned: true},
 		{Name: "hidden", Ordinal: 2, DataType: "varchar", Invisible: true},
 		{Name: "virtual_value", Ordinal: 3, DataType: "int", Generated: true},
 		{
 			Name: "stored_hidden", Ordinal: 4, DataType: "int",
-			Invisible: true, Generated: true,
+			Unsigned: true, Invisible: true, Generated: true,
 		},
 		{Name: "expression_default", Ordinal: 5, DataType: "datetime"},
 	}

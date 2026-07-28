@@ -345,10 +345,31 @@ func TestTableNameCaseSensitivityIntegration(t *testing.T) {
 
 func TestColumnsIntegration(t *testing.T) {
 	db, schema := validationDatabase(t)
+	testsupport.ExecSQL(t, db, `
+		CREATE TABLE `+sqlutil.QuoteQualified(schema, "column_signedness")+` (
+			signed_tiny       TINYINT,
+			unsigned_tiny     TINYINT UNSIGNED,
+			signed_small      SMALLINT,
+			unsigned_small    SMALLINT UNSIGNED,
+			signed_medium     MEDIUMINT,
+			unsigned_medium   MEDIUMINT UNSIGNED,
+			signed_int        INT,
+			unsigned_int      INT UNSIGNED,
+			signed_integer    INTEGER,
+			unsigned_integer  INTEGER UNSIGNED,
+			signed_big        BIGINT,
+			unsigned_big      BIGINT UNSIGNED
+		)`)
 
 	got, err := validations.NewInspector(db, schema).Columns(
 		t.Context(),
-		[]string{"report_view", "missing", "invisible_columns", "clean_table"},
+		[]string{
+			"report_view",
+			"missing",
+			"column_signedness",
+			"invisible_columns",
+			"clean_table",
+		},
 	)
 	if err != nil {
 		t.Fatalf("Columns: %v", err)
@@ -359,6 +380,26 @@ func TestColumnsIntegration(t *testing.T) {
 			Columns: []validations.ColumnInfo{{
 				Name: "id", Ordinal: 1, DataType: "int",
 			}},
+		},
+		{
+			Table: "column_signedness",
+			Columns: []validations.ColumnInfo{
+				{Name: "signed_tiny", Ordinal: 1, DataType: "tinyint"},
+				{Name: "unsigned_tiny", Ordinal: 2, DataType: "tinyint", Unsigned: true},
+				{Name: "signed_small", Ordinal: 3, DataType: "smallint"},
+				{Name: "unsigned_small", Ordinal: 4, DataType: "smallint", Unsigned: true},
+				{Name: "signed_medium", Ordinal: 5, DataType: "mediumint"},
+				{
+					Name: "unsigned_medium", Ordinal: 6, DataType: "mediumint",
+					Unsigned: true,
+				},
+				{Name: "signed_int", Ordinal: 7, DataType: "int"},
+				{Name: "unsigned_int", Ordinal: 8, DataType: "int", Unsigned: true},
+				{Name: "signed_integer", Ordinal: 9, DataType: "int"},
+				{Name: "unsigned_integer", Ordinal: 10, DataType: "int", Unsigned: true},
+				{Name: "signed_big", Ordinal: 11, DataType: "bigint"},
+				{Name: "unsigned_big", Ordinal: 12, DataType: "bigint", Unsigned: true},
+			},
 		},
 		{
 			Table: "invisible_columns",

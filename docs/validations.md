@@ -96,6 +96,7 @@ for _, object := range facts {
     for _, column := range object.Columns {
         // column.Name is exact server spelling.
         // Ordinal is one-based; DataType is COLUMNS.DATA_TYPE verbatim.
+        // Unsigned reports MySQL's UNSIGNED column attribute.
         // Invisible and Generated are independent facts.
     }
 }
@@ -114,6 +115,9 @@ without changing the surrounding inspection order.
 
 The `Generated` flag covers virtual and stored generated columns.
 `DEFAULT_GENERATED` describes an expression default and does not set it.
+`DataType` contains only the type name, so signed and unsigned integers have
+the same value there. `Unsigned` is derived from `COLUMNS.COLUMN_TYPE` and lets
+callers distinguish their value ranges without parsing MySQL type syntax.
 
 ## Foreign keys and completeness
 
