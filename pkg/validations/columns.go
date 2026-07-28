@@ -17,6 +17,8 @@ type ColumnInfo struct {
 	Ordinal int `json:"ordinal"`
 	// DataType is information_schema.COLUMNS.DATA_TYPE verbatim.
 	DataType string `json:"data_type"`
+	// Unsigned reports whether the column has MySQL's UNSIGNED attribute.
+	Unsigned bool `json:"unsigned"`
 	// Invisible reports whether SELECT * omits the column.
 	Invisible bool `json:"invisible"`
 	// Generated reports whether the column is virtual or stored generated.
@@ -41,7 +43,8 @@ type TableColumns struct {
 //
 // Names retain exact server spelling and requested objects are matched by exact
 // Go string equality. DataType is information_schema.COLUMNS.DATA_TYPE
-// verbatim. Generated does not treat DEFAULT_GENERATED as a generated column.
+// verbatim. Unsigned is derived from information_schema.COLUMNS.COLUMN_TYPE.
+// Generated does not treat DEFAULT_GENERATED as a generated column.
 //
 // Columns is safe for concurrent use when the Inspector's Querier is safe for
 // concurrent use and tables is not mutated concurrently.
@@ -54,7 +57,7 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 	}
 
 	query := `
-		SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, EXTRA
+		SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE, EXTRA
 		FROM information_schema.COLUMNS
 		WHERE TABLE_SCHEMA = ?
 		  AND TABLE_NAME IN (` + sqlPlaceholders(len(tables)) + `)
@@ -80,15 +83,17 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 	byTable := make(map[string][]ColumnInfo)
 	for rows.Next() {
 		var (
-			table  string
-			column ColumnInfo
-			extra  sql.NullString
+			table      string
+			column     ColumnInfo
+			columnType string
+			extra      sql.NullString
 		)
 		if err := rows.Scan(
 			&table,
 			&column.Name,
 			&column.Ordinal,
 			&column.DataType,
+			&columnType,
 			&extra,
 		); err != nil {
 			return nil, newObjectError(
@@ -99,6 +104,7 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 			)
 		}
 
+		column.Unsigned = containsUnsigned(columnType)
 		decomposed := parseColumnExtra(extra.String)
 		column.Invisible = decomposed.invisible
 		column.Generated = decomposed.generated == GeneratedVirtual ||
