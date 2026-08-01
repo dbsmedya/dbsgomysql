@@ -807,6 +807,54 @@ Pinned directly, at the fact rather than downstream, by
 via `TestForeignKeysIntegration`. It reads `POS` for a composite constraint, so
 one assertion covers the base, the increment, and the ordering.
 
+**Reproducing it.** This entry contradicts the manual, so it should be
+checkable without trusting this repository or running its suite. The first two
+tables below are the manual's own Example 17.3, copied unchanged; the third and
+fourth add a composite key so the increment shows too. Needs `PROCESS`.
+
+```sql
+CREATE DATABASE pos_probe;
+USE pos_probe;
+
+CREATE TABLE parent (id INT NOT NULL, PRIMARY KEY (id)) ENGINE=InnoDB;
+CREATE TABLE child (id INT, parent_id INT,
+  INDEX par_ind (parent_id),
+  CONSTRAINT fk1 FOREIGN KEY (parent_id) REFERENCES parent(id)
+  ON DELETE CASCADE) ENGINE=InnoDB;
+
+CREATE TABLE p3 (a INT NOT NULL, b INT NOT NULL, c INT NOT NULL,
+  PRIMARY KEY (a, b, c)) ENGINE=InnoDB;
+CREATE TABLE c3 (id INT NOT NULL PRIMARY KEY, a INT, b INT, c INT,
+  CONSTRAINT fk3 FOREIGN KEY (a, b, c) REFERENCES p3(a, b, c)) ENGINE=InnoDB;
+
+SELECT ID, FOR_COL_NAME, POS
+FROM information_schema.INNODB_FOREIGN_COLS
+WHERE ID LIKE 'pos_probe/%'
+ORDER BY ID, POS;
+
+DROP DATABASE pos_probe;
+```
+
+Byte-identical output on 8.0.46, 8.4.9, and 9.7.1:
+
+```
++---------------+--------------+-----+
+| ID            | FOR_COL_NAME | POS |
++---------------+--------------+-----+
+| pos_probe/fk1 | parent_id    |   1 |
+| pos_probe/fk3 | a            |   1 |
+| pos_probe/fk3 | b            |   2 |
+| pos_probe/fk3 | c            |   3 |
++---------------+--------------+-----+
+```
+
+The first row is the decisive one: it is the manual's example, and the manual
+prints `POS: 0` for it. `fk3` shows the count continuing `1, 2, 3` where the
+documented reading predicts `0, 1, 2`. Swapping the query to
+`KEY_COLUMN_USAGE.ORDINAL_POSITION` for `fk3` returns `1, 2, 3` as well — which
+that table's documentation correctly predicts, so the two sources agree with
+each other and only one manual page is out of step.
+
 **Reference:** documented, and contradicted by the server. All three manuals
 state the 0-based rule **twice**, and all three servers disagree with it.
 
