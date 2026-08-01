@@ -47,6 +47,19 @@ moved from §15.1.20.6 to §15.1.25.6 over the same range. Resolve any reference
 by its title. Release notes cite the version, its date, and the worklog number
 where one is given.
 
+Where a reference has a stable manual URL, cite it alongside the title. The
+`dev.mysql.com` slug is normally identical across versions — only the version
+segment changes — which makes a per-version URL set the one form of citation
+that survives the renumbering described above. The title still leads; the URL
+is there so a reader can reach the page without searching for it.
+
+**Open the URL before writing it down.** Slugs are not derivable: the page
+holding §17.15's foreign-key example is not at the address its section title
+suggests, and a guess there returns 404. A dead link is worse than the
+title-only citation this file used everywhere before, because it reads as
+verification that never happened. These URLs are navigation; the corpus named
+in AGENTS.md section 3 is what settles a claim.
+
 **Validation coverage.** Every claim below was checked on **2026-08-01** against
 the corpus described in AGENTS.md section 3. Entries carrying a version
 threshold, an error number, or an "all supported versions" claim were queried
@@ -683,6 +696,77 @@ ENFORCED` constraint silently sits out. The manual's `SHOW CREATE TABLE` example
 also shows how the flag surfaces, behind a version gate: ``CONSTRAINT `t1_chk_3`
 CHECK ((`i2` <> 0)) /*!80016 NOT ENFORCED */``. Reading the clause text alone
 therefore misses it in DDL exactly as it does in metadata.
+
+## 18. A functional index part reports `COLUMN_NAME` as NULL ✅
+
+**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+
+**Symptom:** two symptoms from one cause. `information_schema.STATISTICS`
+describes an index as key *parts*, and a functional part — `INDEX ((amount *
+2))` — indexes an expression rather than a column, so its `COLUMN_NAME` is NULL
+and `EXPRESSION` carries the text. Reading `COLUMN_NAME` into a plain string
+therefore fails outright, and because the failure is a scan error rather than an
+empty result, a single functional index anywhere on a child table can abort a
+whole query.
+
+The second symptom is quieter and worse. A functional part still *occupies* its
+position in the index. An index whose parts are `((amount * 2)), tenant_id,
+parent_id` does not begin with `tenant_id`, so it cannot support `FOREIGN KEY
+(tenant_id, parent_id)` — but a reader that skips NULL-named parts sees exactly
+the column list the constraint wants and reports the index as supporting. The
+sharpest form puts the expression *between* the two columns, where skipping it
+yields an exact match rather than merely a prefix.
+
+**Handling:** every reader of this column scans `sql.NullString`.
+`TableSpec`'s `IndexPart` keeps `Column` empty and puts the text in
+`Expression`, so `INDEX(name)` and `INDEX((f(name)))` never compare equal. The
+foreign-key fallback records a NULL part as `""`, which preserves both the
+position and the density of `SEQ_IN_INDEX`, and cannot be mistaken for a real
+column: an identifier is never empty, and the names it is compared against come
+from `KEY_COLUMN_USAGE`, which reports only columns.
+
+That last point is a documented guarantee rather than a convenient accident —
+the manual states both that `KEY_COLUMN_USAGE` "provides no information about
+functional key parts because they are expressions and the table provides
+information only about columns", and that "functional key parts are not
+permitted in foreign key specifications". A functional part can never *be* a
+foreign-key column, so standing in a leading slot it correctly disqualifies the
+index.
+
+Pinned at the unit layer by
+[`TestForeignKeysFallbackToleratesFunctionalIndexPart`](../pkg/validations/foreign_keys_source_test.go),
+its leading-part and interior-part siblings, and
+[`TestTableSpecCapturesIndexParts`](../pkg/validations/spec_capture_test.go);
+live by the `compat 18` subtest of
+[`TestForeignKeyVisibilityAccountsIntegration`](../pkg/validations/validations_integration_test.go),
+which runs through an account holding schema-wide `SELECT` and no `PROCESS` —
+the shape of a real inspection account, and the only path where this defect was
+reachable.
+
+**Reference:** documented. Refman §28.3.x, "The INFORMATION_SCHEMA STATISTICS
+Table" (Notes): "For a nonfunctional key part, COLUMN_NAME indicates the column
+indexed by the key part and EXPRESSION is NULL. For a functional key part,
+COLUMN_NAME column is NULL and EXPRESSION indicates the expression for the key
+part." Confirmed word for word in all three manuals —
+[8.0](https://dev.mysql.com/doc/refman/8.0/en/information-schema-statistics-table.html) ·
+[8.4](https://dev.mysql.com/doc/refman/8.4/en/information-schema-statistics-table.html) ·
+[9.7](https://dev.mysql.com/doc/refman/9.7/en/information-schema-statistics-table.html).
+The foreign-key exclusions are in §28.3.16, "The INFORMATION_SCHEMA
+KEY_COLUMN_USAGE Table"
+([8.0](https://dev.mysql.com/doc/refman/8.0/en/information-schema-key-column-usage-table.html) ·
+[8.4](https://dev.mysql.com/doc/refman/8.4/en/information-schema-key-column-usage-table.html) ·
+[9.7](https://dev.mysql.com/doc/refman/9.7/en/information-schema-key-column-usage-table.html))
+and in "Functional Key Parts", carried on the `CREATE INDEX` page
+([8.0](https://dev.mysql.com/doc/refman/8.0/en/create-index.html) ·
+[8.4](https://dev.mysql.com/doc/refman/8.4/en/create-index.html) ·
+[9.7](https://dev.mysql.com/doc/refman/9.7/en/create-index.html)), which also
+establishes that the mixed shape above is legal: "An index with multiple key
+parts can mix nonfunctional and functional key parts." That the foreign key's
+columns must lead the index is §15.1.20.5, quoted in full under entry 16.
+
+The 8.0 manual alone dates the feature — "MySQL 8.0.13 and higher supports
+functional key parts" — which is below this library's 8.0.4x support floor, so
+no version branch is warranted.
 
 ---
 

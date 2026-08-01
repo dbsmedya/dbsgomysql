@@ -970,6 +970,72 @@ func TestForeignKeyVisibilityAccountsIntegration(t *testing.T) {
 	); len(got) == 0 {
 		t.Error("unconfirmed fallback closure returned nil")
 	}
+
+	t.Run("compat 18: a functional index does not break the fallback", func(t *testing.T) {
+		// The fallback reads information_schema.STATISTICS for every child
+		// table, and a functional key part reports COLUMN_NAME as NULL. This
+		// account holds SELECT on the whole schema and no PROCESS, which is the
+		// shape of a real inspection account, so before the fix one functional
+		// index made ForeignKeys fail outright here.
+		functional, err := validations.NewInspector(fullFallbackConn, schema).ForeignKeys(
+			t.Context(),
+			validations.OutgoingFrom("fk_functional_child"),
+		)
+		if err != nil {
+			t.Fatalf("fallback over a child table with a functional index: %v", err)
+		}
+		if functional.Visibility != validations.VisibilityUnconfirmed {
+			t.Errorf("visibility = %s, want unconfirmed", functional.Visibility)
+		}
+		want := validations.ForeignKey{
+			ConstraintName: "fk_functional_parent",
+			ChildSchema:    schema,
+			ChildTable:     "fk_functional_child",
+			ChildColumns:   []string{"parent_id"},
+			ParentSchema:   schema,
+			ParentTable:    "fk_functional_parent",
+			ParentColumns:  []string{"id"},
+			OnDelete:       "NO ACTION",
+			OnUpdate:       "NO ACTION",
+			// True through the supporting index MySQL created for the
+			// constraint (docs/COMPAT.md entry 16), never through the
+			// functional one.
+			Indexed: true,
+		}
+		if len(functional.Keys) != 1 || !reflect.DeepEqual(functional.Keys[0], want) {
+			t.Errorf("functional-index keys = %#v, want %#v", functional.Keys, want)
+		}
+		assertFunctionalIndexReportsNullColumn(t, admin, schema)
+	})
+}
+
+// assertFunctionalIndexReportsNullColumn pins the server behavior the fix
+// accommodates rather than only the library's response to it: STATISTICS
+// reports COLUMN_NAME NULL and EXPRESSION non-NULL for a functional key part.
+// Without this, a server that stopped emitting NULL would leave the fallback
+// test passing for the wrong reason.
+func assertFunctionalIndexReportsNullColumn(t *testing.T, db *sql.DB, schema string) {
+	t.Helper()
+
+	const query = `
+		SELECT COLUMN_NAME, EXPRESSION
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA = ?
+		  AND TABLE_NAME = 'fk_functional_child'
+		  AND INDEX_NAME = 'idx_functional'`
+	var (
+		column     sql.NullString
+		expression sql.NullString
+	)
+	if err := db.QueryRowContext(t.Context(), query, schema).Scan(&column, &expression); err != nil {
+		t.Fatalf("read functional index part: %v", err)
+	}
+	if column.Valid {
+		t.Errorf("COLUMN_NAME = %q, want NULL for a functional key part", column.String)
+	}
+	if !expression.Valid || expression.String == "" {
+		t.Errorf("EXPRESSION = %#v, want the key part's expression", expression)
+	}
 }
 
 func TestGranteeAndRolePrivilegesIntegration(t *testing.T) {

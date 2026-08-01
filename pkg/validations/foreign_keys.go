@@ -595,8 +595,11 @@ func (i *Inspector) populateFallbackIndexes(
 	indexes := make(map[tableIdentity]map[string][]string)
 	for rows.Next() {
 		var (
-			schema, table, index, column string
-			position                     uint64
+			schema, table, index string
+			// COLUMN_NAME is NULL for a functional key part; the expression
+			// lives in EXPRESSION. See docs/COMPAT.md entry 18.
+			column   sql.NullString
+			position uint64
 		)
 		if err := rows.Scan(&schema, &table, &index, &column, &position); err != nil {
 			return fmt.Errorf("scan fallback supporting index: %w", err)
@@ -616,7 +619,16 @@ func (i *Inspector) populateFallbackIndexes(
 				len(columns)+1,
 			)
 		}
-		indexes[identity][index] = append(columns, column)
+		// A NULL part is recorded as "" rather than dropped, for two reasons.
+		// It keeps SEQ_IN_INDEX dense, so the check above still holds. And it
+		// keeps the part in the position it occupies: dropping it would let a
+		// later column stand in a leftmost slot it does not hold, so
+		// INDEX((f(a)), a, b) would look like support for FOREIGN KEY (a, b),
+		// which MySQL requires be the index's first columns in order. "" cannot
+		// collide with a real name — an identifier is never empty, and the
+		// columns compared against come from KEY_COLUMN_USAGE, which reports
+		// only columns because functional parts cannot appear in a foreign key.
+		indexes[identity][index] = append(columns, column.String)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate fallback supporting indexes: %w", err)

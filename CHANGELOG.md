@@ -10,7 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- `Inspector.ForeignKeys` no longer fails when a child table carries a
+  functional index. The fallback source reads
+  `information_schema.STATISTICS.COLUMN_NAME`, which MySQL reports as NULL for a
+  functional key part, and scanning it into a plain string aborted the query. An
+  account without `PROCESS` — the ordinary shape of an inspection account, and
+  the only path that reaches the fallback — therefore got an error instead of
+  facts from any schema containing one functional index. Reported as #16.
+
+  The fix records a NULL part as an empty name rather than dropping the row,
+  which also closes a latent false positive: a dropped part would let a later
+  column stand in a leftmost slot it does not occupy, so an index on
+  `((amount * 2)), tenant_id, parent_id` would have been reported as supporting
+  `FOREIGN KEY (tenant_id, parent_id)`. `ForeignKey.Indexed` is now correct for
+  every mixed index shape.
+
+### Added
+
+- `docs/COMPAT.md` entry 18 records the NULL `COLUMN_NAME` behavior and both
+  failure modes above.
+- `docs/COMPAT.md` reference lines may now carry per-version manual URLs
+  alongside the section title, with the rule that a slug is opened before it is
+  cited. Entry 18 is the first entry to use them.
 
 ## [0.6.2] - 2026-08-01
 
