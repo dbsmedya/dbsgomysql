@@ -13,6 +13,7 @@ document.
 |---|---|
 | **Module** | `github.com/dbsmedya/dbsgomysql` |
 | **Go floor** | 1.24 — consumers must be on 1.24 or newer |
+| **Development toolchain** | pinned by go.mod's `toolchain` directive; see §6 |
 | **Purpose** | A reference library of MySQL schema *facts* and *validations* for Go, plus a registry of MySQL version-specific `information_schema` behavior |
 | **Current version** | see [CHANGELOG.md](CHANGELOG.md) |
 | **Planned consumers** | [goarchive](https://github.com/dbsmedya/goarchive), gocdc |
@@ -195,6 +196,41 @@ Nothing is done until it passes — not "done except for", not "done, just a lin
 nit". A completion claim without pasted output is not a completion claim, and a
 target reporting `skipped` is not evidence of anything. `make help` lists every
 target; `ci.yml` runs `make check` verbatim.
+
+### One toolchain, and the gate enforces it
+
+**Run the gate through `make`. Never substitute a bare `go test ./...` for it.**
+The Makefile exports `GOTOOLCHAIN` from go.mod's `toolchain` directive, so every
+`go` invocation it makes runs that exact toolchain, fetched on first use and
+overriding whatever is on `PATH`. Outside `make` you get your own Go, and the
+two do not have to agree.
+
+This applies to agents exactly as it does to humans, and it is not a style
+preference. `go 1.24.0` in go.mod is a **floor** — 1.24, 1.25, and 1.26 all
+satisfy it — so without the pin every contributor compiles against a different
+release. Vet and lint findings differ across them, which is how a failure
+reaches code review as a surprise instead of arriving as a red check. It has
+already cost one review cycle.
+
+Two directives, two jobs. `go` is the consumer floor and the compatibility
+unit. `toolchain` is the development platform, and is ignored when this module
+is somebody's dependency, so pinning it costs consumers nothing. Bump it in
+go.mod alone: the Makefile reads it, and `ci.yml` reads the Makefile.
+
+The linter is pinned the same way, and separately. Run `make tools` once: it
+builds the pinned `golangci-lint` with *its* pinned Go into a gitignored
+`./bin`, and the gate calls that copy by absolute path. A PATH install is not
+used even at the identical version, because golangci-lint embeds the
+`go/types` of whatever compiled it, so the same release reports differently
+depending on how it was built — Homebrew and `go install` do not agree. Its own
+module floor sits above this one's, which is why it cannot share `GO_VERSION`.
+
+`tools-check` prints both resolved versions, including the Go that built the
+linter, so what produced a result is in the pasted output rather than assumed.
+
+The pinned toolchain is currently past upstream end-of-life. That is deliberate:
+the floor is this library's contract, and the gate is what proves it still
+compiles there. Revisit at `v1.0.0` with the compatibility rules.
 
 ## 7. Commits & releases
 

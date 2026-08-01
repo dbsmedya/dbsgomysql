@@ -26,18 +26,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve pinned Go version
+        id: go
+        run: echo "version=$(make -s print-go-version)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Tracks the module's declared floor; no second place to bump.
-          go-version-file: go.mod
+          # go.mod's `toolchain` directive is the single source of truth; the
+          # Makefile reads it and exports it as GOTOOLCHAIN, so `make check`
+          # runs that exact toolchain whatever is provisioned here. Asking for
+          # it by name keeps this step from installing a different one and
+          # paying for a second download.
+          go-version: ${{ steps.go.outputs.version }}
           cache: true
 
-      - name: Install golangci-lint
-        run: |
-          # The Makefile pins the version; there is no second place to bump.
-          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(make -s print-golangci-version)"
-          golangci-lint --version
+      # The same target contributors run, so CI and a workstation end up with
+      # the same artifact rather than the same version number. `go install`
+      # here with GOTOOLCHAIN=auto used to build it with whatever release
+      # golangci-lint's own floor pulled in, which is not what local package
+      # managers produce.
+      - name: Install pinned golangci-lint
+        run: make tools
 
       # One step, not a re-listing of the gate's targets. `make check` is the
       # gate; running it verbatim is what makes a green workstation and a green
@@ -70,10 +80,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve pinned Go version
+        id: go
+        run: echo "version=$(make -s print-go-version)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ steps.go.outputs.version }}
           cache: true
 
       - name: Smoke tests
