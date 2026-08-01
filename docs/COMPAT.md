@@ -706,8 +706,8 @@ describes an index as key *parts*, and a functional part — `INDEX ((amount *
 2))` — indexes an expression rather than a column, so its `COLUMN_NAME` is NULL
 and `EXPRESSION` carries the text. Reading `COLUMN_NAME` into a plain string
 therefore fails outright, and because the failure is a scan error rather than an
-empty result, a single functional index anywhere on a child table can abort a
-whole query.
+empty result, one such index on any child table the query touches aborts the
+whole query rather than that one row.
 
 The second symptom is quieter and worse. A functional part still *occupies* its
 position in the index. An index whose parts are `((amount * 2)), tenant_id,

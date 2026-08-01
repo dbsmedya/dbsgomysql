@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   functional key part, and scanning it into a plain string aborted the query. An
   account without `PROCESS` — the ordinary shape of an inspection account, and
   the only path that reaches the fallback — therefore got an error instead of
-  facts from any schema containing one functional index. Reported as #16.
+  facts whenever a child table of one of the matched constraints carried such an
+  index. Supporting indexes are looked up only for those tables, so a functional
+  index elsewhere in the schema never had any effect. Reported as #16.
 
   The fix records a NULL part as an empty name rather than dropping the row,
   which also closes a latent false positive: a dropped part would let a later
