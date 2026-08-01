@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.6.4] - 2026-08-01
+
 ### Added
 
 - `docs/COMPAT.md` entry 19 records that `INNODB_FOREIGN_COLS.POS` counts from 1
@@ -364,7 +368,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.0...v0.6.1
