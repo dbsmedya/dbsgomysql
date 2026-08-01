@@ -20,6 +20,10 @@ coverage.html
 go.work
 go.work.sum
 
+# MCP server wiring — absolute paths to a local dbs-vector corpus, per-developer.
+# See AGENTS.md section 3, "MySQL documentation is a lookup, not a recollection".
+.mcp.json
+
 # Editor & OS noise
 .DS_Store
 .idea/

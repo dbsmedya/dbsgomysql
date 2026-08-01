@@ -103,6 +103,40 @@ there that can write. The `goarchive-extraction-inventory` spec records what to
 copy, what to rebuild differently, and what to leave behind. goarchive is ported
 to consume this library later, as its own effort in its own repo.
 
+### MySQL documentation is a lookup, not a recollection
+
+The `dbs-vector` MCP indexes the reference manuals, release notes, and error
+references for 8.0, 8.4, and 9.7 as one sanitized corpus. **Before asserting any
+MySQL behavior — a version threshold, an error number, an `information_schema`
+column, a type or storage rule — look it up there.** Training data on MySQL is
+old enough to be wrong, and a remembered fact is not a fact. This corpus is the
+first source of truth, and the manual's own wording is what a check's rationale
+or a `docs/COMPAT.md` entry should quote.
+
+Search `search_md_mysql_product_documentation`, scoped `clean/<file>`:
+
+| Question | File |
+|---|---|
+| What does the server do, and what does `information_schema` expose? | `refman-{8.0,8.4,9.7}-en.a4.md` |
+| When did this change, and under which worklog? | `mysql-{8.0,8.4,9.7}-relnotes-en.a4.md` |
+| What is this error number, symbol, or SQLSTATE? | `mysql-errors-{8.0,8.4,9.7}-en.a4.md` |
+
+Establish a `docs/COMPAT.md` quirk by running one query per version file and
+diffing the answers; cite the manual's own section title or the release note's
+dated heading. `mysqld-version-reference-en.a4.md` is the exception — its prose
+chapters are sound, but its version matrices are stale and unreadable **in the
+source PDF itself**, so no reconversion will rescue them. Scope to that file
+deliberately or leave it out.
+
+Two reading rules. The first breadcrumb node of a refman result is a false
+heading harvested from a nearby code block — trust the path from `Chapter N`
+onward, and never quote the root. When a result stops mid-list or mid-table, walk
+it with the chunk cursor rather than re-querying; a second search returns the same
+neighborhood reranked, the cursor returns the actual next text.
+
+The corpus settles what the documentation claims. Section 5 still requires the
+test that pins what the server does.
+
 ## 4. Library rules
 
 `.golangci.yml` is the canonical statement of the mechanical rules — no `panic`,
