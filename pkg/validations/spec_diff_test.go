@@ -927,6 +927,117 @@ func TestSpecDiffKindVocabularyIsDeclaredInOneTerminatedBlock(t *testing.T) {
 	}
 }
 
+// wantSpecDiffKindStrings is the independent witness for
+// TestSpecDiffKindStringMatchesTheDeclaredNames: a test derived from the
+// switch cannot prove the switch is right, so this map is hand-maintained on
+// purpose. A kind added without a matching entry here, or a name changed on
+// only one side, fails the count or the per-kind comparison.
+var wantSpecDiffKindStrings = map[SpecDiffKind]string{
+	EngineMismatch:               "engine_mismatch",
+	CharsetMismatch:              "charset_mismatch",
+	CollationMismatch:            "collation_mismatch",
+	CommentMismatch:              "comment_mismatch",
+	CommentUnconfirmed:           "comment_unconfirmed",
+	ColumnAbsent:                 "column_absent",
+	ColumnTypeMismatch:           "column_type_mismatch",
+	ColumnNullabilityMismatch:    "column_nullability_mismatch",
+	ColumnCharsetMismatch:        "column_charset_mismatch",
+	ColumnCollationMismatch:      "column_collation_mismatch",
+	ColumnDefaultMismatch:        "column_default_mismatch",
+	ColumnOrderMismatch:          "column_order_mismatch",
+	ColumnVisibilityMismatch:     "column_visibility_mismatch",
+	ColumnGeneratedMismatch:      "column_generated_mismatch",
+	ColumnGenerationExprMismatch: "column_generation_expr_mismatch",
+	ColumnAutoIncrementMismatch:  "column_auto_increment_mismatch",
+	ColumnOnUpdateMismatch:       "column_on_update_mismatch",
+	IndexUnconfirmed:             "index_unconfirmed",
+	IndexAbsent:                  "index_absent",
+	IndexPartsMismatch:           "index_parts_mismatch",
+	IndexUniquenessMismatch:      "index_uniqueness_mismatch",
+	IndexTypeMismatch:            "index_type_mismatch",
+	IndexVisibilityMismatch:      "index_visibility_mismatch",
+	ConstraintUnconfirmed:        "constraint_unconfirmed",
+	ConstraintAbsent:             "constraint_absent",
+	ConstraintKindMismatch:       "constraint_kind_mismatch",
+	CheckClauseMismatch:          "check_clause_mismatch",
+	CheckEnforcementMismatch:     "check_enforcement_mismatch",
+	ForeignKeyColumnsMismatch:    "foreign_key_columns_mismatch",
+	ForeignKeyReferenceMismatch:  "foreign_key_reference_mismatch",
+	ForeignKeyRuleMismatch:       "foreign_key_rule_mismatch",
+}
+
+// TestSpecDiffKindStringMatchesTheDeclaredNames asserts that String() matches
+// a hand-written map of all 31 published kinds, and that the map itself has
+// exactly 31 entries. A kind added without a case falls to the default and
+// fails the per-kind comparison; a name changed on only one side fails too.
+func TestSpecDiffKindStringMatchesTheDeclaredNames(t *testing.T) {
+	t.Parallel()
+
+	if len(wantSpecDiffKindStrings) != 31 {
+		t.Fatalf("wantSpecDiffKindStrings has %d entries, want 31",
+			len(wantSpecDiffKindStrings))
+	}
+
+	for _, kind := range AllSpecDiffKinds() {
+		want, ok := wantSpecDiffKindStrings[kind]
+		if !ok {
+			t.Errorf("SpecDiffKind %d has no entry in wantSpecDiffKindStrings", kind)
+
+			continue
+		}
+		if got := kind.String(); got != want {
+			t.Errorf("SpecDiffKind(%d).String() = %q, want %q", kind, got, want)
+		}
+	}
+}
+
+// TestSpecDiffKindStringsAreDistinct asserts that the 31 returned strings are
+// pairwise distinct. A hand-written map that agrees with a switch duplicating
+// one string on two kinds would still pass
+// TestSpecDiffKindStringMatchesTheDeclaredNames, so this is the only case that
+// catches that mutation.
+func TestSpecDiffKindStringsAreDistinct(t *testing.T) {
+	t.Parallel()
+
+	seen := make(map[string]SpecDiffKind, len(wantSpecDiffKindStrings))
+	for _, kind := range AllSpecDiffKinds() {
+		got := kind.String()
+		if other, ok := seen[got]; ok {
+			t.Errorf("SpecDiffKind %d and %d both render as %q", other, kind, got)
+
+			continue
+		}
+		seen[got] = kind
+	}
+}
+
+// TestSpecDiffKindStringZeroValueIsUnknown asserts that the zero value renders
+// as unknownEnum. AllSpecDiffKinds excludes the zero value, so
+// TestSpecDiffKindStringMatchesTheDeclaredNames never evaluates it.
+func TestSpecDiffKindStringZeroValueIsUnknown(t *testing.T) {
+	t.Parallel()
+
+	if got := SpecDiffUnknown.String(); got != unknownEnum {
+		t.Errorf("SpecDiffUnknown.String() = %q, want %q", got, unknownEnum)
+	}
+}
+
+// TestSpecDiffKindStringUndeclaredValueIsBoundsChecked asserts that a value
+// outside the published vocabulary renders as SpecDiffKind(n) rather than as
+// unknownEnum, which would present a garbage value as a declared state. 255 is
+// deliberately not specDiffKindCount: it is a fixed literal outside the
+// vocabulary, so it stays outside it even under a mutation that inserts a new
+// kind and moves the sentinel.
+func TestSpecDiffKindStringUndeclaredValueIsBoundsChecked(t *testing.T) {
+	t.Parallel()
+
+	const undeclared = SpecDiffKind(255)
+	want := "SpecDiffKind(255)"
+	if got := undeclared.String(); got != want {
+		t.Errorf("SpecDiffKind(255).String() = %q, want %q", got, want)
+	}
+}
+
 // TestAllSpecDiffKindsReturnsAFreshSlice asserts that corrupting one call's
 // result does not affect a later call, which would be observable if
 // AllSpecDiffKinds were "optimized" to return a package-level array or a

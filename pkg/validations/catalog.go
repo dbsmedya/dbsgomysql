@@ -1,5 +1,7 @@
 package validations
 
+import "strconv"
+
 // Stable check identifiers. A finding names the check that produced it with one
 // of these values, so they are part of the compatibility contract: consumers
 // branch on them rather than on message text.
@@ -35,6 +37,24 @@ const (
 	// check is not implemented yet. Its Phase names the slice that delivers it.
 	StatusDeferred
 )
+
+// String returns the status's name. CheckStatus has no declared zero-value
+// member, so 0 renders as CheckStatus(0) rather than as "unknown" — that
+// spelling is reserved for types with a declared unknown member, and using it
+// here would present an unpopulated CheckInfo as though it were a real,
+// nameable status.
+//
+// String is safe for concurrent use.
+func (s CheckStatus) String() string {
+	switch s {
+	case StatusImplemented:
+		return "implemented"
+	case StatusDeferred:
+		return "deferred"
+	default:
+		return "CheckStatus(" + strconv.Itoa(int(s)) + ")"
+	}
+}
 
 // CheckInfo describes one cataloged check. It carries no severity; whether a
 // finding matters is the consumer's decision, and what the library offers

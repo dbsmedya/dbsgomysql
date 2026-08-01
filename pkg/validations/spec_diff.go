@@ -97,6 +97,82 @@ const (
 	specDiffKindCount
 )
 
+// String returns the kind as a lowercase word. An undeclared value renders as
+// SpecDiffKind(n) rather than as "unknown", so a garbage value is
+// distinguishable from the zero value in a message.
+//
+// String is safe for concurrent use.
+func (k SpecDiffKind) String() string {
+	switch k {
+	case SpecDiffUnknown:
+		return unknownEnum
+	case EngineMismatch:
+		return "engine_mismatch"
+	case CharsetMismatch:
+		return "charset_mismatch"
+	case CollationMismatch:
+		return "collation_mismatch"
+	case CommentMismatch:
+		return "comment_mismatch"
+	case CommentUnconfirmed:
+		return "comment_unconfirmed"
+	case ColumnAbsent:
+		return "column_absent"
+	case ColumnTypeMismatch:
+		return "column_type_mismatch"
+	case ColumnNullabilityMismatch:
+		return "column_nullability_mismatch"
+	case ColumnCharsetMismatch:
+		return "column_charset_mismatch"
+	case ColumnCollationMismatch:
+		return "column_collation_mismatch"
+	case ColumnDefaultMismatch:
+		return "column_default_mismatch"
+	case ColumnOrderMismatch:
+		return "column_order_mismatch"
+	case ColumnVisibilityMismatch:
+		return "column_visibility_mismatch"
+	case ColumnGeneratedMismatch:
+		return "column_generated_mismatch"
+	case ColumnGenerationExprMismatch:
+		return "column_generation_expr_mismatch"
+	case ColumnAutoIncrementMismatch:
+		return "column_auto_increment_mismatch"
+	case ColumnOnUpdateMismatch:
+		return "column_on_update_mismatch"
+	case IndexUnconfirmed:
+		return "index_unconfirmed"
+	case IndexAbsent:
+		return "index_absent"
+	case IndexPartsMismatch:
+		return "index_parts_mismatch"
+	case IndexUniquenessMismatch:
+		return "index_uniqueness_mismatch"
+	case IndexTypeMismatch:
+		return "index_type_mismatch"
+	case IndexVisibilityMismatch:
+		return "index_visibility_mismatch"
+	case ConstraintUnconfirmed:
+		return "constraint_unconfirmed"
+	case ConstraintAbsent:
+		return "constraint_absent"
+	case ConstraintKindMismatch:
+		return "constraint_kind_mismatch"
+	case CheckClauseMismatch:
+		return "check_clause_mismatch"
+	case CheckEnforcementMismatch:
+		return "check_enforcement_mismatch"
+	case ForeignKeyColumnsMismatch:
+		return "foreign_key_columns_mismatch"
+	case ForeignKeyReferenceMismatch:
+		return "foreign_key_reference_mismatch"
+	case ForeignKeyRuleMismatch:
+		return "foreign_key_rule_mismatch"
+	default:
+		return "SpecDiffKind(" + strconv.Itoa(int(k)) + ")"
+	}
+}
+
 // AllSpecDiffKinds returns every nonzero SpecDiffKind DiffSpecs may emit, in
 // declaration order. The vocabulary is stable within a v0.N.x release line:
 // kinds are added only in a new minor, and none is renumbered or removed.
