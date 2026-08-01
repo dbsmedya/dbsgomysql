@@ -791,10 +791,17 @@ The reason this needs a registry entry rather than a code comment is the shape
 of the failure if someone "corrects" it. `ForeignKeys` routes **any**
 primary-source error to the standard `information_schema` fallback, so a
 0-based expectation would not surface as a broken query. It would surface as
-nothing at all: every call would quietly stop using the authoritative InnoDB
-source and start returning `VisibilityUnconfirmed`, which is precisely the
-"metadata may be incomplete" signal callers are meant to act on. Tests asserting
-facts rather than visibility would keep passing.
+nothing at all: every call that matched at least one foreign key would quietly
+stop using the authoritative InnoDB source and start returning
+`VisibilityUnconfirmed`, which is precisely the "metadata may be incomplete"
+signal callers are meant to act on. Tests asserting facts rather than visibility
+would keep passing.
+
+The "at least one" is not a quibble — it is what makes the regression hard to
+notice. A selector matching no constraints builds no position group, so nothing
+compares positions, the primary source succeeds trivially, and the result is
+still `VisibilityComplete`. The break therefore appears only where foreign keys
+actually exist, which is exactly where the answer is being relied on.
 
 Worth stating alongside: `KEY_COLUMN_USAGE.ORDINAL_POSITION`, the column the
 fallback reads for the same purpose, genuinely **is** 1-based, and is documented
@@ -827,9 +834,12 @@ CREATE TABLE p3 (a INT NOT NULL, b INT NOT NULL, c INT NOT NULL,
 CREATE TABLE c3 (id INT NOT NULL PRIMARY KEY, a INT, b INT, c INT,
   CONSTRAINT fk3 FOREIGN KEY (a, b, c) REFERENCES p3(a, b, c)) ENGINE=InnoDB;
 
+-- Matched exactly, not with LIKE: '_' is a single-character wildcard, so
+-- 'pos_probe/%' would also match a constraint in a schema named posXprobe
+-- and could add rows to the output below.
 SELECT ID, FOR_COL_NAME, POS
 FROM information_schema.INNODB_FOREIGN_COLS
-WHERE ID LIKE 'pos_probe/%'
+WHERE ID IN ('pos_probe/fk1', 'pos_probe/fk3')
 ORDER BY ID, POS;
 
 DROP DATABASE pos_probe;
