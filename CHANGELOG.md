@@ -21,6 +21,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TINYINT`, `SMALLINT`, `MEDIUMINT`, `INT`, `INTEGER`, and `BIGINT`, including
   the legacy-form synthetic value `int(10) unsigned zerofill`.
 
+### Changed
+
+- `docs/COMPAT.md`: every entry now closes with a **Reference** line recording
+  whether the behavior is documented by MySQL, documented only in part, or has
+  no supporting statement that a search could find, and citing the manual
+  section title, release note, or error-reference record it came from. Claims
+  carrying a version threshold, an error number, or an "all supported versions"
+  scope were queried once per version file and the answers diffed.
+- `docs/COMPAT.md`: references cite section *titles*, because section numbers
+  move between versions — `TRIGGERS` is §28.3.44 in the 8.4 manual and §28.3.50
+  in 9.7, and CHECK Constraints moved from §15.1.20.6 to §15.1.25.6.
+- `docs/COMPAT.md`: entries 2, 3, 5, 12, 13, 14, 15, and 16 gained supporting
+  detail from the sources. Notably, entry 16 now records that the automatic
+  foreign-key index "might be silently dropped later", so its disappearance from
+  a captured schema is not a defect; entry 14 records that `COLUMNS.EXTRA` is an
+  open value set that gained `MASKING POLICY` in 9.x; entry 12 records that
+  wildcards in grants are deprecated as of 9.x; and entry 8 records that error
+  3988 was only added in 8.0.22.
+
+### Fixed
+
+- `docs/COMPAT.md`: three factual errors, each found by checking the entry
+  against the MySQL documentation rather than against memory.
+  - Entry 1 gave 8.0.17 as the release that stopped recording integer display
+    widths. 8.0.17 deprecated the attribute; **8.0.19** is where output stopped
+    showing it, and dictionary entries written by earlier 8.0 releases are left
+    unchanged.
+  - Entry 7 stated that `mysql_native_password` was removed in 8.4. It was
+    deprecated in 8.0.34, **disabled by default** in 8.4 — where it can still be
+    re-enabled with `--mysql-native-password=ON` — and **removed in 9.0.0**, and
+    then only from the server; the client-side plugin remains available.
+  - Entry 8 gave error 3988 the symbol `ER_CANNOT_CONVERT_STRING`. The number is
+    correct; the symbol is **`ER_IMPOSSIBLE_STRING_CONVERSION`**.
+
+  No library code depends on any of the three, so behavior is unchanged.
+
 ### Notes
 
 - Adding an exported field can break unkeyed `ColumnInfo` struct literals.
