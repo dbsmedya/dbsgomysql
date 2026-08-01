@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/COMPAT.md` entry 19 records that `INNODB_FOREIGN_COLS.POS` counts from 1
+  although every supported manual documents it as counting from 0, twice each.
+  No behavior changes — `Inspector.ForeignKeys` was already correct. The entry
+  exists because "correcting" the code to match the manual would not fail
+  visibly: any primary-source error falls back to the standard
+  `information_schema` query, so every call that matched at least one foreign
+  key would silently degrade to `MetadataVisibility` `unconfirmed`. A selector
+  matching none would still report `complete`, which is what makes the
+  regression easy to miss. Now pinned directly on the raw column. Reported as
+  #17.
+- `docs/COMPAT.md` gains a fourth Reference kind, *documented and contradicted
+  by the server*, for entries where the manual is not the tiebreaker and the
+  pinning test is.
+- Entry 19 carries a runnable SQL reproduction, so a reader can check a claim
+  that contradicts the manual without running this library's test suite.
+
+## [0.6.3] - 2026-08-01
+
 ### Fixed
 
 - `Inspector.ForeignKeys` no longer fails when a child table carries a
@@ -35,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failure modes above.
 - `docs/COMPAT.md` reference lines may now carry per-version manual URLs
   alongside the section title, with the rule that a slug is opened before it is
-  cited. Entry 18 is the first entry to use them.
+  cited. Entry 18 is the first to use them.
 
 ## [0.6.2] - 2026-08-01
 
@@ -344,7 +364,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.5.0...v0.6.0

@@ -24,12 +24,20 @@ records nothing else and is currently empty.
 ## Reference validation
 
 Every entry closes with a **Reference** line naming where the claim comes from.
-Three kinds appear, and the difference matters when an entry is challenged:
+Four kinds appear, and the difference matters when an entry is challenged:
 
 - **Documented** — the MySQL manual, a release note, or the error reference
   states the behavior. The entry paraphrases the source; the source wins.
 - **Documented in part** — the manual states the surrounding rule but not the
   specific consequence recorded here. The gap is named explicitly.
+- **Documented, and contradicted by the server** — the manual states the
+  behavior and the server does something else on every version tested. The entry
+  says so plainly and names the exact releases measured; here the source does
+  **not** win, and the **pinning test is authoritative**. Note the wording: every
+  version *tested*, never every version, because the measurement is always a
+  finite set of releases and the entry beneath is where that set is named. These
+  entries carry the highest risk of a well-meaning "fix" — someone reads the
+  manual, corrects the code to match, and breaks it everywhere.
 - **No supporting statement found** — searching the corpus did not turn up
   documentation, so the behavior rests on the pinning test alone. Read this as a
   statement about the search, **not** a claim that MySQL documents nothing: the
@@ -767,6 +775,130 @@ columns must lead the index is §15.1.20.5, quoted in full under entry 16.
 The 8.0 manual alone dates the feature — "MySQL 8.0.13 and higher supports
 functional key parts" — which is below this library's 8.0.4x support floor, so
 no version branch is warranted.
+
+## 19. `INNODB_FOREIGN_COLS.POS` counts from 1, not 0 ✅
+
+**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+
+**Symptom:** the manual says this column is 0-based. The server returns 1-based
+values. For a two-column foreign key, `POS` is `1` and `2` on every version
+measured; the documented reading predicts `0` and `1`.
+
+**Handling:** `scanInnoDBForeignKeys` requires positions `1, 2, …` and rejects a
+group that does not supply them. That is correct and must stay.
+
+The reason this needs a registry entry rather than a code comment is the shape
+of the failure if someone "corrects" it. `ForeignKeys` routes **any**
+primary-source error to the standard `information_schema` fallback, so a
+0-based expectation would not surface as a broken query. It would surface as
+nothing at all: every call that matched at least one foreign key would quietly
+stop using the authoritative InnoDB source and start returning
+`VisibilityUnconfirmed`, which is precisely the "metadata may be incomplete"
+signal callers are meant to act on. Tests asserting facts rather than visibility
+would keep passing.
+
+The "at least one" is not a quibble — it is what makes the regression hard to
+notice. A selector matching no constraints builds no position group, so nothing
+compares positions, the primary source succeeds trivially, and the result is
+still `VisibilityComplete`. The break therefore appears only where foreign keys
+actually exist, which is exactly where the answer is being relied on.
+
+Worth stating alongside: `KEY_COLUMN_USAGE.ORDINAL_POSITION`, the column the
+fallback reads for the same purpose, genuinely **is** 1-based, and is documented
+as such — "Column positions are numbered beginning with 1." So both sources
+using `1` is a fact about the server twice over, not one assumption copied into
+two scanners.
+
+Pinned directly, at the fact rather than downstream, by
+[`assertInnoDBForeignColsPositionBase`](../pkg/validations/validations_integration_test.go)
+via `TestForeignKeysIntegration`. It reads `POS` for a composite constraint, so
+one assertion covers the base, the increment, and the ordering.
+
+**Reproducing it.** This entry contradicts the manual, so it should be
+checkable without trusting this repository or running its suite. The first two
+tables below are the manual's own Example 17.3, copied unchanged; the third and
+fourth add a composite key so the increment shows too. Needs `PROCESS`.
+
+```sql
+CREATE DATABASE pos_probe;
+USE pos_probe;
+
+CREATE TABLE parent (id INT NOT NULL, PRIMARY KEY (id)) ENGINE=InnoDB;
+CREATE TABLE child (id INT, parent_id INT,
+  INDEX par_ind (parent_id),
+  CONSTRAINT fk1 FOREIGN KEY (parent_id) REFERENCES parent(id)
+  ON DELETE CASCADE) ENGINE=InnoDB;
+
+CREATE TABLE p3 (a INT NOT NULL, b INT NOT NULL, c INT NOT NULL,
+  PRIMARY KEY (a, b, c)) ENGINE=InnoDB;
+CREATE TABLE c3 (id INT NOT NULL PRIMARY KEY, a INT, b INT, c INT,
+  CONSTRAINT fk3 FOREIGN KEY (a, b, c) REFERENCES p3(a, b, c)) ENGINE=InnoDB;
+
+-- Matched exactly, not with LIKE: '_' is a single-character wildcard, so
+-- 'pos_probe/%' would also match a constraint in a schema named posXprobe
+-- and could add rows to the output below.
+SELECT ID, FOR_COL_NAME, POS
+FROM information_schema.INNODB_FOREIGN_COLS
+WHERE ID IN ('pos_probe/fk1', 'pos_probe/fk3')
+ORDER BY ID, POS;
+
+DROP DATABASE pos_probe;
+```
+
+Byte-identical output on 8.0.46, 8.4.9, and 9.7.1:
+
+```
++---------------+--------------+-----+
+| ID            | FOR_COL_NAME | POS |
++---------------+--------------+-----+
+| pos_probe/fk1 | parent_id    |   1 |
+| pos_probe/fk3 | a            |   1 |
+| pos_probe/fk3 | b            |   2 |
+| pos_probe/fk3 | c            |   3 |
++---------------+--------------+-----+
+```
+
+The first row is the decisive one: it is the manual's example, and the manual
+prints `POS: 0` for it. `fk3` shows the count continuing `1, 2, 3` where the
+documented reading predicts `0, 1, 2`. Swapping the query to
+`KEY_COLUMN_USAGE.ORDINAL_POSITION` for `fk3` returns `1, 2, 3` as well — which
+that table's documentation correctly predicts, so the two sources agree with
+each other and only one manual page is out of step.
+
+**Reference:** documented, and contradicted by the server. All three manuals
+state the 0-based rule **twice**, and all three servers disagree with it.
+
+The column definition, §28.4.13, "The INFORMATION_SCHEMA INNODB_FOREIGN_COLS
+Table": "**POS** The ordinal position of this key field within the foreign key
+index, starting from 0." —
+[8.0](https://dev.mysql.com/doc/refman/8.0/en/information-schema-innodb-foreign-cols-table.html) ·
+[8.4](https://dev.mysql.com/doc/refman/8.4/en/information-schema-innodb-foreign-cols-table.html) ·
+[9.7](https://dev.mysql.com/doc/refman/9.7/en/information-schema-innodb-foreign-cols-table.html).
+The same page carries the `PROCESS` requirement that makes the fallback
+necessary at all: "You must have the PROCESS privilege to query this table."
+
+The worked example repeats it, §17.15.3, "InnoDB INFORMATION_SCHEMA Schema
+Object Tables", Example 17.3 — a single-column key printing `POS: 0`, closing
+"The POS value is the ordinal position of the key field within the foreign key
+index, starting at zero." —
+[8.0](https://dev.mysql.com/doc/refman/8.0/en/innodb-information-schema-system-tables.html) ·
+[8.4](https://dev.mysql.com/doc/refman/8.4/en/innodb-information-schema-system-tables.html) ·
+[9.7](https://dev.mysql.com/doc/refman/9.7/en/innodb-information-schema-system-tables.html).
+That page's slug still carries its MySQL 5.7 title, "System Tables", which is
+why it cannot be derived from the current section title — the case that produced
+the rule above about opening a URL before citing it.
+
+The 1-based claim for `ORDINAL_POSITION` is §28.3.16, "The INFORMATION_SCHEMA
+KEY_COLUMN_USAGE Table"
+([8.0](https://dev.mysql.com/doc/refman/8.0/en/information-schema-key-column-usage-table.html) ·
+[8.4](https://dev.mysql.com/doc/refman/8.4/en/information-schema-key-column-usage-table.html) ·
+[9.7](https://dev.mysql.com/doc/refman/9.7/en/information-schema-key-column-usage-table.html)),
+and there the documentation and the server agree.
+
+Why the documentation is wrong is not established here. A plausible account is
+that the text predates the 8.0 rename from `INNODB_SYS_FOREIGN_COLS`, but the
+corpus this repository validates against covers 8.0, 8.4, and 9.7 only, so
+nothing available supports it and it is left out rather than guessed.
 
 ---
 
