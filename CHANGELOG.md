@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.6.2] - 2026-08-01
+
+Build and CI only. The public surface is identical to `v0.6.1`, and the `go`
+directive — the floor a consumer's build honors — is unchanged at `1.24.0`.
+
 ### Changed
 
 - Build: the development toolchain is pinned. go.mod gains
@@ -38,16 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binaries were built with go1.26.2 while CI's `go install` produced go1.25.12.
   Contributors need to run `make tools` once; a PATH install is no longer used.
 
+## [0.6.1] - 2026-08-01
+
 ### Added
 
-- `pkg/validations`: `ColumnInfo.Unsigned`, derived from
-  `information_schema.COLUMNS.COLUMN_TYPE` in the existing `Inspector.Columns`
-  metadata query. Callers can now distinguish signed and unsigned configured
-  integer columns without substituting actual primary-key metadata or parsing
-  MySQL type syntax.
-- Unit and MySQL 8.0 / 8.4 / 9.7 integration coverage for signed and unsigned
-  `TINYINT`, `SMALLINT`, `MEDIUMINT`, `INT`, `INTEGER`, and `BIGINT`, including
-  the legacy-form synthetic value `int(10) unsigned zerofill`.
 - Coverage pinning the `ZEROFILL` display-width carve-out: unit cases for
   normalization and for the `DiffSpecs` mismatch it protects, plus a
   `TestTableSpecCompatPinsIntegration` pin creating `INT(5) ZEROFILL` and
@@ -107,11 +108,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   No library code depends on any of the three, so behavior is unchanged.
 
+## [0.6.0] - 2026-07-29
+
+### Added
+
+- `pkg/validations`: `ColumnInfo.Unsigned`, derived from
+  `information_schema.COLUMNS.COLUMN_TYPE` in the existing `Inspector.Columns`
+  metadata query. Callers can now distinguish signed and unsigned configured
+  integer columns without substituting actual primary-key metadata or parsing
+  MySQL type syntax.
+- Unit and MySQL 8.0 / 8.4 / 9.7 integration coverage for signed and unsigned
+  `TINYINT`, `SMALLINT`, `MEDIUMINT`, `INT`, `INTEGER`, and `BIGINT`, including
+  the legacy-form synthetic value `int(10) unsigned zerofill`.
+
 ### Notes
 
 - Adding an exported field can break unkeyed `ColumnInfo` struct literals.
-  This pre-1.0 API change takes the next compatibility unit, `v0.6.0`;
-  consumers should continue to pin exact tags.
+  This pre-1.0 API change took this compatibility unit; consumers should
+  continue to pin exact tags.
 
 ## [0.5.0] - 2026-07-28
 
@@ -305,7 +319,10 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/dbsmedya/dbsgomysql/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.3.0...v0.4.0
