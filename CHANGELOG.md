@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.7.0] - 2026-08-01
+
+The `SpecDiffKind` vocabulary becomes discoverable and printable. Purely
+additive: no identifier changes meaning, signature, or numeric value, and the
+JSON representation of `SpecDiff` is byte-identical.
+
 ### Added
 
 - `validations.AllSpecDiffKinds()` publishes the full `SpecDiffKind` vocabulary
@@ -384,7 +392,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.4...v0.7.0
 [0.6.4]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/dbsmedya/dbsgomysql/compare/v0.6.1...v0.6.2
