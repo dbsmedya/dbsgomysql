@@ -10,7 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `validations.AllSpecDiffKinds()` publishes the full `SpecDiffKind` vocabulary
+  as data, in declaration order, so a consumer can prove its policy switch over
+  `SpecDiff.Kind` is exhaustive at review time instead of discovering a new kind
+  through a fail-closed `default` at run time. Reported as #14.
 
 ## [0.6.4] - 2026-08-01
 
