@@ -731,6 +731,7 @@ func TestForeignKeysIntegration(t *testing.T) {
 	}
 
 	assertLeftmostCompositeIndex(t, db, schema)
+	assertInnoDBForeignColsPositionBase(t, db, schema)
 
 	ruleKeys, err := inspector.ForeignKeys(
 		t.Context(),
@@ -1209,6 +1210,59 @@ func TestPartialRevokesPrivilegeResolutionIntegration(t *testing.T) {
 		validations.PrivilegeDelete,
 	); got != validations.GrantAbsent {
 		t.Errorf("never-granted DELETE under partial revokes = %s, want absent", got)
+	}
+}
+
+// assertInnoDBForeignColsPositionBase pins that INNODB_FOREIGN_COLS.POS counts
+// from 1, which is what scanInnoDBForeignKeys requires and the opposite of what
+// every supported manual documents. See docs/COMPAT.md entry 19.
+//
+// It reads POS directly rather than inferring the base from a VisibilityComplete
+// assertion several steps downstream. A 0-based server would make the primary
+// source error, and ForeignKeys routes any primary-source error to the fallback,
+// so the only symptom elsewhere is a silent demotion to VisibilityUnconfirmed.
+//
+// The constraint is composite on purpose: two rows pin the base, the increment,
+// and the ordering in one read.
+func assertInnoDBForeignColsPositionBase(
+	t *testing.T,
+	db *sql.DB,
+	schema string,
+) {
+	t.Helper()
+
+	// Querying this table needs PROCESS, which the admin connection holds.
+	const query = `
+		SELECT POS
+		FROM information_schema.INNODB_FOREIGN_COLS
+		WHERE ID = ?
+		ORDER BY POS`
+	rows, err := db.QueryContext(t.Context(), query, schema+"/fk_composite_parent")
+	if err != nil {
+		t.Fatalf("query InnoDB foreign-key column positions: %v", err)
+	}
+	defer rows.Close()
+
+	var positions []uint64
+	for rows.Next() {
+		var position uint64
+		if err := rows.Scan(&position); err != nil {
+			t.Fatalf("scan foreign-key column position: %v", err)
+		}
+		positions = append(positions, position)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate foreign-key column positions: %v", err)
+	}
+
+	// 1-based, though §28.4.13 and Example 17.3 both say 0. The server wins.
+	want := []uint64{1, 2}
+	if !reflect.DeepEqual(positions, want) {
+		t.Errorf(
+			"INNODB_FOREIGN_COLS.POS for a two-column key = %v, want %v",
+			positions,
+			want,
+		)
 	}
 }
 

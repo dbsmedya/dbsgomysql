@@ -33,9 +33,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `docs/COMPAT.md` entry 18 records the NULL `COLUMN_NAME` behavior and both
   failure modes above.
+- `docs/COMPAT.md` entry 19 records that `INNODB_FOREIGN_COLS.POS` counts from 1
+  although every supported manual documents it as counting from 0, twice each.
+  No behavior changes — `Inspector.ForeignKeys` was already correct. The entry
+  exists because "correcting" the code to match the manual would not fail
+  visibly: any primary-source error falls back to the standard
+  `information_schema` query, so every result would silently degrade to
+  `MetadataVisibility` `unconfirmed`. Now pinned directly on the raw column.
+  Reported as #17.
+- `docs/COMPAT.md` gains a fourth Reference kind, *documented and contradicted
+  by the server*, for entries where the manual is not the tiebreaker and the
+  pinning test is.
 - `docs/COMPAT.md` reference lines may now carry per-version manual URLs
   alongside the section title, with the rule that a slug is opened before it is
-  cited. Entry 18 is the first entry to use them.
+  cited. Entries 18 and 19 use them.
 
 ## [0.6.2] - 2026-08-01
 
