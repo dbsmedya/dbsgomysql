@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   satisfy, so contributors and CI could each compile against a different
   release. CI resolved the floor literally and ran Go 1.24.0 while development
   happened on 1.26.5.
+- Build: the linter is pinned as an artifact rather than as a version string.
+  `make tools` builds the pinned `golangci-lint` with its own pinned Go
+  (`GOLANGCI_GO_VERSION`) into a gitignored `./bin`, the gate invokes that copy
+  by absolute path, and `ci.yml` runs the same target. `tools-check` verifies
+  the Go release that built it, not just its version.
+
+  golangci-lint embeds the `go/types` of the toolchain that compiled it, so one
+  release can report differently depending on how it was built. Local Homebrew
+  binaries were built with go1.26.2 while CI's `go install` produced go1.25.12.
+  Contributors need to run `make tools` once; a PATH install is no longer used.
 
 ### Added
 

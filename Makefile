@@ -5,14 +5,34 @@
 
 MODULE       := github.com/dbsmedya/dbsgomysql
 GO           ?= go
-GOLANGCI     ?= golangci-lint
 COVERPROFILE ?= coverage.out
+
+# Tools live in a gitignored repo-local directory, and the gate calls this copy
+# by absolute path rather than whatever `golangci-lint` resolves to on PATH.
+# A Homebrew binary ahead of GOBIN would otherwise keep winning after
+# `make tools`, and the gate would go on linting with the wrong artifact while
+# reporting the right version.
+TOOLBIN  := $(CURDIR)/bin
+GOLANGCI ?= $(TOOLBIN)/golangci-lint
 
 # The single source of truth for the linter version. `ci.yml` reads it from
 # here via `make print-golangci-version`, so there is one place to bump.
 # Findings differ between golangci-lint releases; an unpinned local install is
 # how "passes on my machine" happens.
 GOLANGCI_VERSION := v2.12.2
+
+# The Go release that builds the linter — pinned for the same reason as the
+# linter version itself. golangci-lint embeds the go/types from the toolchain
+# that built it, so the *same* golangci-lint release can report differently
+# depending on how it was compiled; upstream says as much and recommends
+# installing a released artifact rather than whatever a package manager built.
+#
+# This is deliberately not GO_VERSION: golangci-lint v2.12.2 declares
+# `go >= 1.25.0`, above this module's floor, so it cannot be built with the
+# pinned module toolchain. It gets its own pin instead of an implicit
+# GOTOOLCHAIN=auto upgrade, which resolved to a different release locally
+# (go1.26.2, via Homebrew) than in CI (go1.25.12).
+GOLANGCI_GO_VERSION := 1.25.12
 
 # The development toolchain, read from go.mod's `toolchain` directive so there
 # is exactly one place to bump — `go mod tidy` maintains that line, so it cannot
@@ -93,8 +113,19 @@ print-golangci-version: ## Print the pinned golangci-lint version (used by CI)
 print-go-version: ## Print the pinned Go toolchain version (used by CI)
 	@echo "$(GO_VERSION)"
 
+# Builds the linter with its own pinned toolchain, into the repo-local bin.
+# GOTOOLCHAIN is overridden for this one command: the module pin is below
+# golangci-lint's own floor, and letting it fall back to `auto` is exactly the
+# uncontrolled upgrade this target exists to remove.
+.PHONY: tools
+tools: ## Install the pinned golangci-lint, built with its pinned Go, into ./bin
+	@echo "installing golangci-lint $(GOLANGCI_VERSION) built with go$(GOLANGCI_GO_VERSION)"
+	@GOTOOLCHAIN=go$(GOLANGCI_GO_VERSION) GOBIN=$(TOOLBIN) \
+		$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
+	@$(GOLANGCI) version
+
 .PHONY: tools-check
-tools-check: ## Fail if the installed golangci-lint is not the pinned version
+tools-check: ## Fail if the Go toolchain or golangci-lint artifact is not the pinned one
 	@got="$$($(GO) env GOVERSION 2>/dev/null)"; \
 	if [ "$$got" != "go$(GO_VERSION)" ]; then \
 		echo "tools-check: FAIL — go $$got in use, go$(GO_VERSION) pinned."; \
@@ -104,20 +135,34 @@ tools-check: ## Fail if the installed golangci-lint is not the pinned version
 		exit 1; \
 	fi; \
 	echo "tools-check: ok (go$(GO_VERSION))"
-	@command -v $(GOLANGCI) >/dev/null 2>&1 || { \
-		echo "tools-check: FAIL — $(GOLANGCI) not found. Install the pinned version:"; \
-		echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)"; \
+	@test -x $(GOLANGCI) || { \
+		echo "tools-check: FAIL — $(GOLANGCI) not found."; \
+		echo "The gate uses a repo-local linter so every environment runs the same"; \
+		echo "artifact. A PATH install (Homebrew, go install) is not used, even at"; \
+		echo "the same version, because the Go release that built it changes what"; \
+		echo "it reports. Build it:"; \
+		echo "  make tools"; \
 		exit 1; \
 	}
 	@want="$(GOLANGCI_VERSION)"; want="$${want#v}"; \
-	got="$$($(GOLANGCI) version 2>&1 | sed -n 's/.*has version \([0-9][0-9.]*\).*/\1/p')"; \
+	line="$$($(GOLANGCI) version 2>&1)"; \
+	got="$$(echo "$$line" | sed -n 's/.*has version \([0-9][0-9.]*\).*/\1/p')"; \
+	builtwith="$$(echo "$$line" | sed -n 's/.*built with \(go[0-9][0-9.]*\).*/\1/p')"; \
 	if [ "$$got" != "$$want" ]; then \
-		echo "tools-check: FAIL — golangci-lint $$got installed, $$want pinned."; \
-		echo "Lint findings differ between versions; CI installs the pinned one."; \
-		echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)"; \
+		echo "tools-check: FAIL — golangci-lint $$got in ./bin, $$want pinned."; \
+		echo "Findings differ between releases. Rebuild it:"; \
+		echo "  make tools"; \
 		exit 1; \
 	fi; \
-	echo "tools-check: ok (golangci-lint $$got)"
+	if [ "$$builtwith" != "go$(GOLANGCI_GO_VERSION)" ]; then \
+		echo "tools-check: FAIL — golangci-lint $$got built with $$builtwith,"; \
+		echo "go$(GOLANGCI_GO_VERSION) pinned. The same linter release reports"; \
+		echo "differently depending on the toolchain that compiled it, so the"; \
+		echo "version alone is not enough. Rebuild it:"; \
+		echo "  make tools"; \
+		exit 1; \
+	fi; \
+	echo "tools-check: ok (golangci-lint $$got built with $$builtwith)"
 
 # ---------------------------------------------------------------------------
 # Formatting & static analysis

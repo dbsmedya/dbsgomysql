@@ -217,11 +217,16 @@ unit. `toolchain` is the development platform, and is ignored when this module
 is somebody's dependency, so pinning it costs consumers nothing. Bump it in
 go.mod alone: the Makefile reads it, and `ci.yml` reads the Makefile.
 
-`tools-check` prints the toolchain it resolved, so the version that produced a
-result is in the pasted output rather than assumed. Note that `golangci-lint`
-is exempt — its own module floor is above ours, so it builds with its own
-toolchain; the pin still governs the `go list` passes it runs over this module,
-which is the part that was diverging.
+The linter is pinned the same way, and separately. Run `make tools` once: it
+builds the pinned `golangci-lint` with *its* pinned Go into a gitignored
+`./bin`, and the gate calls that copy by absolute path. A PATH install is not
+used even at the identical version, because golangci-lint embeds the
+`go/types` of whatever compiled it, so the same release reports differently
+depending on how it was built — Homebrew and `go install` do not agree. Its own
+module floor sits above this one's, which is why it cannot share `GO_VERSION`.
+
+`tools-check` prints both resolved versions, including the Go that built the
+linter, so what produced a result is in the pasted output rather than assumed.
 
 The pinned toolchain is currently past upstream end-of-life. That is deliberate:
 the floor is this library's contract, and the gate is what proves it still
