@@ -63,10 +63,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve pinned Go version
+        id: go
+        run: echo "version=$(make -s print-go-version)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # The Makefile pins the toolchain; there is no second place to bump.
+          go-version: ${{ steps.go.outputs.version }}
           cache: true
 
       - name: Wait for MySQL

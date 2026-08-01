@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Build: the development toolchain is pinned. go.mod gains
+  `toolchain go1.24.13`, and the Makefile exports it as `GOTOOLCHAIN`, so
+  `make` targets run that exact toolchain regardless of the Go on `PATH`.
+  `ci.yml` and `integration.yml` provision it by reading
+  `make print-go-version`, so there is one place to bump.
+
+  **Consumers are unaffected.** The `go` directive — the floor, and the thing a
+  consumer's build actually honors — stays at `1.24.0`, and a `toolchain`
+  directive is ignored in a module consumed as a dependency. Nothing about the
+  supported Go range changes.
+
+  Before this, go.mod declared only a floor, which 1.24, 1.25, and 1.26 all
+  satisfy, so contributors and CI could each compile against a different
+  release. CI resolved the floor literally and ran Go 1.24.0 while development
+  happened on 1.26.5.
+
 ### Added
 
 - `pkg/validations`: `ColumnInfo.Unsigned`, derived from

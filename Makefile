@@ -14,6 +14,41 @@ COVERPROFILE ?= coverage.out
 # how "passes on my machine" happens.
 GOLANGCI_VERSION := v2.12.2
 
+# The development toolchain, read from go.mod's `toolchain` directive so there
+# is exactly one place to bump — `go mod tidy` maintains that line, so it cannot
+# drift from what the module itself declares. `ci.yml` reads it back out of here
+# via `make print-go-version`, the same way it reads the linter version.
+#
+# Two directives, two different jobs. `go 1.24.0` is the *consumer* floor and
+# the compatibility unit; raising it would break a consumer on 1.24.5 for no
+# reason. `toolchain go1.24.13` is the *development platform*, ignored entirely
+# when this module is somebody's dependency.
+#
+# A floor is not a platform: `go 1.24.0` is satisfied by 1.24, 1.25, and 1.26
+# alike, so every contributor and every agent can be on a different compiler
+# while all of them pass. Vet and lint findings differ across those releases,
+# which is how a failure reaches code review as a surprise instead of arriving
+# as a red check.
+#
+# The `toolchain` line alone does not fix that, because it is a minimum too: a
+# developer on a newer Go keeps using it. Exporting GOTOOLCHAIN is what forces
+# the downgrade, so every `go` invocation below runs exactly this toolchain,
+# fetching it on first use and ignoring whatever is on PATH. It also means the
+# gate compiles on the declared floor on every run, so the "Go floor 1.24"
+# promise in AGENTS.md is tested rather than asserted.
+#
+# 1.24 is past upstream end-of-life — 1.24.13 is its final patch. That is a
+# deliberate trade: this is a library whose floor is its contract, and the floor
+# is what the gate must prove. Revisit at v1.0.0 alongside the compatibility
+# rules, when raising the floor is on the table anyway.
+GO_VERSION := $(shell awk '$$1 == "toolchain" { sub(/^go/, "", $$2); print $$2; exit }' go.mod)
+
+ifeq ($(strip $(GO_VERSION)),)
+$(error go.mod has no "toolchain" directive; the pinned development toolchain lives there)
+endif
+
+export GOTOOLCHAIN := go$(GO_VERSION)
+
 # `go vet`, `go test`, and `golangci-lint` all exit non-zero on a module that
 # contains no packages. Until the first package lands, targets guarded by these
 # skip cleanly rather than failing the gate for the wrong reason. The guards
@@ -54,8 +89,21 @@ check: tools-check fmt-check vet vet-tags lint lint-tags test tidy-check deps-ch
 print-golangci-version: ## Print the pinned golangci-lint version (used by CI)
 	@echo "$(GOLANGCI_VERSION)"
 
+.PHONY: print-go-version
+print-go-version: ## Print the pinned Go toolchain version (used by CI)
+	@echo "$(GO_VERSION)"
+
 .PHONY: tools-check
 tools-check: ## Fail if the installed golangci-lint is not the pinned version
+	@got="$$($(GO) env GOVERSION 2>/dev/null)"; \
+	if [ "$$got" != "go$(GO_VERSION)" ]; then \
+		echo "tools-check: FAIL — go $$got in use, go$(GO_VERSION) pinned."; \
+		echo "GOTOOLCHAIN is exported by this Makefile, so this means the pinned"; \
+		echo "toolchain could not be fetched. Check network access, then:"; \
+		echo "  GOTOOLCHAIN=go$(GO_VERSION) go version"; \
+		exit 1; \
+	fi; \
+	echo "tools-check: ok (go$(GO_VERSION))"
 	@command -v $(GOLANGCI) >/dev/null 2>&1 || { \
 		echo "tools-check: FAIL — $(GOLANGCI) not found. Install the pinned version:"; \
 		echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)"; \
