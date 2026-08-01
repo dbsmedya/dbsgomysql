@@ -138,6 +138,37 @@ neighborhood reranked, the cursor returns the actual next text.
 The corpus settles what the documentation claims. Section 5 still requires the
 test that pins what the server does.
 
+### Our own documents are a lookup too
+
+`dbs-vector` indexes a **second, separate** corpus: `.ayder/` — `specs/`,
+`plans/`, `versions/`, and `archived/` — searchable through
+`search_md_dbsgomysql_knowledge_vault`. The MySQL corpus above answers *what
+does the server do*; this one answers *what did we already decide, and where*.
+
+**When a question spans documents rather than files, search it. Do not sweep it
+with greps.** The trigger is concrete: if answering would take a handful of
+`grep` passes over `.ayder/`, `docs/`, and the code — checking a spec against a
+plan, finding whether a decision was already made, sweeping a claim for
+consistency before a release — one semantic query replaces them and finds
+phrasings a keyword never would. `grep` is still right for a known symbol in a
+known file; it is the wrong tool for *"has anyone settled this?"*.
+
+Two properties make this more than a convenience:
+
+- **It reaches `archived/`.** Section 3 already says superseded revisions move
+  there, "so look there before concluding a topic never existed" — this is how.
+  Guessing filenames across dozens of documents is not a search.
+- **A recorded decision outranks a re-derived one.** Reasoning your way to a
+  conclusion that already exists in writing wastes the effort and risks quietly
+  contradicting the original, whose reasons you never read.
+
+Cite what you find, the way a `COMPAT.md` entry cites the manual. Ignore hits
+from documents authored in the current session — the index includes them, and
+they are your own words coming back.
+
+Both corpora share one rule: **look before asserting.** A remembered MySQL fact
+is not a fact, and a remembered decision is not a decision.
+
 ## 4. Library rules
 
 `.golangci.yml` is the canonical statement of the mechanical rules — no `panic`,

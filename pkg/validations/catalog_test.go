@@ -121,6 +121,33 @@ func TestCatalogReturnsIndependentSlices(t *testing.T) {
 	}
 }
 
+// TestCheckStatusString asserts both declared values render as their word,
+// and that the zero value — which CheckStatus does not declare a member for —
+// renders as CheckStatus(0) rather than as unknownEnum. The second assertion
+// is the whole point: unknownEnum is reserved for types with a declared
+// unknown member, and CheckStatus(0) means "not a status", which
+// unknownEnum would misstate as a valid, nameable state.
+func TestCheckStatusString(t *testing.T) {
+	t.Parallel()
+
+	if got := StatusImplemented.String(); got != "implemented" {
+		t.Errorf("StatusImplemented.String() = %q, want %q", got, "implemented")
+	}
+	if got := StatusDeferred.String(); got != "deferred" {
+		t.Errorf("StatusDeferred.String() = %q, want %q", got, "deferred")
+	}
+
+	var zero CheckStatus
+	want := "CheckStatus(0)"
+	if got := zero.String(); got != want {
+		t.Errorf("CheckStatus(0).String() = %q, want %q", got, want)
+	}
+	if got := zero.String(); got == unknownEnum {
+		t.Errorf("CheckStatus(0).String() = %q; unknownEnum is reserved for a "+
+			"declared zero-value member, which CheckStatus does not have", got)
+	}
+}
+
 func TestLookupCheck(t *testing.T) {
 	t.Parallel()
 

@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as data, in declaration order, so a consumer can prove its policy switch over
   `SpecDiff.Kind` is exhaustive at review time instead of discovering a new kind
   through a fail-closed `default` at run time. Reported as #14.
+- `SpecDiffKind.String()` and `CheckStatus.String()`, so both types join the
+  rest of the package's enum-like types in rendering as a lowercase word (e.g.
+  `column_visibility_mismatch`) instead of a bare integer. An undeclared
+  `SpecDiffKind` renders as `SpecDiffKind(n)` rather than `"unknown"`, keeping a
+  garbage value distinguishable from the zero value. `CheckStatus` has no
+  declared zero-value member, so `CheckStatus(0)` renders as `CheckStatus(0)`,
+  not `"unknown"` — that spelling is reserved for types with a declared unknown
+  member, and using it here would present an unpopulated `CheckInfo` as a real,
+  nameable status. **The JSON wire format is unchanged**: `SpecDiff.Kind`
+  continues to marshal as a number, since `encoding/json` never consults
+  `fmt.Stringer`. Reported as #32.
 
 ## [0.6.4] - 2026-08-01
 

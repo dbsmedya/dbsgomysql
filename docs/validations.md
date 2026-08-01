@@ -317,6 +317,11 @@ fail-closed `default` at run time. `SpecDiffUnknown` is excluded: it is the zero
 value, `DiffSpecs` never emits it, and it is exactly what a fail-closed `default`
 arm should keep rejecting.
 
+`SpecDiffKind.String()` renders a kind as a lowercase word, e.g.
+`column_visibility_mismatch`, so a log line or error message names the kind
+instead of printing its number; the JSON representation of `SpecDiff.Kind` is
+unchanged, since `encoding/json` never consults `fmt.Stringer`.
+
 ## Findings
 
 ```go
