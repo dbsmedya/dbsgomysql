@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit and MySQL 8.0 / 8.4 / 9.7 integration coverage for signed and unsigned
   `TINYINT`, `SMALLINT`, `MEDIUMINT`, `INT`, `INTEGER`, and `BIGINT`, including
   the legacy-form synthetic value `int(10) unsigned zerofill`.
+- Coverage pinning the `ZEROFILL` display-width carve-out: unit cases for
+  normalization and for the `DiffSpecs` mismatch it protects, plus a
+  `TestTableSpecCompatPinsIntegration` pin creating `INT(5) ZEROFILL` and
+  `INT(10) ZEROFILL` columns, verified on 8.0.46, 8.4.9, and 9.7.1.
 
 ### Changed
 
@@ -42,6 +46,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pkg/validations`: `ColumnSpec.NormalizedType` no longer strips the display
+  width from a column carrying `ZEROFILL`. MySQL's carve-out from the 8.0.19
+  display-width removal has **two** members, not one — `TINYINT(1)` and any type
+  with `ZEROFILL` — and the width is semantic under `ZEROFILL`, because
+  retrieved values are zero-padded to it. `int(5) zerofill` renders `00042`
+  where `int(10) zerofill` renders `0000000042`.
+
+  Consumers can notice: `DiffSpecs` compares `NormalizedType`, so two servers
+  holding the same column at different zerofill widths previously produced **no
+  `ColumnTypeMismatch`** — a false all-clear on a real schema difference. They
+  now diff as a mismatch. A schema with no `ZEROFILL` column is unaffected, and
+  `INT ZEROFILL` declared without a width still reports `int(10) unsigned
+  zerofill`, so it continues to compare equal to an explicit `INT(10) ZEROFILL`.
+  ([#15](https://github.com/dbsmedya/dbsgomysql/issues/15))
+- `pkg/validations`: the `normalizeColumnType` and `hasDisplayWidth` doc
+  comments gave 8.0.17 as the release that stopped emitting display widths.
+  8.0.17 deprecated the attribute; **8.0.19** stopped showing it — the same
+  correction already applied to `docs/COMPAT.md` entry 1 below.
 - `docs/COMPAT.md`: three factual errors, each found by checking the entry
   against the MySQL documentation rather than against memory.
   - Entry 1 gave 8.0.17 as the release that stopped recording integer display

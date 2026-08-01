@@ -130,9 +130,12 @@ type ColumnSpec struct {
 	Ordinal int `json:"ordinal"`
 	// Type is COLUMN_TYPE verbatim.
 	Type string `json:"type"`
-	// NormalizedType is Type with the deprecated integer display width removed;
-	// see docs/COMPAT.md entry 1. Comparison uses this; Type is what the server
-	// said.
+	// NormalizedType is Type with the deprecated integer display width removed,
+	// except for the two widths MySQL itself still emits: tinyint(1), which
+	// BOOLEAN is an alias for, and any type carrying ZEROFILL, whose retrieved
+	// values are zero-padded to the width. Both are real differences between
+	// schemas rather than formatting noise, so both survive here; see
+	// docs/COMPAT.md entry 1. Comparison uses this; Type is what the server said.
 	NormalizedType string `json:"normalized_type"`
 	// Nullable reports IS_NULLABLE.
 	Nullable bool `json:"nullable"`

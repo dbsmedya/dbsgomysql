@@ -13,7 +13,7 @@ func TestNormalizeColumnType(t *testing.T) {
 	}{
 		{
 			name: "int display width stripped", columnType: "int(11)", want: "int",
-			explanation: "a column created before 8.0.17 must compare equal to one created after",
+			explanation: "a column created before 8.0.19 must compare equal to one created after",
 		},
 		{
 			name:       "bigint width stripped, unsigned preserved",
@@ -21,9 +21,22 @@ func TestNormalizeColumnType(t *testing.T) {
 			explanation: "unsigned changes the value range and is a real difference",
 		},
 		{
-			name: "zerofill preserved", columnType: "int(11) unsigned zerofill",
-			want:        "int unsigned zerofill",
-			explanation: "zerofill is an attribute, not formatting noise",
+			name: "zerofill width preserved", columnType: "int(11) unsigned zerofill",
+			want: "int(11) unsigned zerofill",
+			explanation: "retrieved values are zero-padded to the display width, so the width " +
+				"is semantic under ZEROFILL and MySQL keeps emitting it",
+		},
+		{
+			name:       "zerofill width preserved at a narrower width",
+			columnType: "int(5) unsigned zerofill", want: "int(5) unsigned zerofill",
+			explanation: "int(5) zerofill renders 00042 and int(10) zerofill renders " +
+				"0000000042; stripping both to int unsigned zerofill makes two different " +
+				"client-visible schemas compare equal",
+		},
+		{
+			name:       "zerofill matched case-insensitively",
+			columnType: "INT(5) UNSIGNED ZEROFILL", want: "INT(5) UNSIGNED ZEROFILL",
+			explanation: "MySQL emits lowercase, but matching must not depend on that",
 		},
 		{
 			name: "tinyint(1) preserved", columnType: "tinyint(1)", want: "tinyint(1)",

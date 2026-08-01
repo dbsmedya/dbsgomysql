@@ -1286,6 +1286,8 @@ func TestTableSpecCompatPinsIntegration(t *testing.T) {
 			widths        TINYINT(1),
 			plain_tiny    TINYINT,
 			big           BIGINT(20) UNSIGNED,
+			zf_narrow     INT(5) ZEROFILL,
+			zf_wide       INT(10) ZEROFILL,
 			exact         DECIMAL(3,2),
 			created       DATE DEFAULT (CURRENT_DATE),
 			literal_text  VARCHAR(20) DEFAULT 'Active',
@@ -1327,6 +1329,35 @@ func TestTableSpecCompatPinsIntegration(t *testing.T) {
 	t.Run("compat 1: bigint width stripped, unsigned kept", func(t *testing.T) {
 		if got := byName["big"].NormalizedType; got != "bigint unsigned" {
 			t.Errorf("NormalizedType = %q, want \"bigint unsigned\"", got)
+		}
+	})
+
+	t.Run("compat 1: zerofill keeps its width", func(t *testing.T) {
+		narrow := byName["zf_narrow"].NormalizedType
+		wide := byName["zf_wide"].NormalizedType
+		if narrow != "int(5) unsigned zerofill" {
+			t.Errorf("NormalizedType for INT(5) ZEROFILL = %q, want "+
+				"\"int(5) unsigned zerofill\"; retrieved values are zero-padded to the "+
+				"display width, so the width is semantic here", narrow)
+		}
+		if wide != "int(10) unsigned zerofill" {
+			t.Errorf("NormalizedType for INT(10) ZEROFILL = %q, want "+
+				"\"int(10) unsigned zerofill\"", wide)
+		}
+
+		// The reported failure mode: the same column captured from two servers at
+		// different zerofill widths must not compare equal.
+		specA := validations.TableSpec{Columns: []validations.ColumnSpec{byName["zf_narrow"]}}
+		widened := byName["zf_narrow"]
+		widened.Type = byName["zf_wide"].Type
+		widened.NormalizedType = wide
+		specB := validations.TableSpec{Columns: []validations.ColumnSpec{widened}}
+
+		diffs := validations.DiffSpecs(specA, specB)
+		if len(diffs) != 1 || diffs[0].Kind != validations.ColumnTypeMismatch {
+			t.Errorf("diffing int(5) zerofill against int(10) zerofill produced %+v, "+
+				"want one ColumnTypeMismatch; 00042 and 0000000042 are different "+
+				"client-visible schemas", diffs)
 		}
 	})
 
