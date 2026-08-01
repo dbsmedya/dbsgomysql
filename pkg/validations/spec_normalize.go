@@ -7,16 +7,23 @@ import (
 
 // normalizeColumnType removes the deprecated integer display width from an
 // information_schema.COLUMNS.COLUMN_TYPE value, so a column created before
-// MySQL 8.0.17 compares equal to the same column created after it. Display
+// MySQL 8.0.19 compares equal to the same column created after it. Display
 // width is stored per column, so an instance upgraded in place from an earlier
 // release keeps reporting the old form until the table is rebuilt.
 //
-// tinyint(1) is preserved. BOOLEAN is an alias for TINYINT(1) and MySQL keeps
-// that width where it strips every other, so erasing it would report a BOOLEAN
-// and a plain TINYINT as identical. Attributes following the width — unsigned,
-// zerofill — are preserved because they change the value range and are real
-// differences rather than formatting noise. Types whose parenthesised part is
-// semantic, such as decimal(3,2) and varchar(50), are returned unchanged.
+// MySQL's own two exceptions are mirrored here, because on a current server
+// both still appear in COLUMN_TYPE and neither is formatting noise:
+//
+//   - tinyint(1). BOOLEAN is an alias for TINYINT(1) and MySQL keeps that width
+//     where it strips every other, so erasing it would report a BOOLEAN and a
+//     plain TINYINT as identical.
+//   - Any type carrying ZEROFILL. Retrieved values are zero-padded to the
+//     display width, so int(5) zerofill yields 00042 where int(10) zerofill
+//     yields 0000000042 — different client-visible schemas, kept distinct.
+//
+// Attributes following the width, such as unsigned, are preserved because they
+// change the value range. Types whose parenthesised part is semantic, such as
+// decimal(3,2) and varchar(50), are returned unchanged.
 //
 // Malformed input is returned unchanged rather than guessed at.
 func normalizeColumnType(columnType string) string {
@@ -44,11 +51,29 @@ func normalizeColumnType(columnType string) string {
 		return columnType
 	}
 
-	return base + columnType[closing+1:]
+	attributes := columnType[closing+1:]
+	if containsZerofill(attributes) {
+		return columnType
+	}
+
+	return base + attributes
+}
+
+// containsZerofill reports whether a COLUMN_TYPE's trailing attributes include
+// ZEROFILL. It matches whole attribute words rather than a substring, so a
+// future attribute merely containing the text does not trigger the carve-out.
+func containsZerofill(attributes string) bool {
+	for _, field := range strings.Fields(attributes) {
+		if strings.EqualFold(field, "zerofill") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // hasDisplayWidth reports whether an integer type carries the legacy display
-// width MySQL stopped emitting in 8.0.17. It is a switch rather than a
+// width MySQL stopped emitting in 8.0.19. It is a switch rather than a
 // package-level set because library rules forbid global mutable state.
 func hasDisplayWidth(base string) bool {
 	switch base {

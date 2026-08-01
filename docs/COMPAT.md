@@ -95,17 +95,22 @@ preserves that width where it strips every other; erasing it would report a
 boolean and a plain `TINYINT` as identical. This is not an accident of the
 implementation — Oracle carved out the exception deliberately, because "MySQL
 Connectors make the assumption that `TINYINT(1)` columns originated as `BOOLEAN`
-columns". A column carrying `ZEROFILL` keeps its width for the same reason, and
-the `unsigned` and `zerofill` attributes are preserved because they change the
-value range.
+columns". A column carrying `ZEROFILL` keeps its width too — that is MySQL's
+second documented exception, and the width is genuinely semantic there, because
+retrieved values are zero-padded to it: `int(5) zerofill` yields `00042` where
+`int(10) zerofill` yields `0000000042`. Trailing attributes such as `unsigned`
+are preserved because they change the value range.
 
 A fresh current server cannot reproduce `int(11)`, so legacy-form
 normalization is pinned synthetically by
 [`TestNormalizeColumnType`](../pkg/validations/spec_normalize_test.go). The
-matrix pins that new integers are bare, `tinyint(1)` survives, and decimal
-precision is untouched in
+matrix pins that new integers are bare, `tinyint(1)` survives, both zerofill
+widths survive and diff as a `ColumnTypeMismatch`, and decimal precision is
+untouched in
 [`TestTableSpecCompatPinsIntegration`](../pkg/validations/validations_integration_test.go),
-verified on 8.0.46, 8.4.9, and 9.7.1.
+verified on 8.0.46, 8.4.9, and 9.7.1. `INT ZEROFILL` declared without a width
+reports `int(10) unsigned zerofill` on all three, so preserving the width does
+not make the bare declaration compare unequal to an explicit `INT(10)`.
 
 **Reference:** documented. Refman §13.1.6, "Numeric Type Attributes" and
 §13.1.1, "Numeric Data Type Syntax", for the deprecation. MySQL 8.0 Release
