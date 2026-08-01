@@ -88,7 +88,36 @@ const (
 	ForeignKeyColumnsMismatch
 	ForeignKeyReferenceMismatch
 	ForeignKeyRuleMismatch
+
+	// specDiffKindCount must remain the last constant in this block;
+	// TestSpecDiffKindVocabularyIsDeclaredInOneTerminatedBlock fails if it does
+	// not. It is unexported because it is not part of the published vocabulary,
+	// and AllSpecDiffKinds derives its result from it so that adding a kind
+	// above this line needs no other edit.
+	specDiffKindCount
 )
+
+// AllSpecDiffKinds returns every nonzero SpecDiffKind DiffSpecs may emit, in
+// declaration order. The vocabulary is stable within a v0.N.x release line:
+// kinds are added only in a new minor, and none is renumbered or removed.
+//
+// SpecDiffUnknown is excluded. It is the zero value, DiffSpecs never emits it,
+// and it is exactly what a consumer's fail-closed default arm should keep
+// rejecting — so including it would make the natural loop over this result
+// assert that the zero value is classified. That exclusion is part of the
+// contract and will not change silently.
+//
+// The result is built fresh on each call: a caller may keep or modify it
+// without affecting any other caller. AllSpecDiffKinds is safe for concurrent
+// use.
+func AllSpecDiffKinds() []SpecDiffKind {
+	kinds := make([]SpecDiffKind, 0, int(specDiffKindCount)-1)
+	for kind := SpecDiffUnknown + 1; kind < specDiffKindCount; kind++ {
+		kinds = append(kinds, kind)
+	}
+
+	return kinds
+}
 
 // SpecDiff is one difference between two table specifications.
 //

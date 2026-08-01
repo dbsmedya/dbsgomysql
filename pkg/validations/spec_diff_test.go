@@ -1,6 +1,18 @@
 package validations
 
-import "testing"
+import (
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"testing"
+)
 
 func TestDiffSpecsIdenticalSpecsProduceNoDiffs(t *testing.T) {
 	t.Parallel()
@@ -760,5 +772,187 @@ func TestDiffSpecsConstraintsRequireBothSidesToOptIn(t *testing.T) {
 	if len(diffs) != 1 ||
 		diffs[0].Kind != ConstraintUnconfirmed || diffs[0].Side != SideB {
 		t.Fatalf("DiffSpecs returned %+v, want one ConstraintUnconfirmed on SideB", diffs)
+	}
+}
+
+// wantAllSpecDiffKinds is transcribed from the iota block at spec_diff.go:57-90,
+// in declaration order. It is the independent witness for
+// TestAllSpecDiffKindsMatchesTheDeclaredVocabulary: a test derived from the
+// sentinel cannot prove the sentinel is right, so this list is hand-maintained
+// on purpose. A stale copy fails the build on the commit that adds a kind,
+// which is the point.
+var wantAllSpecDiffKinds = []SpecDiffKind{
+	EngineMismatch, CharsetMismatch, CollationMismatch, CommentMismatch,
+	CommentUnconfirmed,
+
+	ColumnAbsent, ColumnTypeMismatch, ColumnNullabilityMismatch,
+	ColumnCharsetMismatch, ColumnCollationMismatch, ColumnDefaultMismatch,
+	ColumnOrderMismatch, ColumnVisibilityMismatch, ColumnGeneratedMismatch,
+	ColumnGenerationExprMismatch, ColumnAutoIncrementMismatch,
+	ColumnOnUpdateMismatch,
+
+	IndexUnconfirmed, IndexAbsent, IndexPartsMismatch, IndexUniquenessMismatch,
+	IndexTypeMismatch, IndexVisibilityMismatch,
+
+	ConstraintUnconfirmed, ConstraintAbsent, ConstraintKindMismatch,
+	CheckClauseMismatch, CheckEnforcementMismatch, ForeignKeyColumnsMismatch,
+	ForeignKeyReferenceMismatch, ForeignKeyRuleMismatch,
+}
+
+// TestAllSpecDiffKindsMatchesTheDeclaredVocabulary asserts that
+// AllSpecDiffKinds returns exactly the 31 published kinds, in declaration
+// order. It catches a kind added before the sentinel, removed, or reordered —
+// all of which leave the sentinel terminal, so
+// TestSpecDiffKindVocabularyIsDeclaredInOneTerminatedBlock stays green.
+func TestAllSpecDiffKindsMatchesTheDeclaredVocabulary(t *testing.T) {
+	t.Parallel()
+
+	got := AllSpecDiffKinds()
+	if !slices.Equal(got, wantAllSpecDiffKinds) {
+		t.Errorf("AllSpecDiffKinds() = %v, want %v", got, wantAllSpecDiffKinds)
+	}
+}
+
+// TestSpecDiffKindVocabularyIsDeclaredInOneTerminatedBlock type-checks every
+// non-test file in this package directory and asserts that (i) every constant
+// whose semantic type is SpecDiffKind is declared inside the canonical const
+// block — the one declaring SpecDiffUnknown — and (ii) specDiffKindCount is
+// that block's last ValueSpec.
+//
+// A SpecDiffKind constant declared outside the enumerated range — after the
+// sentinel, in a second const block, in another file, or with an inferred or
+// aliased type — is invisible to AllSpecDiffKinds and to any value-based
+// assertion, because its value is never produced and nothing compares against
+// it. Only reading declarations can catch it, which is why this test
+// type-checks the package instead of comparing constant values.
+func TestSpecDiffKindVocabularyIsDeclaredInOneTerminatedBlock(t *testing.T) {
+	t.Parallel()
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) did not report a file")
+	}
+	dir := filepath.Dir(thisFile)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("os.ReadDir(%q): %v", dir, err)
+	}
+
+	fset := token.NewFileSet()
+	var files []*ast.File
+	var canonical *ast.GenDecl
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") ||
+			strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		file, parseErr := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if parseErr != nil {
+			t.Fatalf("parser.ParseFile(%q): %v", name, parseErr)
+		}
+		files = append(files, file)
+
+		for _, decl := range file.Decls {
+			genDecl, ok := decl.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range genDecl.Specs {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, ident := range valueSpec.Names {
+					if ident.Name != "SpecDiffUnknown" {
+						continue
+					}
+					if canonical != nil {
+						t.Fatalf("more than one const block declares SpecDiffUnknown")
+					}
+					canonical = genDecl
+				}
+			}
+		}
+	}
+
+	if canonical == nil {
+		t.Fatal("no const block declares SpecDiffUnknown")
+	}
+
+	var lastSpec *ast.ValueSpec
+	for _, spec := range canonical.Specs {
+		if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+			lastSpec = valueSpec
+		}
+	}
+	if lastSpec == nil || len(lastSpec.Names) != 1 ||
+		lastSpec.Names[0].Name != "specDiffKindCount" {
+		// Errorf, not Fatalf: (i) below is an independent assertion and should
+		// report in the same run rather than being hidden by this one.
+		t.Errorf("canonical block's last ValueSpec = %v, want specDiffKindCount",
+			lastSpec)
+	}
+
+	info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
+	cfg := &types.Config{
+		Importer:         importer.ForCompiler(fset, "source", nil),
+		IgnoreFuncBodies: true,
+	}
+	pkg, err := cfg.Check(
+		"github.com/dbsmedya/dbsgomysql/pkg/validations", fset, files, info,
+	)
+	if err != nil {
+		t.Fatalf("type-checking pkg/validations: %v", err)
+	}
+
+	start, end := canonical.Pos(), canonical.End()
+	for ident, obj := range info.Defs {
+		constObj, ok := obj.(*types.Const)
+		if !ok {
+			continue
+		}
+		named, ok := types.Unalias(constObj.Type()).(*types.Named)
+		if !ok || named.Obj().Pkg() != pkg || named.Obj().Name() != "SpecDiffKind" {
+			continue
+		}
+		if ident.Pos() < start || ident.Pos() >= end {
+			t.Errorf("%s: constant %s has type SpecDiffKind but is declared "+
+				"outside the canonical block",
+				fset.Position(ident.Pos()), ident.Name)
+		}
+	}
+}
+
+// TestAllSpecDiffKindsReturnsAFreshSlice asserts that corrupting one call's
+// result does not affect a later call, which would be observable if
+// AllSpecDiffKinds were "optimized" to return a package-level array or a
+// cached slice instead of building fresh with make.
+//
+// Only the element write is a real probe. Reslicing the result would rewrite
+// this function's own slice header and could not reach the library, so it is
+// not attempted.
+func TestAllSpecDiffKindsReturnsAFreshSlice(t *testing.T) {
+	t.Parallel()
+
+	first := AllSpecDiffKinds()
+	if len(first) == 0 {
+		t.Fatal("AllSpecDiffKinds() returned no kinds")
+	}
+	wantFirstKind := first[0]
+
+	first[0] = SpecDiffUnknown
+
+	second := AllSpecDiffKinds()
+	if len(second) == 0 {
+		t.Fatal("AllSpecDiffKinds() returned no kinds on a later call")
+	}
+	if second[0] != wantFirstKind {
+		t.Errorf("second call's first kind = %v, want %v; writing through the "+
+			"first call's result affected a later call",
+			second[0], wantFirstKind)
 	}
 }

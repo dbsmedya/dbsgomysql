@@ -310,6 +310,13 @@ index, or constraint difference blocks an operation is consumer policy. See
 [COMPAT.md](COMPAT.md) entries 1 and 13–17 for the MySQL behavior that shapes
 capture and comparison.
 
+`AllSpecDiffKinds()` returns every nonzero `SpecDiffKind` `DiffSpecs` may emit,
+in declaration order, so a consumer can prove a policy switch over `SpecDiff.Kind`
+is exhaustive at review time instead of discovering a new kind through a
+fail-closed `default` at run time. `SpecDiffUnknown` is excluded: it is the zero
+value, `DiffSpecs` never emits it, and it is exactly what a fail-closed `default`
+arm should keep rejecting.
+
 ## Findings
 
 ```go
