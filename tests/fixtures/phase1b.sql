@@ -118,6 +118,27 @@ CREATE TABLE {{schema}}.`fk_composite_child` (
         ON UPDATE NO ACTION
 ) ENGINE=InnoDB;
 
+-- A functional key part reports information_schema.STATISTICS.COLUMN_NAME as
+-- NULL. Its own table pair, deliberately: fk_composite_child is read by a
+-- helper that scans that column into a plain string, so a functional index
+-- there would fail for reasons unrelated to what it tests.
+-- See docs/COMPAT.md entry 18.
+CREATE TABLE {{schema}}.`fk_functional_parent` (
+    `id` INT NOT NULL,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB;
+
+CREATE TABLE {{schema}}.`fk_functional_child` (
+    `id` INT NOT NULL,
+    `parent_id` INT NOT NULL,
+    `amount` INT NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_functional` ((`amount` * 2)),
+    CONSTRAINT `fk_functional_parent`
+        FOREIGN KEY (`parent_id`)
+        REFERENCES {{schema}}.`fk_functional_parent` (`id`)
+) ENGINE=InnoDB;
+
 CREATE TABLE {{schema}}.`fk_rule_parent` (
     `id` INT NOT NULL,
     PRIMARY KEY (`id`)

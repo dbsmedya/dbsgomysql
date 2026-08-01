@@ -130,6 +130,127 @@ func TestForeignKeysFallbackIsUnconfirmedAndMatchesIndexes(t *testing.T) {
 	script.assertDone(t)
 }
 
+// fallbackScriptWithIndexes builds the three steps every functional-key-part
+// case shares: the PROCESS-gated primary source fails, the standard source
+// returns one composite constraint on shop.items, and information_schema.
+// STATISTICS returns the caller's index rows. Only those rows differ between
+// cases, which is what keeps each case's subject visible.
+func fallbackScriptWithIndexes(statistics [][]driver.Value) *queryScript {
+	return &queryScript{steps: []queryStep{
+		{contains: "INNODB_FOREIGN AS f", err: errors.New("PROCESS denied")},
+		{
+			contains: "KEY_COLUMN_USAGE AS kcu",
+			columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "COLUMN_NAME",
+				"REFERENCED_TABLE_SCHEMA", "REFERENCED_TABLE_NAME",
+				"REFERENCED_COLUMN_NAME", "DELETE_RULE", "UPDATE_RULE",
+				"ORDINAL_POSITION",
+			},
+			rows: [][]driver.Value{
+				{"shop", "items", "fk_items_orders", "tenant_id", "shop", "orders", "tenant_id", "RESTRICT", "NO ACTION", int64(1)},
+				{"shop", "items", "fk_items_orders", "order_id", "shop", "orders", "id", "RESTRICT", "NO ACTION", int64(2)},
+			},
+		},
+		{
+			contains: "information_schema.STATISTICS",
+			columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "INDEX_NAME", "COLUMN_NAME", "SEQ_IN_INDEX",
+			},
+			rows: statistics,
+		},
+	}}
+}
+
+// fallbackKeyOnItems is the constraint fallbackScriptWithIndexes describes.
+// Only Indexed varies between cases, so comparing the whole value guards the
+// grouping and the identity rather than just the flag under test.
+func fallbackKeyOnItems(indexed bool) ForeignKey {
+	return ForeignKey{
+		ConstraintName: "fk_items_orders",
+		ChildSchema:    "shop",
+		ChildTable:     "items",
+		ChildColumns:   []string{"tenant_id", "order_id"},
+		ParentSchema:   "shop",
+		ParentTable:    "orders",
+		ParentColumns:  []string{"tenant_id", "id"},
+		OnDelete:       fkRuleRestrict,
+		OnUpdate:       fkRuleNoAction,
+		Indexed:        indexed,
+	}
+}
+
+func assertFallbackKey(t *testing.T, result ForeignKeyResult, err error, indexed bool) {
+	t.Helper()
+
+	if err != nil {
+		t.Fatalf("ForeignKeys fallback: %v", err)
+	}
+	want := ForeignKeyResult{
+		Keys:       []ForeignKey{fallbackKeyOnItems(indexed)},
+		Visibility: VisibilityUnconfirmed,
+	}
+	if !reflect.DeepEqual(result, want) {
+		t.Errorf("ForeignKeys fallback = %#v, want %#v", result, want)
+	}
+}
+
+// A functional key part reports STATISTICS.COLUMN_NAME as NULL. Reading it into
+// a plain string aborts the whole fallback, so one functional index anywhere on
+// a child table used to turn a legitimate no-PROCESS inspection into a hard
+// failure. See docs/COMPAT.md entry 18.
+func TestForeignKeysFallbackToleratesFunctionalIndexPart(t *testing.T) {
+	t.Parallel()
+
+	// idx_fk sorts before idx_func under the query's ORDER BY INDEX_NAME, which
+	// is the order a real server returns these rows in.
+	script := fallbackScriptWithIndexes([][]driver.Value{
+		{"shop", "items", "idx_fk", "tenant_id", int64(1)},
+		{"shop", "items", "idx_fk", "order_id", int64(2)},
+		{"shop", "items", "idx_func", nil, int64(1)},
+	})
+	db := openScriptedDB(t, script)
+
+	result, err := NewInspector(db, "shop").ForeignKeys(t.Context(), IncomingTo("orders"))
+	assertFallbackKey(t, result, err, true)
+	script.assertDone(t)
+}
+
+// A functional part in the leading slot means the foreign key's columns are not
+// the index's first columns, so the index cannot support the constraint.
+func TestForeignKeysFallbackFunctionalLeadingPartIsNotSupporting(t *testing.T) {
+	t.Parallel()
+
+	script := fallbackScriptWithIndexes([][]driver.Value{
+		{"shop", "items", "idx_mixed", nil, int64(1)},
+		{"shop", "items", "idx_mixed", "tenant_id", int64(2)},
+		{"shop", "items", "idx_mixed", "order_id", int64(3)},
+	})
+	db := openScriptedDB(t, script)
+
+	result, err := NewInspector(db, "shop").ForeignKeys(t.Context(), IncomingTo("orders"))
+	assertFallbackKey(t, result, err, false)
+	script.assertDone(t)
+}
+
+// The sharpest case for recording a NULL part as "" rather than dropping it.
+// Here both foreign-key columns are present and in order, separated only by an
+// expression, so dropping the NULL row would yield an exact match instead of a
+// mere prefix — the strongest false "supported" this code could report.
+func TestForeignKeysFallbackInteriorFunctionalPartBreaksThePrefix(t *testing.T) {
+	t.Parallel()
+
+	script := fallbackScriptWithIndexes([][]driver.Value{
+		{"shop", "items", "idx_interior", "tenant_id", int64(1)},
+		{"shop", "items", "idx_interior", nil, int64(2)},
+		{"shop", "items", "idx_interior", "order_id", int64(3)},
+	})
+	db := openScriptedDB(t, script)
+
+	result, err := NewInspector(db, "shop").ForeignKeys(t.Context(), IncomingTo("orders"))
+	assertFallbackKey(t, result, err, false)
+	script.assertDone(t)
+}
+
 func TestForeignKeysPrimaryDecodeErrorFallsBack(t *testing.T) {
 	t.Parallel()
 
