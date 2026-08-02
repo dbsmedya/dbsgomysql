@@ -173,6 +173,16 @@ type PrivilegeFact struct {
 // schema grant matching the requested schema downgrades an otherwise-absent
 // schema or table answer to unconfirmed, and never proves one.
 //
+// Declining to consult SHOW GRANTS is a deliberate choice rather than an
+// oversight, and the unconfirmed role answers above should be read as "not
+// proven by this fact", not as "unprovable by any means". SHOW GRANTS merges
+// the session's currently active roles and, for the current user, needs no
+// SELECT privilege on the mysql schema, so it can show a role-derived privilege
+// to be effective where the privilege tables cannot. It is declined because it
+// answers a different question: it returns version-sensitive text about the
+// roles active on one session, where this fact reports relational rows about
+// the account. See docs/COMPAT.md entry 4.
+//
 // Grants is safe for concurrent use.
 type Grants struct {
 	populated      bool

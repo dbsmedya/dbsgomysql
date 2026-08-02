@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which a wrong split would degrade silently into an expected absent answer, and
   a trailing lone backslash in a wildcard schema pattern.
 
+### Changed
+
+- `Grants` GoDoc now records that declining to consult `SHOW GRANTS` is a
+  deliberate choice, and that its unconfirmed role answers mean "not proven by
+  this fact" rather than "unprovable by any means". `SHOW GRANTS` merges the
+  session's active roles and needs no `SELECT` on the `mysql` schema for the
+  current user, so an operator whose working account fails a consumer's
+  preflight can now find the reason in the API documentation rather than only in
+  `docs/COMPAT.md` entry 4. No behavior change.
+
 ## [0.7.0] - 2026-08-01
 
 The `SpecDiffKind` vocabulary becomes discoverable and printable. Purely
