@@ -5,6 +5,11 @@ description: Use when cutting a dbsgomysql release, tagging a version, deciding 
 
 # Releasing dbsgomysql
 
+**Sinan owns releases. Do not cut one unasked.** Propose it, prepare it, check
+it — but a tag is the one step here that cannot be taken back: Go's module proxy
+records it on first fetch, so a mistake costs a new version rather than a fix.
+Wait to be told.
+
 ## 1. Decide the version — before implementing, not at release time
 
 **Read `.ayder/versions/ROADMAP.md` first.** It is the version authority: which
