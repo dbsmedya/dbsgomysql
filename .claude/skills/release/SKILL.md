@@ -36,16 +36,35 @@ pkg.go.dev, which renders tags, not `main`.
 
 ## 2. Cut it
 
+**Every line is marked with who performs it. The two marked `SINAN` are his
+decisions, not yours — do not perform them, and do not read the lines around
+them as permission to. A merge can be reverted; the tag that follows cannot.**
+
 ```
-branch release/vX.Y.Z from main
-  -> move [Unreleased] under `## [X.Y.Z] - YYYY-MM-DD`, add the compare link
-  -> commit `chore(release): vX.Y.Z`
-  -> PR -> merge to main
-  -> dispatch integration.yml against main, confirm green
-  -> tag vX.Y.Z on the merge commit, push the tag
-  -> write .ayder/versions/vX.Y.Z.md
-  -> make -C .ayder post-merge
+you    branch release/vX.Y.Z from main
+you    move [Unreleased] under `## [X.Y.Z] - YYYY-MM-DD`, add the compare link
+you    commit `chore(release): vX.Y.Z`, push, open the PR
+you    report that it is ready, then STOP
+
+SINAN  reviews the PR and merges it on GitHub
+
+you    git checkout main && git pull --ff-only
+you    dispatch integration.yml against main, confirm green on every version
+you    report green, then STOP
+
+SINAN  says to tag
+
+you    tag vX.Y.Z on the merge commit, push the tag
+you    write .ayder/versions/vX.Y.Z.md
+you    make -C .ayder post-merge
 ```
+
+Both stops are real stops. A green matrix is not permission to tag, and an
+approved PR is not permission to merge.
+
+**This skill also fires on questions** — "which version does this take?", "should
+this ship now?". Answering one is not starting a release. Answer, and stay
+stopped.
 
 ## 3. The four things that have actually gone wrong
 

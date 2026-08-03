@@ -124,6 +124,12 @@ of a refman result — it is a false heading — and walk a truncated result wit
 the chunk cursor rather than re-querying. The corpus settles what the
 documentation *claims*; a test still has to pin what the server *does*.
 
+**`mysqld-version-reference-en.a4.md` is the exception.** Its prose chapters are
+sound, but its version matrices are stale and mangled **in the source PDF
+itself**, so no reconversion will rescue them. Scope to that file deliberately
+for a prose question, or leave it out — never cite its matrices as a version
+threshold.
+
 **Before deciding something the project may already have decided**, search
 `search_md_dbsgomysql_knowledge_vault`. If answering would take several `grep`
 passes over `.ayder/`, `docs/`, and the code, one semantic query replaces them
@@ -145,7 +151,9 @@ make check      # run it, read the output, paste the output
 
 Nothing is done until it passes — not "done except for", not "done, just a lint
 nit". **A completion claim without pasted output is not a completion claim**,
-and a target reporting `skipped` is not evidence of anything.
+and a target reporting `skipped` is not evidence of anything. `make help` lists
+every target, and `ci.yml` runs `make check` verbatim — so a green gate locally
+is the same gate CI runs, with no extra surprises waiting in review.
 
 **Run the gate through `make`. Never substitute a bare `go test ./...`.** The
 Makefile exports `GOTOOLCHAIN` from go.mod's `toolchain` directive, so every

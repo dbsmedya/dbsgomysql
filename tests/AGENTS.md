@@ -13,7 +13,11 @@ You are in **BUILD**. Nothing here requires the spec/plan revision protocol.
    to cover existing behavior, remove the thing it depends on, confirm it fails,
    and put it back. Green on first run proves nothing.
 3. Run that layer's target, then `make check`. Paste the output.
-4. Commit, push, open the PR, **stop**.
+4. If a consumer could notice the change, record it under `CHANGELOG.md
+   ## [Unreleased]` **in the same commit**. New coverage counts: `v0.7.1` was
+   test-only and still carried an entry, because a consumer deleting their own
+   equivalent test needs to know this one exists.
+5. Commit, push, open the PR, **stop**.
 
 Do not pick the version, write the plan, or merge.
 
@@ -58,9 +62,11 @@ never depended on.
 
 ```sh
 make check              # the gate — unit, lint, vet, build
+make test-smoke         # requires MySQL; one 8.4 container
 make test-integration   # requires MySQL; see ../docs/testing.md
 make test-e2e           # requires MySQL
 ```
 
 Run everything through `make`, never a bare `go test ./...` — the Makefile pins
-the toolchain and a bare invocation does not. See [`../AGENTS.md`](../AGENTS.md) §5.
+the toolchain and a bare invocation does not. See
+[`../AGENTS.md`](../AGENTS.md), "The gate".

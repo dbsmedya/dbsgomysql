@@ -47,8 +47,8 @@ What no tool checks:
   `CHANGELOG.md`.
 
 Before asserting any MySQL behavior in code, a rationale, or a COMPAT entry,
-look it up — see [`../AGENTS.md`](../AGENTS.md) §4. A remembered MySQL fact is
-not a fact.
+look it up — see [`../AGENTS.md`](../AGENTS.md), "Look before asserting". A
+remembered MySQL fact is not a fact.
 
 When unsure whether something should be public, put it in `internal/`. Moving
 outward later is additive; moving inward is breaking.
