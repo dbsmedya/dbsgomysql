@@ -1121,7 +1121,31 @@ func TestGranteeAndRolePrivilegesIntegration(t *testing.T) {
 		t.Errorf("nested-role SELECT = %s, want unconfirmed", got)
 	}
 
+	// A global privilege row proves the privilege at every scope only while
+	// partial revokes are disabled, so the positives below assert that
+	// precondition rather than assume the server default. See docs/COMPAT.md
+	// entry 11 for the enabled case, pinned by
+	// TestPartialRevokesPrivilegeResolutionIntegration.
+	var partialRevokes int
+	if revokesErr := admin.QueryRowContext(
+		t.Context(),
+		"SELECT @@global.partial_revokes",
+	).Scan(&partialRevokes); revokesErr != nil {
+		t.Fatalf("read partial_revokes: %v", revokesErr)
+	}
+	if partialRevokes != 0 {
+		t.Fatalf(
+			"partial_revokes is enabled instance-wide; the global-backed " +
+				"positives below require it disabled",
+		)
+	}
+
 	roleFree := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_rolefree")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON *.* TO "+testsupport.GrantAccountSQL(roleFree),
+	)
 	roleFreeConn := testsupport.MySQLConnAs(t, roleFree)
 	roleFreeGrants, err := validations.NewInspector(roleFreeConn, schema).Grants(t.Context())
 	if err != nil {
@@ -1133,6 +1157,147 @@ func TestGranteeAndRolePrivilegesIntegration(t *testing.T) {
 		validations.PrivilegeDelete,
 	); got != validations.GrantAbsent {
 		t.Errorf("pinned role-free negative = %s, want absent", got)
+	}
+
+	// The ordinary positive: a pinned, role-free account whose global row is not
+	// degraded resolves present at every scope. This is the only server-backed
+	// coverage of the branch that reads the global source, because the partial
+	// revokes test short-circuits before reaching it, and a directly granted
+	// schema row is resolved before it. Every other server-backed grant
+	// assertion in this repository expects a non-present state, so without this
+	// a positive-path regression degrades silently into an expected value.
+	for _, scope := range []struct {
+		name string
+		got  validations.GrantState
+	}{
+		{name: "global", got: roleFreeGrants.Global(validations.PrivilegeSelect)},
+		{name: "schema", got: roleFreeGrants.Schema(schema, validations.PrivilegeSelect)},
+		{
+			name: "table",
+			got:  roleFreeGrants.Table(schema, "fk_parent", validations.PrivilegeSelect),
+		},
+	} {
+		if scope.got != validations.GrantPresent {
+			t.Errorf("global-backed %s SELECT = %s, want present", scope.name, scope.got)
+		}
+	}
+}
+
+// TestRoleHeldProcessCompletesFKVisibilityIntegration is the deliberate
+// counterpart to TestGranteeAndRolePrivilegesIntegration, and the two must be
+// read together.
+//
+// Both accounts hold a privilege only through an activated role, and they
+// resolve oppositely: Grants reports role-held DELETE as GrantUnconfirmed,
+// while ForeignKeys reports role-held PROCESS as VisibilityComplete. That looks
+// like an inconsistency and is not one. Evidence, not privilege type, is what
+// differs — Grants depends on privilege bookkeeping the account cannot read for
+// its own roles (docs/COMPAT.md entry 4), whereas PROCESS proves itself by the
+// PROCESS-gated metadata read having succeeded. One successful primary
+// statement is the proof, so it needs no grant row and no session-affinity
+// reasoning.
+//
+// Without this test, tightening ForeignKeys to require a directly granted
+// PROCESS breaks nothing in this repository: both existing GRANT PROCESS
+// statements are direct. Harmonizing the two rows is exactly what a careful
+// maintainer does when only one half is pinned.
+func TestRoleHeldProcessCompletesFKVisibilityIntegration(t *testing.T) {
+	admin, schema := validationDatabase(t)
+
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_roleprocess")
+	role := testsupport.CreateMySQLRole(t, admin, "dbsgomysql_processrole")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT PROCESS ON *.* TO "+testsupport.GrantAccountSQL(role),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT "+testsupport.GrantAccountSQL(role)+
+			" TO "+testsupport.GrantAccountSQL(account),
+	)
+
+	// The account must hold no PROCESS of its own, or the role proves nothing.
+	var direct int
+	if err := admin.QueryRowContext(
+		t.Context(),
+		`SELECT COUNT(*)
+		 FROM information_schema.USER_PRIVILEGES
+		 WHERE GRANTEE = ? AND PRIVILEGE_TYPE = 'PROCESS'`,
+		"'"+account.User+"'@'%'",
+	).Scan(&direct); err != nil {
+		t.Fatalf("count direct PROCESS rows: %v", err)
+	}
+	if direct != 0 {
+		t.Fatalf("account holds %d direct PROCESS rows, want 0", direct)
+	}
+
+	// Negative control. Granting a role does not activate it, so this session
+	// reaches the visibility-filtered fallback. Asserting it establishes that
+	// the completeness below comes from the activated role and not from
+	// something ambient about the account or the server.
+	inactiveConn := testsupport.MySQLConnAs(t, account)
+	var currentRole string
+	if err := inactiveConn.QueryRowContext(
+		t.Context(),
+		"SELECT CURRENT_ROLE()",
+	).Scan(&currentRole); err != nil {
+		t.Fatalf("read CURRENT_ROLE before SET ROLE: %v", err)
+	}
+	if currentRole != "NONE" {
+		t.Fatalf(
+			"CURRENT_ROLE() = %q before SET ROLE, want NONE; roles activate on "+
+				"login here, so the negative control proves nothing",
+			currentRole,
+		)
+	}
+	inactive, err := validations.NewInspector(inactiveConn, schema).ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_parent"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys with the role inactive: %v", err)
+	}
+	if inactive.Visibility != validations.VisibilityUnconfirmed {
+		t.Errorf(
+			"inactive-role visibility = %s, want unconfirmed",
+			inactive.Visibility,
+		)
+	}
+
+	// The pin: the same account, same grants, with the role activated.
+	activeConn := testsupport.MySQLConnAs(t, account)
+	if _, roleErr := activeConn.ExecContext(t.Context(), "SET ROLE ALL"); roleErr != nil {
+		t.Fatalf("activate role: %v", roleErr)
+	}
+	active, err := validations.NewInspector(activeConn, schema).ForeignKeys(
+		t.Context(),
+		validations.IncomingTo("fk_parent"),
+	)
+	if err != nil {
+		t.Fatalf("ForeignKeys with the role activated: %v", err)
+	}
+	if active.Visibility != validations.VisibilityComplete {
+		t.Errorf(
+			"role-held PROCESS visibility = %s, want complete",
+			active.Visibility,
+		)
+	}
+	if len(active.Keys) != 3 {
+		t.Errorf(
+			"role-held PROCESS saw %d incoming keys, want the same 3 a directly "+
+				"granted PROCESS sees",
+			len(active.Keys),
+		)
+	}
+	if len(inactive.Keys) >= len(active.Keys) {
+		t.Errorf(
+			"inactive-role fallback saw %d keys and the activated role saw %d; "+
+				"want a strict under-count proving the role changed the source",
+			len(inactive.Keys),
+			len(active.Keys),
+		)
 	}
 }
 
@@ -1210,6 +1375,83 @@ func TestPartialRevokesPrivilegeResolutionIntegration(t *testing.T) {
 		validations.PrivilegeDelete,
 	); got != validations.GrantAbsent {
 		t.Errorf("never-granted DELETE under partial revokes = %s, want absent", got)
+	}
+
+	assertDirectGrantSurvivesPartialRevokes(t, admin, schema)
+}
+
+// assertDirectGrantSurvivesPartialRevokes pins the half of docs/COMPAT.md entry
+// 11 that its own named test does not reach: partial revokes degrade every
+// answer backed by a global privilege row, and *only* those. Entry 11 states
+// that schema and table answers are unconfirmed "until a direct schema or table
+// grant proves the requested object" — the clause after "until" has no live
+// coverage. Every other server-backed grant assertion in this repository expects
+// a non-present state, so nothing currently fails if the positive path stops
+// resolving.
+//
+// The mechanism is resolution order, not a partial-revoke exemption: Grants.Schema
+// and Grants.Table pass their direct rows as the specific sources, and resolve
+// returns GrantPresent from those before it ever consults the global row that
+// partial revokes degrade. A restriction can only subtract from a grant that
+// exists, so a directly granted object is not something it can have removed.
+//
+// One account carries both halves, so the assertions cannot pass for unrelated
+// reasons: a global SELECT row that must degrade at every scope, and a direct
+// schema INSERT row that must still prove its object while the same global
+// switch is on.
+//
+// The caller owns the SET GLOBAL partial_revokes mutation and its restore, and
+// this runs inside that window deliberately — it must not become a separate test
+// that races the global variable.
+func assertDirectGrantSurvivesPartialRevokes(t *testing.T, admin *sql.DB, schema string) {
+	t.Helper()
+
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_direct")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON *.* TO "+testsupport.GrantAccountSQL(account),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT INSERT ON "+sqlutil.QuoteIdentifier(schema)+".* TO "+
+			testsupport.GrantAccountSQL(account),
+	)
+
+	conn := testsupport.MySQLConnAs(t, account)
+	grants, err := validations.NewInspector(conn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants for direct-grant account under partial revokes: %v", err)
+	}
+
+	// The global row is degraded at every scope, entry 11's first half.
+	if got := grants.Global(validations.PrivilegeSelect); got != validations.GrantUnconfirmed {
+		t.Errorf("global-backed SELECT = %s, want unconfirmed", got)
+	}
+	if got := grants.Schema(
+		schema,
+		validations.PrivilegeSelect,
+	); got != validations.GrantUnconfirmed {
+		t.Errorf("global-backed schema SELECT = %s, want unconfirmed", got)
+	}
+
+	// The direct schema row proves its object anyway, entry 11's "until" clause.
+	if got := grants.Schema(
+		schema,
+		validations.PrivilegeInsert,
+	); got != validations.GrantPresent {
+		t.Errorf("direct schema INSERT under partial revokes = %s, want present", got)
+	}
+
+	// A direct schema row is a specific source for the table question too, so it
+	// proves the table without a table-scoped grant row existing.
+	if got := grants.Table(
+		schema,
+		"fk_parent",
+		validations.PrivilegeInsert,
+	); got != validations.GrantPresent {
+		t.Errorf("direct schema INSERT for table under partial revokes = %s, want present", got)
 	}
 }
 

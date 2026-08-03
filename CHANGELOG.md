@@ -10,7 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Coverage for the positive half of privilege resolution, which no server-backed
+  test previously asserted: `GrantPresent` is now pinned against a real server
+  for a global-backed grant with partial revokes disabled, and for a direct
+  schema grant with `partial_revokes` enabled. The latter pins the clause of
+  `docs/COMPAT.md` entry 11 that its own named test did not reach — a global row
+  degrades while a direct schema or table grant still proves its object.
+  Verified on 8.0, 8.4, and 9.7.
+- `TestRoleHeldProcessCompletesFKVisibilityIntegration`, pinning that a `PROCESS`
+  held only through an activated role still yields `VisibilityComplete` from
+  `ForeignKeys`. It is the deliberate counterpart to the role-held `Grants`
+  answers reported `GrantUnconfirmed`: the asymmetry turns on what constitutes
+  evidence, not on the privilege type, and both halves are now pinned so neither
+  reads as an inconsistency to be harmonized away. Includes a negative control
+  proving the completeness comes from the activated role.
+- Unit cases for two previously untested paths in grantee handling: the
+  `CURRENT_USER()` user/host split taken at the last `@` rather than the first,
+  which a wrong split would degrade silently into an expected absent answer, and
+  a trailing lone backslash in a wildcard schema pattern.
+
+### Changed
+
+- `Grants` GoDoc now records that declining to consult `SHOW GRANTS` is a
+  deliberate choice, and that its unconfirmed role answers mean "not proven by
+  this fact" rather than "unprovable by any means". `SHOW GRANTS` merges the
+  session's active roles and needs no `SELECT` on the `mysql` schema for the
+  current user, so an operator whose working account fails a consumer's
+  preflight can now find the reason in the API documentation rather than only in
+  `docs/COMPAT.md` entry 4. No behavior change.
 
 ## [0.7.0] - 2026-08-01
 

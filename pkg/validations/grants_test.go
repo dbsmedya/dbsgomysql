@@ -19,6 +19,32 @@ func TestFormatGranteeEmbeddedQuote(t *testing.T) {
 	}
 }
 
+// TestFormatGranteeEmbeddedAtSign pins that the user/host split is taken at the
+// last @, not the first.
+//
+// CURRENT_USER() returns one undelimited string, so 'a@b'@'%' arrives as the
+// ambiguous a@b@%. Splitting on the first @ would yield 'a'@'b@%' — a grantee
+// that matches no row, which degrades every answer for that account from
+// present to absent or unconfirmed. Nothing downstream distinguishes that from
+// an account genuinely holding no privileges, so the failure is silent.
+//
+// The @-in-host direction is covered above by formatRoleGrantee; this is the
+// @-in-user direction, which only formatCurrentUserGrantee has to resolve
+// because only it receives the two halves already concatenated.
+func TestFormatGranteeEmbeddedAtSign(t *testing.T) {
+	t.Parallel()
+
+	if got, want := formatCurrentUserGrantee("a@b@%"), "'a@b'@'%'"; got != want {
+		t.Errorf("formatCurrentUserGrantee() = %q, want %q", got, want)
+	}
+	// A host is always concatenated by MySQL, so a bare user with no @ is not a
+	// shape the server produces; the fallback still has to name some host rather
+	// than emit a malformed grantee.
+	if got, want := formatCurrentUserGrantee("nohost"), "'nohost'@'%'"; got != want {
+		t.Errorf("formatCurrentUserGrantee() = %q, want %q", got, want)
+	}
+}
+
 func TestGrantResolutionByAffinityAndProvenance(t *testing.T) {
 	t.Parallel()
 
@@ -261,6 +287,12 @@ func TestLikePatternMatches(t *testing.T) {
 		{pattern: "", name: "", want: true},
 		{pattern: "", name: "x", want: false},
 		{pattern: "ünï%", name: "ünïcode", want: true},
+		// A trailing lone backslash has nothing to escape, so the escape arm's
+		// bounds guard declines it and it falls through to the literal compare.
+		// The guard is what keeps this from indexing past the pattern.
+		{pattern: `shop\`, name: `shop\`, want: true},
+		{pattern: `shop\`, name: "shopx", want: false},
+		{pattern: `shop\`, name: "shop", want: false},
 	}
 	for _, test := range tests {
 		if got := likePatternMatches(test.pattern, test.name); got != test.want {
