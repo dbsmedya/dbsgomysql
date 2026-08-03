@@ -10,6 +10,11 @@ it — but a tag is the one step here that cannot be taken back: Go's module pro
 records it on first fetch, so a mistake costs a new version rather than a fix.
 Wait to be told.
 
+**Releases run in the main worktree, never a dispatched one.** That is why this
+skill can reach `.ayder/versions/` at all — it is gitignored, so no worktree
+carries it. If you are in a worktree and `.ayder/` is absent, you are not where
+a release happens; answer the question you were asked and stop.
+
 ## 1. Decide the version — before implementing, not at release time
 
 **Read `.ayder/versions/ROADMAP.md` first.** It is the version authority: which
