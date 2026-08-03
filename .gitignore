@@ -21,8 +21,12 @@ go.work
 go.work.sum
 
 # MCP server wiring — absolute paths to a local dbs-vector corpus, per-developer.
-# See AGENTS.md section 3, "MySQL documentation is a lookup, not a recollection".
+# See AGENTS.md section 4, "Look before asserting".
 .mcp.json
+
+# Per-developer Claude Code state (which local MCP servers are enabled). The
+# shared half — .claude/skills/ — is tracked.
+.claude/settings.local.json
 
 # Editor & OS noise
 .DS_Store
