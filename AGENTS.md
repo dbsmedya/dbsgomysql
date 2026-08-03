@@ -51,10 +51,21 @@ put it in `internal/`: moving outward later is additive, inward is breaking.
 ## 3. Workflow
 
 ```
-branch from main  ->  read the highest -rN spec in .ayder/specs/
+read .ayder/versions/ROADMAP.md  ->  branch from main
+  ->  read the highest -rN spec in .ayder/specs/
   ->  plan in .ayder/plans/  ->  implement (test first, watch it fail, then code)
   ->  make check  ->  CHANGELOG.md [Unreleased]  ->  commit  ->  PR  ->  merge
+  ->  make -C .ayder post-merge
 ```
+
+**The first and last steps are the ones that get skipped, because nothing fails
+when they are.** `ROADMAP.md` is the version authority — which release carries
+which issue, and what is on hold — and reading it after a branch exists is how
+work gets scoped into a held release. `post-merge` archives superseded
+revisions and reports what drifted; skipping it is how `plans/` accumulated
+seven documents for shipped work, two still reading "planned; not started".
+Both are one command. The protocol behind them is
+[`.ayder/SPEC_AND_PLAN_REVISION_GUIDE.md`](.ayder/SPEC_AND_PLAN_REVISION_GUIDE.md) §5.
 
 ### One document, one branch
 
@@ -140,10 +151,16 @@ test that pins what the server does.
 
 ### Our own documents are a lookup too
 
-`dbs-vector` indexes a **second, separate** corpus: `.ayder/` — `specs/`,
-`plans/`, `versions/`, and `archived/` — searchable through
-`search_md_dbsgomysql_knowledge_vault`. The MySQL corpus above answers *what
-does the server do*; this one answers *what did we already decide, and where*.
+`dbs-vector` indexes a **second, separate** corpus: this repository's Markdown —
+`.ayder/` (`specs/`, `plans/`, `notes/`, `versions/`, `releases/`), `docs/`, and
+the root files — searchable through `search_md_dbsgomysql_knowledge_vault`. The
+MySQL corpus above answers *what does the server do*; this one answers *what did
+we already decide, and where*.
+
+Query it **through the MCP tool**. That server is the authoritative interface;
+it is what the corpus config and its file watcher are wired to. Do not shell out
+to a `dbs-vector` binary on `PATH` — a local build can disagree with the config,
+and nothing tells you when it does.
 
 **When a question spans documents rather than files, search it. Do not sweep it
 with greps.** The trigger is concrete: if answering would take a handful of
@@ -155,12 +172,23 @@ known file; it is the wrong tool for *"has anyone settled this?"*.
 
 Two properties make this more than a convenience:
 
-- **It reaches `archived/`.** Section 3 already says superseded revisions move
-  there, "so look there before concluding a topic never existed" — this is how.
-  Guessing filenames across dozens of documents is not a search.
 - **A recorded decision outranks a re-derived one.** Reasoning your way to a
   conclusion that already exists in writing wastes the effort and risks quietly
   contradicting the original, whose reasons you never read.
+- **It finds phrasings a keyword never would.** One query found the same defect
+  written three ways — "PR open, awaiting merge", "awaiting merge", and "PR #11
+  open, release owned by user". A grep needs every phrasing guessed in advance.
+
+**`.ayder/archived/` is deliberately NOT indexed, and this is load-bearing.** A
+superseded revision is not old-but-true the way MySQL 8.0 is true of 8.0 — it is
+**false now**: an `-r5` describing a field `-r6` deleted describes something that
+never shipped. Similarity cannot rank the current revision above it, so it would
+compete on equal footing and sometimes win. Archiving is therefore what removes a
+document from search: the watcher evicts a moved file within seconds.
+
+So the vault answers *"has anyone settled this?"*. It does not answer *"did this
+topic ever exist?"* — for that, read `.ayder/archived/` directly, which is why
+Section 3 tells you to look there before concluding a topic never existed.
 
 Cite what you find, the way a `COMPAT.md` entry cites the manual. Ignore hits
 from documents authored in the current session — the index includes them, and
