@@ -3,6 +3,20 @@
 Applies to `tests/` and every `*_test.go` in the repo. Repo-wide contract:
 [`../AGENTS.md`](../AGENTS.md).
 
+## Your loop
+
+You are in **BUILD**. Nothing here requires the spec/plan revision protocol.
+
+1. **Pick the layer** from the table below — the cheapest one that can actually
+   catch the defect.
+2. **Write the test and watch it fail for the right reason.** For a test added
+   to cover existing behavior, remove the thing it depends on, confirm it fails,
+   and put it back. Green on first run proves nothing.
+3. Run that layer's target, then `make check`. Paste the output.
+4. Commit, push, open the PR, **stop**.
+
+Do not pick the version, write the plan, or merge.
+
 ## The four layers
 
 | Layer | Database | Scope | Tag |

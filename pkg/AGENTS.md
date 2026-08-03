@@ -2,6 +2,21 @@
 
 Applies to `pkg/` and `internal/`. Repo-wide contract: [`../AGENTS.md`](../AGENTS.md).
 
+## Your loop
+
+You are in **BUILD**. Nothing here requires the spec/plan revision protocol —
+if you need a decision that is not in your plan, ask rather than deciding it.
+
+1. **Write the test first, and watch it fail for the right reason.** A test that
+   has never failed has not been shown to test anything.
+2. Implement until it passes.
+3. `make check` — run it, read the output, paste the output.
+4. If a consumer could notice the change, record it under `CHANGELOG.md
+   ## [Unreleased]` **in the same commit**.
+5. Commit, push, open the PR, **stop**.
+
+Do not pick the version, write the plan, or merge. Those are other phases.
+
 `.golangci.yml` is the canonical statement of the mechanical rules — no `panic`,
 no logging, no `init()`, no global mutable state, wrapped errors, GoDoc on every
 export, stdlib-only `pkg/`. Read it there, not here. Loosen it only with the

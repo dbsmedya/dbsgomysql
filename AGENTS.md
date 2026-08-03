@@ -47,19 +47,40 @@ whether code should be public, put it in `internal/`.
 
 ## 3. Workflow
 
+Three phases, three owners. **Find yours and stay in it.**
+
 ```
-read .ayder/versions/ROADMAP.md  ->  branch from main
-  ->  read the highest -rN spec in .ayder/specs/
-  ->  implement (test first, watch it fail, then code)
-  ->  make check  ->  CHANGELOG.md [Unreleased]  ->  commit  ->  PR  ->  merge
-  ->  make -C .ayder post-merge
+SCOPE   orchestration    pick the version, read the spec, write the plan,
+                         branch from main
+                         -> "Scoping work" in .ayder/SPEC_AND_PLAN_REVISION_GUIDE.md
+
+BUILD   implementation   -> pkg/AGENTS.md · tests/AGENTS.md
+                         implement  ->  make check
+                         ->  CHANGELOG.md [Unreleased]
+                         ->  commit  ->  push  ->  open PR  ->  stop
+
+LAND    user-owned       user reviews  ->  user merges on GitHub
+                         ->  git checkout main && git pull --ff-only
+                         ->  make check  ->  make -C .ayder post-merge
 ```
 
-**The first and last steps get skipped, because nothing fails when they are.**
-Reading `ROADMAP.md` after a branch exists is how work gets scoped into a held
-release. `post-merge` archives superseded revisions and reports what drifted;
-skipping it is how seven plans for shipped work piled up, two still reading
-"planned; not started".
+**Handed a plan? Start at BUILD.** Which version the work belongs to and which
+spec governs it were settled in SCOPE; re-deriving them second-guesses a
+decision whose reasons you cannot see.
+
+**Open the PR and stop.** Review and merge belong to the user. Merge only when
+told — the same rule as tagging, and for the same reason: it is the step that is
+hard to walk back.
+
+**In a git worktree there is no `.ayder/`.** It is gitignored, so no worktree
+carries it — no guide, no ROADMAP, no specs, no plans. Whoever dispatched you
+should have copied your spec and plan in. If they did not, ask; do not conclude
+the documents do not exist.
+
+**LAND's last two steps get skipped, because nothing fails when they are.**
+`post-merge` archives superseded revisions and reports what drifted; skipping it
+is how seven plans for shipped work piled up, two still reading "planned; not
+started". It runs in the main worktree, where `.ayder/` lives.
 
 - **Never commit to `main`.** It advances only by merge. Found yourself on it
   with uncommitted work? Branch first, then commit — do not commit and fix up.
