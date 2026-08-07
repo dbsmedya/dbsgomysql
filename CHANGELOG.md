@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A live pin for `TableSpec`'s captured index-part shapes — `SUB_PART`,
+  `COLLATION='D'`, and `EXPRESSION` — read from a real server across an index
+  mixing a prefixed column, a `DESC` column, and a functional key part.
+  Without it, two indexes that differ only in a prefix length, a sort
+  direction, or an expression could be captured identically and `DiffSpecs`
+  would call them equal.
+
 ## [0.7.2] - 2026-08-07
 
 ### Fixed
