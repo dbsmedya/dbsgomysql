@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   direction, or an expression could be captured identically and `DiffSpecs`
   would call them equal.
 
+### Changed
+
+- The supported MySQL floor is now explicitly fixed at 8.0.40. Earlier
+  pre-1.0 releases described support as MySQL 8.0 generally; compatibility
+  below 8.0.40 is no longer claimed.
+
 ## [0.7.2] - 2026-08-07
 
 ### Fixed

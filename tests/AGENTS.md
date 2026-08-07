@@ -55,7 +55,7 @@ Do not pick the version, write the plan, or merge.
 
 ## Versions
 
-Supported floor is MySQL 8.0. The 26.x line is watch-only: allowed to fail,
+Supported floor is MySQL 8.0.40. The 26.x line is watch-only: allowed to fail,
 never depended on.
 
 ## Running
