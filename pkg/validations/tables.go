@@ -38,13 +38,14 @@ func (i *Inspector) Tables(ctx context.Context, tables []string) ([]TableInfo, e
 		return nil, nil
 	}
 
-	const query = `
+	query := `
 		SELECT TABLE_NAME, TABLE_TYPE, ENGINE
 		FROM information_schema.TABLES
 		WHERE TABLE_SCHEMA = ?
+		  AND TABLE_NAME IN (` + sqlPlaceholders(len(tables)) + `)
 		ORDER BY TABLE_NAME`
 
-	rows, err := i.q.QueryContext(ctx, query, i.schema)
+	rows, err := i.q.QueryContext(ctx, query, appendTableArgs([]any{i.schema}, tables)...)
 	if err != nil {
 		return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("query metadata: %w", err))
 	}

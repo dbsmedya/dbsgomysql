@@ -50,14 +50,19 @@ func (i *Inspector) Triggers(
 	// not by their text — a plain string sort would invert the pair. Do not
 	// "fix" this into a lexical ordering; see docs/COMPAT.md entry 10, pinned by
 	// TestTriggerTimingEnumOrderIntegration.
-	const query = `
+	query := `
 		SELECT EVENT_OBJECT_TABLE, TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING
 		FROM information_schema.TRIGGERS
 		WHERE EVENT_OBJECT_SCHEMA = ?
 		  AND EVENT_MANIPULATION = ?
+		  AND EVENT_OBJECT_TABLE IN (` + sqlPlaceholders(len(tables)) + `)
 		ORDER BY EVENT_OBJECT_TABLE, ACTION_TIMING, TRIGGER_NAME`
 
-	rows, err := i.q.QueryContext(ctx, query, i.schema, serverEvent)
+	rows, err := i.q.QueryContext(
+		ctx,
+		query,
+		appendTableArgs([]any{i.schema, serverEvent}, tables)...,
+	)
 	if err != nil {
 		return nil, newObjectError(opTriggers, i.schema, "", fmt.Errorf("query metadata: %w", err))
 	}

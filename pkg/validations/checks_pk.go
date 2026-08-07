@@ -52,7 +52,7 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 		return nil, nil
 	}
 
-	const query = `
+	query := `
 		SELECT
 			t.TABLE_NAME,
 			s.COLUMN_NAME,
@@ -68,9 +68,10 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 		 AND c.TABLE_NAME = s.TABLE_NAME
 		 AND c.COLUMN_NAME = s.COLUMN_NAME
 		WHERE t.TABLE_SCHEMA = ?
+		  AND t.TABLE_NAME IN (` + sqlPlaceholders(len(tables)) + `)
 		ORDER BY t.TABLE_NAME, s.SEQ_IN_INDEX`
 
-	rows, err := i.q.QueryContext(ctx, query, i.schema)
+	rows, err := i.q.QueryContext(ctx, query, appendTableArgs([]any{i.schema}, tables)...)
 	if err != nil {
 		return nil, newObjectError(opPrimaryKeys, i.schema, "", fmt.Errorf("query metadata: %w", err))
 	}

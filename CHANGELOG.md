@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `Tables`, `PrimaryKeys`, `Triggers`, and `InvisibleColumns` now narrow their
+  `information_schema` queries to the requested tables instead of fetching the
+  whole schema and filtering in Go. `Columns` and the `TableSpec` queries
+  already did. On a large schema this removes an O(schema) term from every
+  call — `PrimaryKeys` in particular no longer runs a three-way
+  `TABLES × STATISTICS × COLUMNS` join across every table to answer about a
+  handful.
+
+  Results are unchanged. The predicate only limits which rows the server
+  returns; which rows are *accepted* is still decided by exact comparison in Go,
+  so a case-folding collation cannot widen an answer and no collation can narrow
+  one. See `docs/COMPAT.md` entry 2.
+
 ### Fixed
 
 - Every fact now owns the slices it returns. `InvisibleColumns`, `PrimaryKeys`,

@@ -744,3 +744,19 @@ func foreignKeyMatchesSelector(
 func sqlPlaceholders(count int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }
+
+// appendTableArgs appends each requested table to args, for a query narrowed by
+// sqlPlaceholders. Both halves live here so a placeholder count and its
+// arguments cannot drift apart in one fact and not another.
+//
+// Narrowing never decides anything. The predicate only limits which rows the
+// server returns; which rows are accepted is still decided by exact comparison
+// in Go, because information_schema name collations vary by category and by
+// lower_case_table_names. See docs/COMPAT.md entry 2.
+func appendTableArgs(args []any, tables []string) []any {
+	for _, table := range tables {
+		args = append(args, table)
+	}
+
+	return args
+}

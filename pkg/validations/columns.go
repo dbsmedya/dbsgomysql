@@ -66,13 +66,7 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 		  AND TABLE_NAME IN (` + sqlPlaceholders(len(tables)) + `)
 		ORDER BY TABLE_NAME, ORDINAL_POSITION`
 
-	args := make([]any, 0, len(tables)+1)
-	args = append(args, i.schema)
-	for _, table := range tables {
-		args = append(args, table)
-	}
-
-	rows, err := i.q.QueryContext(ctx, query, args...)
+	rows, err := i.q.QueryContext(ctx, query, appendTableArgs([]any{i.schema}, tables)...)
 	if err != nil {
 		return nil, newObjectError(
 			opColumns,
@@ -171,14 +165,15 @@ func (i *Inspector) InvisibleColumns(
 		return nil, nil
 	}
 
-	const query = `
+	query := `
 		SELECT TABLE_NAME, COLUMN_NAME
 		FROM information_schema.COLUMNS
 		WHERE TABLE_SCHEMA = ?
+		  AND TABLE_NAME IN (` + sqlPlaceholders(len(tables)) + `)
 		  AND EXTRA LIKE '%INVISIBLE%'
 		ORDER BY TABLE_NAME, ORDINAL_POSITION`
 
-	rows, err := i.q.QueryContext(ctx, query, i.schema)
+	rows, err := i.q.QueryContext(ctx, query, appendTableArgs([]any{i.schema}, tables)...)
 	if err != nil {
 		return nil, newObjectError(
 			opInvisibleColumns,
