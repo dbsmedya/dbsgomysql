@@ -14,6 +14,9 @@ Everything below applies to everyone. Anything narrower lives with the work:
 | Cutting a release, or choosing a version | the `release` skill |
 | Authoring or revising a spec or plan | [`.ayder/SPEC_AND_PLAN_REVISION_GUIDE.md`](.ayder/SPEC_AND_PLAN_REVISION_GUIDE.md) |
 
+The last two are local, not carried by the repository — `.claude/` and `.ayder/`
+are both gitignored. A clone does not have them, and neither does a worktree.
+
 ## 1. Project
 
 | | |
@@ -96,10 +99,10 @@ started". It runs in the main worktree, where `.ayder/` lives.
 
 ### goarchive is read-only reference material
 
-`/Users/sinanalyuruk/Vscode/goarchive`, pinned at `d48152c`. **Copy and
-reconstruct; never move, never edit.** Read it without touching the working
-tree: `git -C /Users/sinanalyuruk/Vscode/goarchive show d48152c:<path>`. Run
-nothing there that can write.
+A checkout sitting beside this one — `../goarchive` — pinned at `d48152c`.
+**Copy and reconstruct; never move, never edit.** Read it without touching the
+working tree: `git -C ../goarchive show d48152c:<path>`. Run nothing there that
+can write.
 
 ## 4. Look before asserting
 

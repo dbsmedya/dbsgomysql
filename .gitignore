@@ -24,9 +24,10 @@ go.work.sum
 # See AGENTS.md section 4, "Look before asserting".
 .mcp.json
 
-# Per-developer Claude Code state (which local MCP servers are enabled). The
-# shared half — .claude/skills/ — is tracked.
-.claude/settings.local.json
+# Per-developer Claude Code state — enabled MCP servers, and the local skills
+# that drive this repo's workflow. Never tracked: it is our tooling, not the
+# library's, and the same rule that keeps .ayder/ out of the tree applies here.
+.claude/
 
 # Editor & OS noise
 .DS_Store
