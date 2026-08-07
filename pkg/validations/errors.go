@@ -39,9 +39,10 @@ var (
 // ObjectError is immutable after construction and is safe for concurrent use
 // provided callers do not mutate its exported fields.
 type ObjectError struct {
-	// Op names the facts operation that failed: "tables", "primary_keys",
-	// "triggers", "invisible_columns", "foreign_keys", "grants", or
-	// "table_spec".
+	// Op names the facts operation that failed: "columns", "foreign_keys",
+	// "grants", "invisible_columns", "primary_keys", "table_spec", "tables", or
+	// "triggers". The order matches the op constants' declaration order, so a
+	// new op added out of alphabetical position is visibly missing here.
 	Op string
 	// Schema names the schema the failure concerns. For every op that reads the
 	// Inspector's own schema it is that schema; for "table_spec" it is the
