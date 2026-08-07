@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -14,6 +15,9 @@ const (
 )
 
 // PKInfo describes one table's primary key.
+//
+// Each returned value owns its Columns slice; see the package documentation on
+// ownership of returned slices.
 //
 // PKInfo is safe for concurrent reads. Callers must synchronize mutations to
 // Columns.
@@ -133,7 +137,9 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 	found := make([]PKInfo, 0, len(tables))
 	for _, table := range tables {
 		if pk, ok := byTable[table]; ok {
-			found = append(found, *pk)
+			fact := *pk
+			fact.Columns = slices.Clone(pk.Columns)
+			found = append(found, fact)
 		}
 	}
 

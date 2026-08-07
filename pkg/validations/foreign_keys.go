@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +99,9 @@ func newFKSelector(kind fkSelectorKind, tables []string) FKSelector {
 }
 
 // ForeignKey is one constraint, with the child side named first.
+//
+// Each returned value owns its ChildColumns and ParentColumns slices; see the
+// package documentation on ownership of returned slices.
 //
 // ForeignKey is safe for concurrent reads. Callers must synchronize mutation
 // of ChildColumns or ParentColumns.
@@ -692,7 +696,10 @@ func selectForeignKeys(keys []ForeignKey, schema string, sel FKSelector) []Forei
 			if !foreignKeyMatchesSelector(key, schema, requested, tableSet, sel.kind) {
 				continue
 			}
-			matches = append(matches, *key)
+			match := *key
+			match.ChildColumns = slices.Clone(key.ChildColumns)
+			match.ParentColumns = slices.Clone(key.ParentColumns)
+			matches = append(matches, match)
 		}
 		sort.Slice(matches, func(left, right int) bool {
 			if matches[left].ChildSchema != matches[right].ChildSchema {

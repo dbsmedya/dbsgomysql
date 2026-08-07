@@ -10,7 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- Every fact now owns the slices it returns. `InvisibleColumns`, `PrimaryKeys`,
+  and the `ForeignKeys` selector previously returned facts sharing one backing
+  array when the same table was requested twice, so sorting or editing one
+  fact's `Columns`, `ChildColumns`, or `ParentColumns` silently changed
+  another's. `Columns` already cloned, so the package followed two conventions;
+  it now states one, in the package documentation under "Ownership of returned
+  slices". `PrimaryKeys` was not named in the original report — it aliases the
+  same way and is fixed here too.
+- `ObjectError.Op` documentation now lists `"columns"`. The enumeration named
+  seven of the eight ops and had omitted `opColumns` since `Inspector.Columns`
+  shipped.
+- `README.md` no longer describes general column facts as "in development for
+  `v0.5.0`" — they shipped in `v0.5.0`, and signedness followed in `v0.6.0`. The
+  Status section now defers to this file for release history rather than naming
+  a version that goes stale again.
 
 ## [0.7.1] - 2026-08-03
 
