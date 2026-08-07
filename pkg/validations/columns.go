@@ -27,6 +27,9 @@ type ColumnInfo struct {
 
 // TableColumns describes every column of one requested table or view.
 //
+// Each returned value owns its Columns slice; see the package documentation on
+// ownership of returned slices.
+//
 // TableColumns is safe for concurrent reads. Callers must synchronize
 // mutations to Columns.
 type TableColumns struct {
@@ -138,6 +141,9 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 // InvisibleColumns reports one table having at least one invisible column.
 // Columns are in ordinal order and retain the server's exact spelling.
 //
+// Each returned value owns its Columns slice; see the package documentation on
+// ownership of returned slices.
+//
 // InvisibleColumns is safe for concurrent reads. Callers must synchronize
 // mutations to Columns.
 type InvisibleColumns struct {
@@ -208,7 +214,10 @@ func (i *Inspector) InvisibleColumns(
 	found := make([]InvisibleColumns, 0, len(byTable))
 	for _, table := range tables {
 		if columns := byTable[table]; len(columns) > 0 {
-			found = append(found, InvisibleColumns{Table: table, Columns: columns})
+			found = append(found, InvisibleColumns{
+				Table:   table,
+				Columns: slices.Clone(columns),
+			})
 		}
 	}
 

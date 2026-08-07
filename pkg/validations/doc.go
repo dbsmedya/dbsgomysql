@@ -12,4 +12,15 @@
 // is the consumer's decision. Findings therefore carry no severity, not even a
 // default to remap, because a default is a decision. What each check ships
 // instead is a rationale: the failure mode it protects against.
+//
+// # Ownership of returned slices
+//
+// Every fact owns the slices it returns. Requesting the same table twice yields
+// two facts with independent backing arrays, so mutating one never affects the
+// other, and mutating any of them never affects a later call. Callers are free
+// to sort or truncate a returned slice in place.
+//
+// This is one convention across every fact, not a property of particular ones.
+// It costs a copy per requested object and buys the guarantee that a fact is a
+// value, not a view onto shared state.
 package validations

@@ -10,7 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- Every fact now owns the slices it returns. `InvisibleColumns`, `PrimaryKeys`,
+  and the `ForeignKeys` selector previously returned facts sharing one backing
+  array when the same table was requested twice, so sorting or editing one
+  fact's `Columns`, `ChildColumns`, or `ParentColumns` silently changed
+  another's. `Columns` already cloned, so the package followed two conventions;
+  it now states one, in the package documentation under "Ownership of returned
+  slices". `PrimaryKeys` was not named in the original report — it aliases the
+  same way and is fixed here too.
 
 ## [0.7.1] - 2026-08-03
 
