@@ -141,9 +141,18 @@ func TestPredicateFallbackMatchesNarrowedResultIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForeignKeys unnarrowed: %v", err)
 	}
-	if !reflect.DeepEqual(fallbackKeys, narrowedKeys) {
-		t.Errorf("unnarrowed ForeignKeys = %#v, want %#v", fallbackKeys, narrowedKeys)
+	if !reflect.DeepEqual(fallbackKeys.Keys, narrowedKeys.Keys) {
+		t.Errorf("unnarrowed ForeignKeys keys = %#v, want %#v", fallbackKeys.Keys, narrowedKeys.Keys)
 	}
+	if fallbackKeys.Visibility != narrowedKeys.Visibility {
+		t.Errorf(
+			"unnarrowed ForeignKeys visibility = %s, want %s",
+			fallbackKeys.Visibility,
+			narrowedKeys.Visibility,
+		)
+	}
+	assertNoForeignKeyDowngradeIntegration(t, narrowedKeys)
+	assertNoForeignKeyDowngradeIntegration(t, fallbackKeys)
 }
 
 func TestPredicateDeduplicationKeepsRequestedMultiplicityIntegration(t *testing.T) {
@@ -239,7 +248,16 @@ func TestInnoDBFallbackDiscardsOtherSchemasIntegration(t *testing.T) {
 				key.ChildSchema, key.ChildTable)
 		}
 	}
-	if !reflect.DeepEqual(fallback, narrowed) {
-		t.Errorf("unnarrowed ForeignKeys = %#v, want %#v", fallback, narrowed)
+	if !reflect.DeepEqual(fallback.Keys, narrowed.Keys) {
+		t.Errorf("unnarrowed ForeignKeys keys = %#v, want %#v", fallback.Keys, narrowed.Keys)
 	}
+	if fallback.Visibility != narrowed.Visibility {
+		t.Errorf(
+			"unnarrowed ForeignKeys visibility = %s, want %s",
+			fallback.Visibility,
+			narrowed.Visibility,
+		)
+	}
+	assertNoForeignKeyDowngradeIntegration(t, narrowed)
+	assertNoForeignKeyDowngradeIntegration(t, fallback)
 }

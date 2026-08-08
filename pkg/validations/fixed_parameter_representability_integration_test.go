@@ -128,6 +128,7 @@ func TestForeignKeysStandardFallbackReportsUnconfirmedForUnrepresentableSchemaIn
 			complete.Visibility,
 		)
 	}
+	assertNoForeignKeyDowngradeIntegration(t, complete)
 
 	unconfirmed, err := validations.NewInspector(
 		noProcessConn(t, db, schema), supplementaryName,
@@ -145,4 +146,5 @@ func TestForeignKeysStandardFallbackReportsUnconfirmedForUnrepresentableSchemaIn
 			unconfirmed.Visibility,
 		)
 	}
+	assertPrimaryQueryDowngradeIntegration(t, unconfirmed)
 }

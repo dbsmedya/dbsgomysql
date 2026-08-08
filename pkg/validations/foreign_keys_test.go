@@ -1,11 +1,115 @@
 package validations
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"slices"
 	"testing"
 )
+
+func TestForeignKeyDowngradeReasonStrings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{
+			name: "none",
+			got:  ForeignKeyDowngradeNone.String(),
+			want: "none",
+		},
+		{
+			name: "primary query error",
+			got:  ForeignKeyDowngradePrimaryQueryError.String(),
+			want: "primary_query_error",
+		},
+		{
+			name: "primary read error",
+			got:  ForeignKeyDowngradePrimaryReadError.String(),
+			want: "primary_read_error",
+		},
+		{
+			name: "undeclared",
+			got:  ForeignKeyDowngradeReason(99).String(),
+			want: "ForeignKeyDowngradeReason(99)",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if test.got != test.want {
+				t.Errorf("String() = %q, want %q", test.got, test.want)
+			}
+		})
+	}
+}
+
+func TestForeignKeyResultJSON(t *testing.T) {
+	t.Parallel()
+
+	primaryErr := errors.New("primary error must not be serialized")
+	tests := []struct {
+		name  string
+		value ForeignKeyResult
+		want  string
+	}{
+		{
+			name: "zero",
+			want: `{"keys":null,"visibility":0,"downgrade_reason":0}`,
+		},
+		{
+			name: "primary query error",
+			value: ForeignKeyResult{
+				Visibility:      VisibilityUnconfirmed,
+				DowngradeReason: ForeignKeyDowngradePrimaryQueryError,
+				PrimaryError:    primaryErr,
+			},
+			want: `{"keys":null,"visibility":2,"downgrade_reason":1}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := json.Marshal(test.value)
+			if err != nil {
+				t.Fatalf("json.Marshal: %v", err)
+			}
+			if string(got) != test.want {
+				t.Errorf("json.Marshal() = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+func assertNoForeignKeyDowngrade(t *testing.T, result ForeignKeyResult) {
+	t.Helper()
+
+	if result.DowngradeReason != ForeignKeyDowngradeNone {
+		t.Errorf("downgrade reason = %s, want none", result.DowngradeReason)
+	}
+	if result.PrimaryError != nil {
+		t.Errorf("primary error = %v, want nil", result.PrimaryError)
+	}
+}
+
+func assertZeroForeignKeyResult(t *testing.T, result ForeignKeyResult) {
+	t.Helper()
+
+	if result.Keys != nil {
+		t.Errorf("keys = %#v, want nil", result.Keys)
+	}
+	if result.Visibility != VisibilityUnknown {
+		t.Errorf("visibility = %s, want unknown", result.Visibility)
+	}
+	assertNoForeignKeyDowngrade(t, result)
+}
 
 func TestPhase1cEnumStrings(t *testing.T) {
 	t.Parallel()
@@ -64,9 +168,7 @@ func TestFKSelectorValidationAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("empty selector returned error: %v", err)
 	}
-	if !reflect.DeepEqual(result, ForeignKeyResult{}) {
-		t.Errorf("empty selector result = %#v, want zero result", result)
-	}
+	assertZeroForeignKeyResult(t, result)
 
 	_, err = inspector.ForeignKeys(t.Context(), Within("orders", ""))
 	assertObjectErrorCause(t, err, ErrEmptyTableName, opForeignKeys, "shop")

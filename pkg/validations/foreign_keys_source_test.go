@@ -35,24 +35,25 @@ func TestForeignKeysPrimarySuccessIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForeignKeys primary: %v", err)
 	}
-	want := ForeignKeyResult{
-		Keys: []ForeignKey{{
-			ConstraintName: "fk_items_orders",
-			ChildSchema:    "shop",
-			ChildTable:     "items",
-			ChildColumns:   []string{"tenant_id", "order_id"},
-			ParentSchema:   "shop",
-			ParentTable:    "orders",
-			ParentColumns:  []string{"tenant_id", "id"},
-			OnDelete:       "CASCADE",
-			OnUpdate:       "SET NULL",
-			Indexed:        true,
-		}},
-		Visibility: VisibilityComplete,
+	wantKeys := []ForeignKey{{
+		ConstraintName: "fk_items_orders",
+		ChildSchema:    "shop",
+		ChildTable:     "items",
+		ChildColumns:   []string{"tenant_id", "order_id"},
+		ParentSchema:   "shop",
+		ParentTable:    "orders",
+		ParentColumns:  []string{"tenant_id", "id"},
+		OnDelete:       "CASCADE",
+		OnUpdate:       "SET NULL",
+		Indexed:        true,
+	}}
+	if !reflect.DeepEqual(result.Keys, wantKeys) {
+		t.Errorf("ForeignKeys primary keys = %#v, want %#v", result.Keys, wantKeys)
 	}
-	if !reflect.DeepEqual(result, want) {
-		t.Errorf("ForeignKeys primary = %#v, want %#v", result, want)
+	if result.Visibility != VisibilityComplete {
+		t.Errorf("ForeignKeys primary visibility = %s, want complete", result.Visibility)
 	}
+	assertNoForeignKeyDowngrade(t, result)
 	script.assertDone(t)
 }
 
@@ -75,10 +76,13 @@ func TestForeignKeysPrimaryEmptyDoesNotFallThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForeignKeys empty primary: %v", err)
 	}
-	want := ForeignKeyResult{Visibility: VisibilityComplete}
-	if !reflect.DeepEqual(result, want) {
-		t.Errorf("ForeignKeys empty primary = %#v, want %#v", result, want)
+	if result.Keys != nil {
+		t.Errorf("ForeignKeys empty primary keys = %#v, want nil", result.Keys)
 	}
+	if result.Visibility != VisibilityComplete {
+		t.Errorf("ForeignKeys empty primary visibility = %s, want complete", result.Visibility)
+	}
+	assertNoForeignKeyDowngrade(t, result)
 	script.assertDone(t)
 }
 
@@ -124,10 +128,36 @@ func TestForeignKeysFallbackIsUnconfirmedAndMatchesIndexes(t *testing.T) {
 	if result.Visibility != VisibilityUnconfirmed {
 		t.Errorf("fallback visibility = %s, want unconfirmed", result.Visibility)
 	}
+	assertPrimaryQueryDowngrade(t, result, primaryErr)
 	if len(result.Keys) != 1 || !result.Keys[0].Indexed {
 		t.Errorf("fallback keys = %#v, want one indexed composite", result.Keys)
 	}
 	script.assertDone(t)
+}
+
+func assertPrimaryQueryDowngrade(
+	t *testing.T,
+	result ForeignKeyResult,
+	primaryErr error,
+) {
+	t.Helper()
+
+	if result.DowngradeReason != ForeignKeyDowngradePrimaryQueryError {
+		t.Errorf(
+			"downgrade reason = %s, want primary_query_error",
+			result.DowngradeReason,
+		)
+	}
+	if result.PrimaryError == nil {
+		t.Fatal("primary error = nil, want wrapped query error")
+	}
+	wantMessage := "query InnoDB foreign-key metadata: " + primaryErr.Error()
+	if result.PrimaryError.Error() != wantMessage {
+		t.Errorf("primary error = %q, want %q", result.PrimaryError, wantMessage)
+	}
+	if !errors.Is(result.PrimaryError, primaryErr) {
+		t.Errorf("errors.Is(%v, primaryErr) = false", result.PrimaryError)
+	}
 }
 
 // fallbackScriptWithIndexes builds the three steps every functional-key-part
@@ -135,9 +165,12 @@ func TestForeignKeysFallbackIsUnconfirmedAndMatchesIndexes(t *testing.T) {
 // returns one composite constraint on shop.items, and information_schema.
 // STATISTICS returns the caller's index rows. Only those rows differ between
 // cases, which is what keeps each case's subject visible.
-func fallbackScriptWithIndexes(statistics [][]driver.Value) *queryScript {
+func fallbackScriptWithIndexes(
+	statistics [][]driver.Value,
+	primaryErr error,
+) *queryScript {
 	return &queryScript{steps: []queryStep{
-		{contains: "INNODB_FOREIGN AS f", err: errors.New("PROCESS denied")},
+		{contains: "INNODB_FOREIGN AS f", err: primaryErr},
 		{
 			contains: "KEY_COLUMN_USAGE AS kcu",
 			columns: []string{
@@ -179,19 +212,26 @@ func fallbackKeyOnItems(indexed bool) ForeignKey {
 	}
 }
 
-func assertFallbackKey(t *testing.T, result ForeignKeyResult, err error, indexed bool) {
+func assertFallbackKey(
+	t *testing.T,
+	result ForeignKeyResult,
+	err error,
+	indexed bool,
+	primaryErr error,
+) {
 	t.Helper()
 
 	if err != nil {
 		t.Fatalf("ForeignKeys fallback: %v", err)
 	}
-	want := ForeignKeyResult{
-		Keys:       []ForeignKey{fallbackKeyOnItems(indexed)},
-		Visibility: VisibilityUnconfirmed,
+	wantKeys := []ForeignKey{fallbackKeyOnItems(indexed)}
+	if !reflect.DeepEqual(result.Keys, wantKeys) {
+		t.Errorf("ForeignKeys fallback keys = %#v, want %#v", result.Keys, wantKeys)
 	}
-	if !reflect.DeepEqual(result, want) {
-		t.Errorf("ForeignKeys fallback = %#v, want %#v", result, want)
+	if result.Visibility != VisibilityUnconfirmed {
+		t.Errorf("fallback visibility = %s, want unconfirmed", result.Visibility)
 	}
+	assertPrimaryQueryDowngrade(t, result, primaryErr)
 }
 
 // A functional key part reports STATISTICS.COLUMN_NAME as NULL. Reading it into
@@ -203,15 +243,16 @@ func TestForeignKeysFallbackToleratesFunctionalIndexPart(t *testing.T) {
 
 	// idx_fk sorts before idx_func under the query's ORDER BY INDEX_NAME, which
 	// is the order a real server returns these rows in.
+	primaryErr := errors.New("PROCESS denied")
 	script := fallbackScriptWithIndexes([][]driver.Value{
 		{"shop", "items", "idx_fk", "tenant_id", int64(1)},
 		{"shop", "items", "idx_fk", "order_id", int64(2)},
 		{"shop", "items", "idx_func", nil, int64(1)},
-	})
+	}, primaryErr)
 	db := openScriptedDB(t, script)
 
 	result, err := NewInspector(db, "shop").ForeignKeys(t.Context(), IncomingTo("orders"))
-	assertFallbackKey(t, result, err, true)
+	assertFallbackKey(t, result, err, true, primaryErr)
 	script.assertDone(t)
 }
 
@@ -220,15 +261,16 @@ func TestForeignKeysFallbackToleratesFunctionalIndexPart(t *testing.T) {
 func TestForeignKeysFallbackFunctionalLeadingPartIsNotSupporting(t *testing.T) {
 	t.Parallel()
 
+	primaryErr := errors.New("PROCESS denied")
 	script := fallbackScriptWithIndexes([][]driver.Value{
 		{"shop", "items", "idx_mixed", nil, int64(1)},
 		{"shop", "items", "idx_mixed", "tenant_id", int64(2)},
 		{"shop", "items", "idx_mixed", "order_id", int64(3)},
-	})
+	}, primaryErr)
 	db := openScriptedDB(t, script)
 
 	result, err := NewInspector(db, "shop").ForeignKeys(t.Context(), IncomingTo("orders"))
-	assertFallbackKey(t, result, err, false)
+	assertFallbackKey(t, result, err, false, primaryErr)
 	script.assertDone(t)
 }
 
@@ -239,15 +281,16 @@ func TestForeignKeysFallbackFunctionalLeadingPartIsNotSupporting(t *testing.T) {
 func TestForeignKeysFallbackInteriorFunctionalPartBreaksThePrefix(t *testing.T) {
 	t.Parallel()
 
+	primaryErr := errors.New("PROCESS denied")
 	script := fallbackScriptWithIndexes([][]driver.Value{
 		{"shop", "items", "idx_interior", "tenant_id", int64(1)},
 		{"shop", "items", "idx_interior", nil, int64(2)},
 		{"shop", "items", "idx_interior", "order_id", int64(3)},
-	})
+	}, primaryErr)
 	db := openScriptedDB(t, script)
 
 	result, err := NewInspector(db, "shop").ForeignKeys(t.Context(), IncomingTo("orders"))
-	assertFallbackKey(t, result, err, false)
+	assertFallbackKey(t, result, err, false, primaryErr)
 	script.assertDone(t)
 }
 
@@ -287,6 +330,20 @@ func TestForeignKeysPrimaryDecodeErrorFallsBack(t *testing.T) {
 	if result.Visibility != VisibilityUnconfirmed || result.Keys != nil {
 		t.Errorf("decode fallback result = %#v, want empty unconfirmed", result)
 	}
+	if result.DowngradeReason != ForeignKeyDowngradePrimaryReadError {
+		t.Errorf(
+			"decode downgrade reason = %s, want primary_read_error",
+			result.DowngradeReason,
+		)
+	}
+	if result.PrimaryError == nil {
+		t.Fatal("decode primary error = nil, want wrapped read error")
+	}
+	wantMessage := "read InnoDB foreign-key metadata: " +
+		"constraint \"shop/fk_bad\" TYPE 64: unknown flag bits 64"
+	if result.PrimaryError.Error() != wantMessage {
+		t.Errorf("decode primary error = %q, want %q", result.PrimaryError, wantMessage)
+	}
 	script.assertDone(t)
 }
 
@@ -305,9 +362,7 @@ func TestForeignKeysBothSourcesFailPreservesCauses(t *testing.T) {
 		t.Context(),
 		IncomingTo("orders"),
 	)
-	if !reflect.DeepEqual(result, ForeignKeyResult{}) {
-		t.Errorf("failed result = %#v, want zero", result)
-	}
+	assertZeroForeignKeyResult(t, result)
 	if !errors.Is(err, primaryErr) || !errors.Is(err, fallbackErr) {
 		t.Errorf("joined error %v does not preserve both causes", err)
 	}

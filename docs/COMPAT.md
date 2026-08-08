@@ -266,7 +266,11 @@ that source.
 Any primary-source failure tries the standard
 `KEY_COLUMN_USAGE JOIN REFERENTIAL_CONSTRAINTS` query. A successful standard
 query remains useful but returns `VisibilityUnconfirmed`, because its rows are
-filtered by privileges on the child table. Closure then emits its own
+filtered by privileges on the child table. The result carries the wrapped
+primary failure in `PrimaryError` and a package-owned `DowngradeReason` that
+distinguishes a primary query error from a read/decode error. The query stage is
+not a permission classification: consumers inspect `PrimaryError` with their
+driver type when they need that distinction. Closure then emits its own
 unconfirmed finding, and `CheckFKMetadataVisibility` emits the catalog-level
 finding; an empty fallback result is never mistaken for proof that no incoming
 key exists. Partial revokes, active roles, and pooled-session affinity do not
@@ -279,6 +283,7 @@ fallback, same- and cross-schema, `PROCESS`-only, and MyISAM behavior are
 pinned by
 [`TestForeignKeysIntegration`](../pkg/validations/validations_integration_test.go),
 [`TestForeignKeyVisibilityAccountsIntegration`](../pkg/validations/validations_integration_test.go),
+[`TestForeignKeysPrimaryDecodeErrorFallsBack`](../pkg/validations/foreign_keys_source_test.go),
 and the phase-1c E2E goldens in
 [`TestPhase1cFindingsE2E`](../tests/e2e/e2e_test.go).
 
