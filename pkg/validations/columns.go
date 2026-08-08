@@ -59,18 +59,24 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 		return nil, nil
 	}
 
-	query := `
+	// The predicate narrows; it never decides. Every returned name is compared
+	// to the requested one in Go below, so dropping the predicate changes how
+	// much the server reads and nothing else. See narrowNames.
+	narrowed := `
 		SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE, EXTRA
 		FROM information_schema.COLUMNS
-		WHERE TABLE_SCHEMA = ?
-		  AND TABLE_NAME IN (` + sqlPlaceholders(len(tables)) + `)
-		ORDER BY TABLE_NAME, ORDINAL_POSITION`
-
+		WHERE TABLE_SCHEMA = ?`
 	args := make([]any, 0, len(tables)+1)
 	args = append(args, i.schema)
-	for _, table := range tables {
-		args = append(args, table)
+	if params, ok := narrowNames(tables, len(args)); ok {
+		narrowed += `
+		  AND TABLE_NAME IN (` + sqlPlaceholders(len(params)) + `)`
+		for _, table := range params {
+			args = append(args, table)
+		}
 	}
+	query := narrowed + `
+		ORDER BY TABLE_NAME, ORDINAL_POSITION`
 
 	rows, err := i.q.QueryContext(ctx, query, args...)
 	if err != nil {

@@ -306,11 +306,10 @@ func (i *Inspector) readGlobalGrants(
 	fact *Grants,
 	grantees []string,
 ) error {
-	query := `
+	query, args := granteePredicate(`
 		SELECT GRANTEE, PRIVILEGE_TYPE
-		FROM information_schema.USER_PRIVILEGES
-		WHERE GRANTEE IN (` + sqlPlaceholders(len(grantees)) + `)`
-	rows, err := i.q.QueryContext(ctx, query, stringsToAny(grantees)...)
+		FROM information_schema.USER_PRIVILEGES`, grantees)
+	rows, err := i.q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("query USER_PRIVILEGES: %w", err)
 	}
@@ -325,7 +324,17 @@ func (i *Inspector) readGlobalGrants(
 		if !ok {
 			continue
 		}
-		fact.global[privilege] |= fact.sourceFor(grantee)
+		// Skip rather than record a zero. `m[k] |= 0` creates the key, and
+		// under the unnarrowed fallback every other account's rows arrive
+		// here — so recording them would fill these maps with entries for
+		// privileges this account does not hold. The read paths treat a zero
+		// as absent, but only skipping keeps that true by construction rather
+		// than by a guard somewhere else.
+		source := fact.sourceFor(grantee)
+		if source == 0 {
+			continue
+		}
+		fact.global[privilege] |= source
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate USER_PRIVILEGES: %w", err)
@@ -339,11 +348,10 @@ func (i *Inspector) readSchemaGrants(
 	fact *Grants,
 	grantees []string,
 ) error {
-	query := `
+	query, args := granteePredicate(`
 		SELECT GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE
-		FROM information_schema.SCHEMA_PRIVILEGES
-		WHERE GRANTEE IN (` + sqlPlaceholders(len(grantees)) + `)`
-	rows, err := i.q.QueryContext(ctx, query, stringsToAny(grantees)...)
+		FROM information_schema.SCHEMA_PRIVILEGES`, grantees)
+	rows, err := i.q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("query SCHEMA_PRIVILEGES: %w", err)
 	}
@@ -358,8 +366,12 @@ func (i *Inspector) readSchemaGrants(
 		if !ok {
 			continue
 		}
+		source := fact.sourceFor(grantee)
+		if source == 0 {
+			continue
+		}
 		key := schemaPrivilegeKey{schema: schema, privilege: privilege}
-		fact.schema[key] |= fact.sourceFor(grantee)
+		fact.schema[key] |= source
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate SCHEMA_PRIVILEGES: %w", err)
@@ -373,11 +385,10 @@ func (i *Inspector) readTableGrants(
 	fact *Grants,
 	grantees []string,
 ) error {
-	query := `
+	query, args := granteePredicate(`
 		SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE
-		FROM information_schema.TABLE_PRIVILEGES
-		WHERE GRANTEE IN (` + sqlPlaceholders(len(grantees)) + `)`
-	rows, err := i.q.QueryContext(ctx, query, stringsToAny(grantees)...)
+		FROM information_schema.TABLE_PRIVILEGES`, grantees)
+	rows, err := i.q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("query TABLE_PRIVILEGES: %w", err)
 	}
@@ -392,10 +403,14 @@ func (i *Inspector) readTableGrants(
 		if !ok {
 			continue
 		}
+		source := fact.sourceFor(grantee)
+		if source == 0 {
+			continue
+		}
 		key := tablePrivilegeKey{
 			schema: schema, table: table, privilege: privilege,
 		}
-		fact.table[key] |= fact.sourceFor(grantee)
+		fact.table[key] |= source
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate TABLE_PRIVILEGES: %w", err)
@@ -548,6 +563,28 @@ func formatCurrentUserGrantee(currentUser string) string {
 
 func formatRoleGrantee(name, host string) string {
 	return "'" + name + "'@'" + host + "'"
+}
+
+// granteePredicate appends the GRANTEE narrowing to a privilege-table query,
+// or leaves the query unnarrowed when the grantee list cannot be bound.
+//
+// grantees is server-derived, which is not the same as bounded: with
+// activate_all_roles_on_login enabled a session activates every granted role,
+// and mandatory_roles are treated as granted to all accounts. Nothing in the
+// 8.0, 8.4 or 9.7 manuals states a maximum.
+//
+// Falling back returns every privilege row the account can see. That is
+// result-equivalent because sourceFor recognizes only this account and its
+// enabled roles, and rows it does not recognize are skipped rather than
+// recorded — see readGlobalGrants and its two siblings.
+func granteePredicate(query string, grantees []string) (narrowed string, args []any) {
+	params, ok := narrowNames(grantees, 0)
+	if !ok {
+		return query, nil
+	}
+
+	return query + `
+		WHERE GRANTEE IN (` + sqlPlaceholders(len(params)) + `)`, stringsToAny(params)
 }
 
 func stringsToAny(values []string) []any {

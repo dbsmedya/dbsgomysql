@@ -351,9 +351,13 @@ func TestSelectorOrderingDuplicatesAndCompositeGrouping(t *testing.T) {
 
 type queryStep struct {
 	contains string
-	columns  []string
-	rows     [][]driver.Value
-	err      error
+	// lacks, when set, must not appear in the statement. Narrowed and
+	// unnarrowed forms of a query differ by a removed clause, so the
+	// unnarrowed one has no fragment of its own to match positively.
+	lacks   string
+	columns []string
+	rows    [][]driver.Value
+	err     error
 }
 
 type queryScript struct {
@@ -373,6 +377,9 @@ func (s *queryScript) query(query string) (driver.Rows, error) {
 	s.next++
 	if !strings.Contains(query, step.contains) {
 		return nil, errors.New("query does not contain " + step.contains + ": " + query)
+	}
+	if step.lacks != "" && strings.Contains(query, step.lacks) {
+		return nil, errors.New("query unexpectedly contains " + step.lacks + ": " + query)
 	}
 	if step.err != nil {
 		return nil, step.err

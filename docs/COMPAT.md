@@ -395,6 +395,31 @@ pinned by
 on MySQL 8.0, 8.4, and 9.7; the validator result is pinned independently by
 [`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
 
+The same error reaches three further name columns that `pkg/validations`
+compares against, measured on 8.0, 8.4, and 9.7 with identical results:
+
+| Column | Read by |
+|---|---|
+| `COLUMNS.TABLE_NAME` | `Columns` |
+| `KEY_COLUMN_USAGE.TABLE_NAME` | `ForeignKeys`, standard source |
+| `INNODB_FOREIGN.FOR_NAME` | `ForeignKeys`, InnoDB source |
+
+`pkg/validations` therefore omits the name predicate for any request carrying
+such a name and selects in Go instead, so the call reports absence rather than
+failing. That is possible because these predicates only narrow — the returned
+spelling is always compared in Go, per entry 2 — and it is what keeps a
+requested name that matches nothing an absence rather than an error. Pinned by
+[`TestPredicateGuardReportsAbsenceIntegration`](../pkg/validations/predicate_integration_test.go)
+and
+[`TestPredicateFallbackMatchesNarrowedResultIntegration`](../pkg/validations/predicate_integration_test.go),
+which cover both foreign-key sources separately, since a connection holding
+`PROCESS` never reaches the standard one.
+
+A name that is not valid UTF-8 is handled the same way, but for a different
+reason: the server returns no rows for it rather than failing, so the omission
+is defensive rather than a repair. It is pinned at unit level only — an
+integration test would pass without it.
+
 **Reference:** documented in part. The 8.0, 8.4, and 9.7 Error Message
 References, Chapter 2, "Server Error Message Reference", all give error 3988 as
 symbol `ER_IMPOSSIBLE_STRING_CONVERSION`, SQLSTATE `HY000`, with the message
