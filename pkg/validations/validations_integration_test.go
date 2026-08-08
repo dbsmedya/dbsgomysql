@@ -56,6 +56,7 @@ func TestInspectorSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForeignKeys IncomingTo smoke call: %v", err)
 	}
+	assertNoForeignKeyDowngradeIntegration(t, incoming)
 	within, err := inspector.ForeignKeys(
 		t.Context(),
 		validations.Within("fk_parent", "fk_internal_child", "fk_cascade_child"),
@@ -63,6 +64,7 @@ func TestInspectorSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForeignKeys Within smoke call: %v", err)
 	}
+	assertNoForeignKeyDowngradeIntegration(t, within)
 	grants, err := inspector.Grants(t.Context())
 	if err != nil {
 		t.Fatalf("Grants smoke call: %v", err)
@@ -866,6 +868,7 @@ func TestForeignKeyVisibilityAccountsIntegration(t *testing.T) {
 		len(completeFromDB.Keys) != 3 {
 		t.Errorf("PROCESS-only DB result = %#v, want three complete keys", completeFromDB)
 	}
+	assertNoForeignKeyDowngradeIntegration(t, completeFromDB)
 
 	processConn := testsupport.MySQLConnAs(t, processAccount)
 	completeFromConn, err := validations.NewInspector(processConn, schema).ForeignKeys(
@@ -879,6 +882,7 @@ func TestForeignKeyVisibilityAccountsIntegration(t *testing.T) {
 		completeFromConn.Keys != nil {
 		t.Errorf("PROCESS-only empty result = %#v, want empty complete", completeFromConn)
 	}
+	assertNoForeignKeyDowngradeIntegration(t, completeFromConn)
 	if got := validations.CheckFKClosure(
 		completeFromConn,
 		schema,
@@ -905,6 +909,7 @@ func TestForeignKeyVisibilityAccountsIntegration(t *testing.T) {
 	if fallback.Visibility != validations.VisibilityUnconfirmed {
 		t.Errorf("fallback visibility = %s, want unconfirmed", fallback.Visibility)
 	}
+	assertPrimaryQueryDowngradeIntegration(t, fallback)
 	if len(fallback.Keys) >= len(completeFromDB.Keys) {
 		t.Errorf(
 			"fallback saw %d keys, PROCESS source saw %d; want a strict under-count",
@@ -935,6 +940,7 @@ func TestForeignKeyVisibilityAccountsIntegration(t *testing.T) {
 	if fullFallback.Visibility != validations.VisibilityUnconfirmed {
 		t.Errorf("full fallback visibility = %s, want unconfirmed", fullFallback.Visibility)
 	}
+	assertPrimaryQueryDowngradeIntegration(t, fullFallback)
 	if !reflect.DeepEqual(fullFallback.Keys, completeFromDB.Keys) {
 		t.Errorf(
 			"fallback keys =\n%#v\nwant authoritative identity/rules/columns\n%#v",
@@ -1008,6 +1014,41 @@ func TestForeignKeyVisibilityAccountsIntegration(t *testing.T) {
 		}
 		assertFunctionalIndexReportsNullColumn(t, admin, schema)
 	})
+}
+
+func assertNoForeignKeyDowngradeIntegration(
+	t *testing.T,
+	result validations.ForeignKeyResult,
+) {
+	t.Helper()
+
+	if result.DowngradeReason != validations.ForeignKeyDowngradeNone {
+		t.Errorf("downgrade reason = %s, want none", result.DowngradeReason)
+	}
+	if result.PrimaryError != nil {
+		t.Errorf("primary error = %v, want nil", result.PrimaryError)
+	}
+}
+
+func assertPrimaryQueryDowngradeIntegration(
+	t *testing.T,
+	result validations.ForeignKeyResult,
+) {
+	t.Helper()
+
+	if result.DowngradeReason != validations.ForeignKeyDowngradePrimaryQueryError {
+		t.Errorf(
+			"downgrade reason = %s, want primary_query_error",
+			result.DowngradeReason,
+		)
+	}
+	if result.PrimaryError == nil {
+		t.Fatal("primary error = nil, want wrapped MySQL query error")
+	}
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(result.PrimaryError, &mysqlErr) {
+		t.Errorf("errors.As(%v, *mysql.MySQLError) = false", result.PrimaryError)
+	}
 }
 
 // assertFunctionalIndexReportsNullColumn pins the server behavior the fix

@@ -153,8 +153,39 @@ successful primary query.
 If that statement fails for any reason, the library tries the standard
 `KEY_COLUMN_USAGE JOIN REFERENTIAL_CONSTRAINTS` source. Its rows are filtered by
 the account's object visibility, so fallback success is always
-`VisibilityUnconfirmed`. If both sources fail, the returned `ObjectError`
-preserves both causes.
+`VisibilityUnconfirmed`. The successful result also carries the wrapped
+primary failure in `PrimaryError` and classifies its source stage in
+`DowngradeReason`:
+
+- `ForeignKeyDowngradePrimaryQueryError` means the primary query returned an
+  error before rows were available. It does not necessarily mean missing
+  `PROCESS`; cancellation, transport, driver, and custom-`Querier` errors share
+  this stage.
+- `ForeignKeyDowngradePrimaryReadError` means the primary query succeeded, but
+  its rows could not be scanned, iterated, grouped, or decoded.
+
+Use the enum for stable control flow and inspect `PrimaryError` with
+`errors.Is` or `errors.As` for the concrete cause:
+
+```go
+if incoming.Visibility == validations.VisibilityUnconfirmed {
+    switch incoming.DowngradeReason {
+    case validations.ForeignKeyDowngradePrimaryQueryError:
+        // Inspect incoming.PrimaryError for a driver/server or context cause.
+    case validations.ForeignKeyDowngradePrimaryReadError:
+        // Report malformed or unreadable authoritative metadata upstream.
+    }
+}
+```
+
+A primary success, including an empty one, carries
+`ForeignKeyDowngradeNone` and a nil `PrimaryError`; so does the zero result from
+a constructed empty selector. If both sources fail, the returned result remains
+zero and the `ObjectError` preserves both causes instead.
+
+`DowngradeReason` is an always-present numeric `downgrade_reason` member when a
+`ForeignKeyResult` is encoded as JSON. `PrimaryError` is excluded because an
+arbitrary concrete error has no stable cross-driver JSON representation.
 
 Completeness is explicitly InnoDB-scoped. MyISAM parses and ignores foreign-key
 declarations, so it has no enforced constraints to discover. NDB Cluster uses a

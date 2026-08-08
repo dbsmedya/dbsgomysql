@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `ForeignKeyResult` now retains why its authoritative InnoDB
+  source was downgraded when the standard metadata fallback succeeds.
+  `DowngradeReason` distinguishes a primary query error from a primary
+  read/decode error, while `PrimaryError` preserves the existing wrapped cause
+  for `errors.Is` and `errors.As`. Query-stage errors are not assumed to be
+  privilege failures. Complete and zero results carry no downgrade; if both
+  sources fail, the existing joined function error and zero result remain.
+  `PrimaryError` is excluded from JSON, while `downgrade_reason` is a new
+  always-present numeric member. Consumers using unkeyed `ForeignKeyResult`
+  literals must migrate to keyed fields and should inspect the new diagnostics
+  whenever `Visibility` is `VisibilityUnconfirmed`.
+
 ## [0.7.5] - 2026-08-08
 
 ### Fixed

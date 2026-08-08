@@ -43,6 +43,40 @@ func (v MetadataVisibility) String() string {
 	}
 }
 
+// ForeignKeyDowngradeReason reports the primary-source stage that made
+// ForeignKeys use its standard metadata fallback.
+//
+// The zero value means no primary-source downgrade occurred.
+// ForeignKeyDowngradeReason is a plain value and is safe for concurrent use.
+type ForeignKeyDowngradeReason uint8
+
+const (
+	// ForeignKeyDowngradeNone means no primary-source downgrade occurred.
+	ForeignKeyDowngradeNone ForeignKeyDowngradeReason = iota
+	// ForeignKeyDowngradePrimaryQueryError means the primary query returned an
+	// error before rows were available.
+	ForeignKeyDowngradePrimaryQueryError
+	// ForeignKeyDowngradePrimaryReadError means the primary query succeeded, but
+	// its rows could not be scanned, iterated, grouped, or decoded.
+	ForeignKeyDowngradePrimaryReadError
+)
+
+// String returns a stable human spelling for the downgrade reason.
+//
+// String is safe for concurrent use.
+func (r ForeignKeyDowngradeReason) String() string {
+	switch r {
+	case ForeignKeyDowngradeNone:
+		return enumNoneName
+	case ForeignKeyDowngradePrimaryQueryError:
+		return "primary_query_error"
+	case ForeignKeyDowngradePrimaryReadError:
+		return "primary_read_error"
+	default:
+		return "ForeignKeyDowngradeReason(" + strconv.Itoa(int(r)) + ")"
+	}
+}
+
 const (
 	fkRuleCascade  = "CASCADE"
 	fkRuleNoAction = "NO ACTION"
@@ -133,20 +167,33 @@ type ForeignKey struct {
 // completeness proof.
 //
 // ForeignKeyResult is safe for concurrent reads. Callers must synchronize
-// mutation of Keys or nested column slices.
+// mutation of Keys, nested column slices, DowngradeReason, or PrimaryError.
+// The package does not mutate PrimaryError after return; a concrete error
+// supplied by a custom Querier retains its own concurrency guarantees.
 type ForeignKeyResult struct {
 	// Keys contains selected constraints in deterministic selector order.
 	Keys []ForeignKey `json:"keys"`
 	// Visibility reports whether discovery is complete for registered InnoDB
 	// constraints or came from the visibility-filtered fallback.
 	Visibility MetadataVisibility `json:"visibility"`
+	// DowngradeReason reports whether the primary query failed or its returned
+	// metadata could not be read. It is ForeignKeyDowngradeNone unless fallback
+	// succeeded after a primary-source error.
+	DowngradeReason ForeignKeyDowngradeReason `json:"downgrade_reason"`
+	// PrimaryError is the wrapped primary-source error retained after a
+	// successful fallback. Inspect it with errors.Is or errors.As. It is nil
+	// when no fallback succeeded and is deliberately excluded from JSON.
+	PrimaryError error `json:"-"`
 }
 
 // ForeignKeys returns constraints matching sel. It first queries the
 // PROCESS-gated InnoDB registry; success proves VisibilityComplete. Any
 // primary-source error selects the standard information_schema fallback,
-// whose success is VisibilityUnconfirmed. Failure of both sources preserves
-// both causes.
+// whose success is VisibilityUnconfirmed and carries the wrapped primary error
+// plus its query or read stage. A query-stage reason does not classify the
+// concrete cause as a permission failure; inspect PrimaryError with errors.Is
+// or errors.As. Failure of both sources returns a zero result and preserves
+// both causes in the returned error.
 //
 // IncomingTo follows requested parent-table order. OutgoingFrom and Within
 // follow requested child-table order. Ties sort by exact child schema, child
@@ -175,7 +222,7 @@ func (i *Inspector) ForeignKeys(
 		return ForeignKeyResult{}, nil
 	}
 
-	keys, primaryErr := i.foreignKeysInnoDB(ctx, sel)
+	keys, downgradeReason, primaryErr := i.foreignKeysInnoDB(ctx, sel)
 	if primaryErr == nil {
 		return ForeignKeyResult{
 			Keys:       selectForeignKeys(keys, i.schema, sel),
@@ -186,8 +233,10 @@ func (i *Inspector) ForeignKeys(
 	keys, fallbackErr := i.foreignKeysStandard(ctx, sel)
 	if fallbackErr == nil {
 		return ForeignKeyResult{
-			Keys:       selectForeignKeys(keys, i.schema, sel),
-			Visibility: VisibilityUnconfirmed,
+			Keys:            selectForeignKeys(keys, i.schema, sel),
+			Visibility:      VisibilityUnconfirmed,
+			DowngradeReason: downgradeReason,
+			PrimaryError:    primaryErr,
 		}, nil
 	}
 
@@ -206,7 +255,7 @@ func (k fkSelectorKind) valid() bool {
 func (i *Inspector) foreignKeysInnoDB(
 	ctx context.Context,
 	sel FKSelector,
-) ([]ForeignKey, error) {
+) ([]ForeignKey, ForeignKeyDowngradeReason, error) {
 	column := "f.FOR_NAME"
 	if sel.kind == fkSelectorIncoming {
 		column = "f.REF_NAME"
@@ -272,16 +321,18 @@ func (i *Inspector) foreignKeysInnoDB(
 	// guard this call does not need.
 	rows, err := i.q.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query InnoDB foreign-key metadata: %w", err)
+		return nil, ForeignKeyDowngradePrimaryQueryError,
+			fmt.Errorf("query InnoDB foreign-key metadata: %w", err)
 	}
 	defer rows.Close()
 
 	keys, err := scanInnoDBForeignKeys(rows)
 	if err != nil {
-		return nil, fmt.Errorf("read InnoDB foreign-key metadata: %w", err)
+		return nil, ForeignKeyDowngradePrimaryReadError,
+			fmt.Errorf("read InnoDB foreign-key metadata: %w", err)
 	}
 
-	return keys, nil
+	return keys, ForeignKeyDowngradeNone, nil
 }
 
 type innoDBForeignKeyGroup struct {

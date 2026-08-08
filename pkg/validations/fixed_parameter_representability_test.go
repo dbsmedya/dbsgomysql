@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 
 	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
@@ -175,8 +174,9 @@ func TestTableSpecIssuesNoStatementForUnrepresentableTable(t *testing.T) {
 func TestForeignKeysFallbackIssuesNoStatementForUnrepresentableSchema(t *testing.T) {
 	t.Parallel()
 
+	primaryErr := errors.New("PROCESS denied")
 	script := &queryScript{steps: []queryStep{
-		{contains: "INNODB_FOREIGN AS f", err: errors.New("PROCESS denied")},
+		{contains: "INNODB_FOREIGN AS f", err: primaryErr},
 	}}
 	db := openScriptedDB(t, script)
 
@@ -193,6 +193,7 @@ func TestForeignKeysFallbackIssuesNoStatementForUnrepresentableSchema(t *testing
 	if result.Visibility != VisibilityUnconfirmed {
 		t.Errorf("ForeignKeys Visibility = %s, want VisibilityUnconfirmed", result.Visibility)
 	}
+	assertPrimaryQueryDowngrade(t, result, primaryErr)
 	script.assertDone(t)
 }
 
@@ -224,10 +225,13 @@ func TestForeignKeysInnoDBSuccessIsCompleteDespiteUnrepresentableSchema(t *testi
 	if err != nil {
 		t.Fatalf("ForeignKeys: %v", err)
 	}
-	want := ForeignKeyResult{Visibility: VisibilityComplete}
-	if !reflect.DeepEqual(result, want) {
-		t.Errorf("ForeignKeys = %#v, want %#v", result, want)
+	if result.Keys != nil {
+		t.Errorf("ForeignKeys Keys = %#v, want nil", result.Keys)
 	}
+	if result.Visibility != VisibilityComplete {
+		t.Errorf("ForeignKeys Visibility = %s, want complete", result.Visibility)
+	}
+	assertNoForeignKeyDowngrade(t, result)
 	script.assertDone(t)
 }
 
