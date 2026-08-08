@@ -45,39 +45,48 @@ func (i *Inspector) Triggers(
 		return nil, nil
 	}
 
-	// ORDER BY ACTION_TIMING sorts BEFORE ahead of AFTER because the column is
-	// ENUM('BEFORE','AFTER') and MySQL orders ENUM values by declaration index,
-	// not by their text — a plain string sort would invert the pair. Do not
-	// "fix" this into a lexical ordering; see docs/COMPAT.md entry 10, pinned by
-	// TestTriggerTimingEnumOrderIntegration.
-	const query = `
-		SELECT EVENT_OBJECT_TABLE, TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING
-		FROM information_schema.TRIGGERS
-		WHERE EVENT_OBJECT_SCHEMA = ?
-		  AND EVENT_MANIPULATION = ?
-		ORDER BY EVENT_OBJECT_TABLE, ACTION_TIMING, TRIGGER_NAME`
-
-	rows, err := i.q.QueryContext(ctx, query, i.schema, serverEvent)
-	if err != nil {
-		return nil, newObjectError(opTriggers, i.schema, "", fmt.Errorf("query metadata: %w", err))
-	}
-	defer rows.Close()
-
 	byTable := make(map[string][]TriggerInfo)
-	for rows.Next() {
-		var trigger TriggerInfo
-		if err := rows.Scan(&trigger.Table, &trigger.Name, &trigger.Event, &trigger.Timing); err != nil {
-			return nil, newObjectError(
-				opTriggers,
-				i.schema,
-				"",
-				fmt.Errorf("scan metadata: %w", err),
-			)
+	// A schema rejected by representable cannot be the exact spelling of anything
+	// information_schema reports, so this request is answerable without asking.
+	// A supplementary character would make the fixed comparison fail with
+	// ER_IMPOSSIBLE_STRING_CONVERSION (3988); invalid UTF-8 already matches
+	// nothing. See representable and docs/COMPAT.md entry 8. Skipping the
+	// statement preserves Triggers' absence result for both cases and repairs the
+	// supplementary one.
+	if representable(i.schema) {
+		// ORDER BY ACTION_TIMING sorts BEFORE ahead of AFTER because the column
+		// is ENUM('BEFORE','AFTER') and MySQL orders ENUM values by declaration
+		// index, not by their text — a plain string sort would invert the pair.
+		// Do not "fix" this into a lexical ordering; see docs/COMPAT.md entry 10,
+		// pinned by TestTriggerTimingEnumOrderIntegration.
+		const query = `
+			SELECT EVENT_OBJECT_TABLE, TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING
+			FROM information_schema.TRIGGERS
+			WHERE EVENT_OBJECT_SCHEMA = ?
+			  AND EVENT_MANIPULATION = ?
+			ORDER BY EVENT_OBJECT_TABLE, ACTION_TIMING, TRIGGER_NAME`
+
+		rows, err := i.q.QueryContext(ctx, query, i.schema, serverEvent)
+		if err != nil {
+			return nil, newObjectError(opTriggers, i.schema, "", fmt.Errorf("query metadata: %w", err))
 		}
-		byTable[trigger.Table] = append(byTable[trigger.Table], trigger)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, newObjectError(opTriggers, i.schema, "", fmt.Errorf("iterate metadata: %w", err))
+		defer rows.Close()
+
+		for rows.Next() {
+			var trigger TriggerInfo
+			if err := rows.Scan(&trigger.Table, &trigger.Name, &trigger.Event, &trigger.Timing); err != nil {
+				return nil, newObjectError(
+					opTriggers,
+					i.schema,
+					"",
+					fmt.Errorf("scan metadata: %w", err),
+				)
+			}
+			byTable[trigger.Table] = append(byTable[trigger.Table], trigger)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, newObjectError(opTriggers, i.schema, "", fmt.Errorf("iterate metadata: %w", err))
+		}
 	}
 
 	found := make([]TriggerInfo, 0)

@@ -52,69 +52,78 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 		return nil, nil
 	}
 
-	const query = `
-		SELECT
-			t.TABLE_NAME,
-			s.COLUMN_NAME,
-			c.DATA_TYPE,
-			c.COLUMN_TYPE
-		FROM information_schema.TABLES AS t
-		LEFT JOIN information_schema.STATISTICS AS s
-		  ON s.TABLE_SCHEMA = t.TABLE_SCHEMA
-		 AND s.TABLE_NAME = t.TABLE_NAME
-		 AND s.INDEX_NAME = 'PRIMARY'
-		LEFT JOIN information_schema.COLUMNS AS c
-		  ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
-		 AND c.TABLE_NAME = s.TABLE_NAME
-		 AND c.COLUMN_NAME = s.COLUMN_NAME
-		WHERE t.TABLE_SCHEMA = ?
-		ORDER BY t.TABLE_NAME, s.SEQ_IN_INDEX`
-
-	rows, err := i.q.QueryContext(ctx, query, i.schema)
-	if err != nil {
-		return nil, newObjectError(opPrimaryKeys, i.schema, "", fmt.Errorf("query metadata: %w", err))
-	}
-	defer rows.Close()
-
 	byTable := make(map[string]*PKInfo)
-	for rows.Next() {
-		var (
-			table      string
-			column     sql.NullString
-			dataType   sql.NullString
-			columnType sql.NullString
-		)
-		if err := rows.Scan(&table, &column, &dataType, &columnType); err != nil {
+	// A schema rejected by representable cannot be the exact spelling of anything
+	// information_schema reports, so this request is answerable without asking.
+	// A supplementary character would make the fixed comparison fail with
+	// ER_IMPOSSIBLE_STRING_CONVERSION (3988); invalid UTF-8 already matches
+	// nothing. See representable and docs/COMPAT.md entry 8. Skipping the
+	// statement preserves PrimaryKeys' absence result for both cases and repairs
+	// the supplementary one.
+	if representable(i.schema) {
+		const query = `
+			SELECT
+				t.TABLE_NAME,
+				s.COLUMN_NAME,
+				c.DATA_TYPE,
+				c.COLUMN_TYPE
+			FROM information_schema.TABLES AS t
+			LEFT JOIN information_schema.STATISTICS AS s
+			  ON s.TABLE_SCHEMA = t.TABLE_SCHEMA
+			 AND s.TABLE_NAME = t.TABLE_NAME
+			 AND s.INDEX_NAME = 'PRIMARY'
+			LEFT JOIN information_schema.COLUMNS AS c
+			  ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
+			 AND c.TABLE_NAME = s.TABLE_NAME
+			 AND c.COLUMN_NAME = s.COLUMN_NAME
+			WHERE t.TABLE_SCHEMA = ?
+			ORDER BY t.TABLE_NAME, s.SEQ_IN_INDEX`
+
+		rows, err := i.q.QueryContext(ctx, query, i.schema)
+		if err != nil {
+			return nil, newObjectError(opPrimaryKeys, i.schema, "", fmt.Errorf("query metadata: %w", err))
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var (
+				table      string
+				column     sql.NullString
+				dataType   sql.NullString
+				columnType sql.NullString
+			)
+			if err := rows.Scan(&table, &column, &dataType, &columnType); err != nil {
+				return nil, newObjectError(
+					opPrimaryKeys,
+					i.schema,
+					"",
+					fmt.Errorf("scan metadata: %w", err),
+				)
+			}
+
+			pk, ok := byTable[table]
+			if !ok {
+				pk = &PKInfo{Table: table, Kind: PKNone}
+				byTable[table] = pk
+			}
+			if column.Valid {
+				pk.Columns = append(pk.Columns, column.String)
+				if dataType.Valid {
+					pk.DataType = dataType.String
+				}
+				if columnType.Valid {
+					pk.Unsigned = containsUnsigned(columnType.String)
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
 			return nil, newObjectError(
 				opPrimaryKeys,
 				i.schema,
 				"",
-				fmt.Errorf("scan metadata: %w", err),
+				fmt.Errorf("iterate metadata: %w", err),
 			)
 		}
-
-		pk, ok := byTable[table]
-		if !ok {
-			pk = &PKInfo{Table: table, Kind: PKNone}
-			byTable[table] = pk
-		}
-		if column.Valid {
-			pk.Columns = append(pk.Columns, column.String)
-			if dataType.Valid {
-				pk.DataType = dataType.String
-			}
-			if columnType.Valid {
-				pk.Unsigned = containsUnsigned(columnType.String)
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, newObjectError(
-			opPrimaryKeys,
-			i.schema,
-			"",
-			fmt.Errorf("iterate metadata: %w", err),
-		)
 	}
 
 	for _, pk := range byTable {

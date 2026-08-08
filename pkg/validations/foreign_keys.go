@@ -258,6 +258,18 @@ func (i *Inspector) foreignKeysInnoDB(
 	query := narrowed + `
 		ORDER BY f.ID, c.POS`
 
+	// Deliberately unguarded, unlike foreignKeysStandard below. VisibilityComplete
+	// means "the PROCESS-gated InnoDB query succeeded" — see the constant's own
+	// doc — so a skipped query could not honestly claim it: completeness is a
+	// property of having asked, not of the answer being predictable in advance.
+	//
+	// This path already answers an unrepresentable schema correctly without a
+	// guard: composed above carries the schema, so narrowNames rejects it,
+	// the predicate above is dropped, the unnarrowed read returns rows from the
+	// whole server, and selectForeignKeys' Go comparison matches none of them.
+	// The whole-server read is the price of an honest completeness proof, and
+	// it is already paid. See representable and docs/COMPAT.md entry 8 for the
+	// guard this call does not need.
 	rows, err := i.q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query InnoDB foreign-key metadata: %w", err)
@@ -468,15 +480,19 @@ func (i *Inspector) foreignKeysStandard(
 		columnSchema = "kcu.REFERENCED_TABLE_SCHEMA"
 		columnTable = "kcu.REFERENCED_TABLE_NAME"
 	}
+	// A schema rejected by representable cannot be the exact spelling of anything
+	// information_schema reports, so the standard fallback is answerable without
+	// asking. A supplementary character would make this fixed comparison fail
+	// with ER_IMPOSSIBLE_STRING_CONVERSION (3988); invalid UTF-8 already matches
+	// nothing. See representable and docs/COMPAT.md entry 8. Skipping this source
+	// preserves its empty result for both cases and repairs the supplementary one;
+	// the InnoDB source above remains deliberately queried.
+	if !representable(i.schema) {
+		return nil, nil
+	}
+
 	// Unlike the InnoDB source, this one has a schema column, so the
 	// unnarrowed form keeps its schema equality and only drops the table list.
-	//
-	// The schema is a fixed parameter here rather than part of the IN list, so
-	// an unrepresentable schema still reaches the server and still raises
-	// error 3988. Avoiding that would mean dropping the schema predicate too,
-	// which is a different change than this one; the case is reachable only
-	// when the InnoDB source has already failed for some other reason, since
-	// otherwise it answers first.
 	narrowed := `
 		SELECT
 			kcu.TABLE_SCHEMA,

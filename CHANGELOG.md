@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Columns`, `InvisibleColumns`, `Tables`, `PrimaryKeys`, and `Triggers` now
+  report absence when the Inspector schema contains a character above
+  `U+FFFF`, instead of failing with MySQL error 3988
+  (`ER_IMPOSSIBLE_STRING_CONVERSION`). `TableSpec` likewise returns its
+  existing `ErrTableNotFound` when either the requested schema or table has
+  that shape. These fixed-identity reads are now answered before issuing SQL,
+  because MySQL cannot store the requested spelling. Verified on MySQL 8.0,
+  8.4, and 9.7.
+- When `ForeignKeys` cannot use its `PROCESS`-gated InnoDB source, an
+  unrepresentable Inspector schema no longer makes the standard fallback fail
+  with error 3988. It now returns an empty result with
+  `VisibilityUnconfirmed`; a successful InnoDB read remains unchanged and
+  continues to report `VisibilityComplete`.
+- A fixed-identity read short-circuited for an unrepresentable schema or table
+  no longer observes an already-cancelled context or an error a custom
+  `Querier` would have returned, because no query is issued. Argument
+  validation and empty-input precedence are unchanged.
+
 ## [0.7.4] - 2026-08-08
 
 ### Fixed
