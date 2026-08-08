@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-08
+
 ### Changed
 
 - **Breaking:** `ForeignKeyResult` now retains why its authoritative InnoDB
@@ -518,7 +520,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.5...v0.8.0
 [0.7.5]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.2...v0.7.3
