@@ -395,6 +395,6 @@ synchronization.
 
 ## MySQL versions
 
-Supported floor is MySQL 8.0; tested against 8.0, 8.4, and 9.7. Version-specific
+Supported floor is MySQL 8.0.40; tested against 8.0, 8.4, and 9.7. Version-specific
 behavior the library absorbs on your behalf is catalogued in
 [COMPAT.md](COMPAT.md) — worth reading before you debug a surprising result.

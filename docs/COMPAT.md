@@ -1,8 +1,10 @@
 # MySQL Compatibility & Quirk Registry
 
-`dbsgomysql` supports **MySQL 8.0 and newer**. It is tested against **8.0,
-8.4, and 9.7**. The 26.x development line is watched but not supported: its CI
-job is allowed to fail and no code accommodates it until it stabilizes.
+As of v0.7.3, `dbsgomysql` supports MySQL 8.0.40 and newer. Support for the EOL
+MySQL 8.0 line is transitional and intended to assist migrations. It is tested
+against **8.0, 8.4, and 9.7**. The 26.x development line is watched but not
+supported: its CI job is allowed to fail and no code accommodates it until it
+stabilizes.
 
 This document is the registry of MySQL behaviors that differ across versions or
 that surprise callers of `information_schema`. Each entry states the affected
@@ -398,7 +400,7 @@ References, Chapter 2, "Server Error Message Reference", all give error 3988 as
 symbol `ER_IMPOSSIBLE_STRING_CONVERSION`, SQLSTATE `HY000`, with the message
 template quoted above. The 8.0 reference adds a threshold the newer ones drop:
 "`ER_IMPOSSIBLE_STRING_CONVERSION` was added in 8.0.22." That is below the
-effective 8.0.4x floor and so does not affect the supported range, but it does
+effective 8.0.40 floor and so does not affect the supported range, but it does
 mean the error did not exist for the first half of the 8.0 line — worth knowing
 before this entry is cited for anything older. That the error is what an
 `information_schema` name lookup produces for a supplementary-character
@@ -773,7 +775,7 @@ parts can mix nonfunctional and functional key parts." That the foreign key's
 columns must lead the index is §15.1.20.5, quoted in full under entry 16.
 
 The 8.0 manual alone dates the feature — "MySQL 8.0.13 and higher supports
-functional key parts" — which is below this library's 8.0.4x support floor, so
+functional key parts" — which is below this library's 8.0.40 support floor, so
 no version branch is warranted.
 
 ## 19. `INNODB_FOREIGN_COLS.POS` counts from 1, not 0 ✅

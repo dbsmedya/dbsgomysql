@@ -1658,7 +1658,8 @@ func TestTableSpecCompatPinsIntegration(t *testing.T) {
 			CONSTRAINT pk_declared_name PRIMARY KEY (plain_tiny),
 			CONSTRAINT uq_declared_name UNIQUE (literal_text),
 			CONSTRAINT chk_declared_name CHECK (checked >= 16),
-			CONSTRAINT chk_declared_range CHECK (gpa BETWEEN 0.00 AND 4.00)
+			CONSTRAINT chk_declared_range CHECK (gpa BETWEEN 0.00 AND 4.00),
+			KEY idx_parts (literal_text(10), checked DESC, ((checked * 2)))
 		) ENGINE=InnoDB`)
 
 	inspector := validations.NewInspector(db, schema)
@@ -1808,6 +1809,101 @@ func TestTableSpecCompatPinsIntegration(t *testing.T) {
 				"server rewrites keyword case and this package compares the rewritten "+
 				"form verbatim", clause)
 		}
+	})
+
+	// The expression rendering pinned on part 2 below — "(`checked` * 2)" — was
+	// confirmed identical on 8.0.46, 8.4.9 and 9.7.1, one run per server,
+	// 2026-08-07. It is not transcribed from a probe.
+	//
+	// Parts 0/1's empty Expression and part 2's empty Column are documented
+	// behavior, not an assumption: the manual states that for a nonfunctional
+	// key part COLUMN_NAME names the column and EXPRESSION is NULL, and for a
+	// functional key part the reverse.
+	//
+	// The 2026-07-27 probe queried information_schema.STATISTICS directly and
+	// recorded COLLATION='A' for a functional key part. This test does not read
+	// the raw column — so that observation is context, not something proven
+	// here.
+	//
+	// IndexPart deliberately records only whether the value is 'D'. The raw
+	// 'A'-versus-NULL distinction is not exposed on the public type and is not
+	// load-bearing for DiffSpecs.
+	//
+	// These assertions therefore prove "not descending" — not 'A' versus NULL.
+	// A server changing 'A' to NULL would keep this test green.
+	t.Run("idx_parts: literal, DESC, and functional key-part shapes", func(t *testing.T) {
+		var idxParts *validations.IndexSpec
+		for i := range spec.Indexes {
+			if spec.Indexes[i].Name == "idx_parts" {
+				idxParts = &spec.Indexes[i]
+			}
+		}
+		if idxParts == nil {
+			t.Fatal("no index named idx_parts; want KEY idx_parts " +
+				"(literal_text(10), checked DESC, ((checked * 2)))")
+		}
+		if len(idxParts.Parts) != 3 {
+			t.Fatalf("idx_parts has %d parts, want 3: literal_text(10), checked DESC, "+
+				"((checked * 2))", len(idxParts.Parts))
+		}
+
+		part0 := idxParts.Parts[0]
+		if part0.Column != "literal_text" {
+			t.Errorf("part 0 Column = %q, want \"literal_text\"", part0.Column)
+		}
+		if part0.SubPart != 10 {
+			t.Errorf("part 0 SubPart = %d, want 10; literal_text(10) is a prefix index "+
+				"and must not compare equal to INDEX(literal_text)", part0.SubPart)
+		}
+		if part0.Descending {
+			t.Error("part 0 reported descending; literal_text(10) carries no DESC and " +
+				"must not compare as descending")
+		}
+		if part0.Expression != "" {
+			t.Errorf("part 0 Expression = %q, want empty; a nonfunctional part must not "+
+				"carry EXPRESSION text", part0.Expression)
+		}
+
+		part1 := idxParts.Parts[1]
+		if part1.Column != "checked" {
+			t.Errorf("part 1 Column = %q, want \"checked\"", part1.Column)
+		}
+		if part1.SubPart != 0 {
+			t.Errorf("part 1 SubPart = %d, want 0; checked DESC indexes the whole "+
+				"column, no prefix", part1.SubPart)
+		}
+		if !part1.Descending {
+			t.Error("part 1 did not report descending; checked DESC must record " +
+				"COLLATION='D', a real schema difference DiffSpecs relies on")
+		}
+		if part1.Expression != "" {
+			t.Errorf("part 1 Expression = %q, want empty; a nonfunctional part must not "+
+				"carry EXPRESSION text", part1.Expression)
+		}
+
+		part2 := idxParts.Parts[2]
+		if part2.Column != "" {
+			t.Errorf("part 2 Column = %q, want empty; COLUMN_NAME is NULL for a "+
+				"functional key part", part2.Column)
+		}
+		if part2.SubPart != 0 {
+			t.Errorf("part 2 SubPart = %d, want 0; the manual forbids a prefix length "+
+				"on a functional key part, so a nonzero value here would mean the "+
+				"server did something the manual rules out", part2.SubPart)
+		}
+		if part2.Descending {
+			t.Error("part 2 reported descending; the capture must treat a functional " +
+				"key part as not descending, or DiffSpecs would start distinguishing " +
+				"indexes that are identical — this asserts that boolean, not the raw " +
+				"COLLATION value the server reports")
+		}
+		if part2.Expression != "(`checked` * 2)" {
+			t.Errorf("part 2 Expression = %q, want \"(`checked` * 2)\"; confirmed "+
+				"identical on 8.0.46, 8.4.9 and 9.7.1 — without it two different "+
+				"functional indexes compare equal", part2.Expression)
+		}
+		t.Logf("part 2 Expression (server rendering of ((checked * 2))) = %q",
+			part2.Expression)
 	})
 }
 
