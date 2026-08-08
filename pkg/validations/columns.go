@@ -59,74 +59,83 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 		return nil, nil
 	}
 
-	// The predicate narrows; it never decides. Every returned name is compared
-	// to the requested one in Go below, so dropping the predicate changes how
-	// much the server reads and nothing else. See narrowNames.
-	narrowed := `
-		SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE, EXTRA
-		FROM information_schema.COLUMNS
-		WHERE TABLE_SCHEMA = ?`
-	args := make([]any, 0, len(tables)+1)
-	args = append(args, i.schema)
-	if params, ok := narrowNames(tables, len(args)); ok {
-		narrowed += `
-		  AND TABLE_NAME IN (` + sqlPlaceholders(len(params)) + `)`
-		for _, table := range params {
-			args = append(args, table)
-		}
-	}
-	query := narrowed + `
-		ORDER BY TABLE_NAME, ORDINAL_POSITION`
-
-	rows, err := i.q.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, newObjectError(
-			opColumns,
-			i.schema,
-			"",
-			fmt.Errorf("query metadata: %w", err),
-		)
-	}
-	defer rows.Close()
-
 	byTable := make(map[string][]ColumnInfo)
-	for rows.Next() {
-		var (
-			table      string
-			column     ColumnInfo
-			columnType string
-			extra      sql.NullString
-		)
-		if err := rows.Scan(
-			&table,
-			&column.Name,
-			&column.Ordinal,
-			&column.DataType,
-			&columnType,
-			&extra,
-		); err != nil {
+	// A schema rejected by representable cannot be the exact spelling of anything
+	// information_schema reports, so this request is answerable without asking.
+	// A supplementary character would make the fixed comparison fail with
+	// ER_IMPOSSIBLE_STRING_CONVERSION (3988); invalid UTF-8 already matches
+	// nothing. See representable and docs/COMPAT.md entry 8. Skipping the
+	// statement preserves Columns' absence result for both cases and repairs the
+	// supplementary one.
+	if representable(i.schema) {
+		// The predicate narrows; it never decides. Every returned name is
+		// compared to the requested one in Go below, so dropping the predicate
+		// changes how much the server reads and nothing else. See narrowNames.
+		narrowed := `
+			SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE, EXTRA
+			FROM information_schema.COLUMNS
+			WHERE TABLE_SCHEMA = ?`
+		args := make([]any, 0, len(tables)+1)
+		args = append(args, i.schema)
+		if params, ok := narrowNames(tables, len(args)); ok {
+			narrowed += `
+			  AND TABLE_NAME IN (` + sqlPlaceholders(len(params)) + `)`
+			for _, table := range params {
+				args = append(args, table)
+			}
+		}
+		query := narrowed + `
+			ORDER BY TABLE_NAME, ORDINAL_POSITION`
+
+		rows, err := i.q.QueryContext(ctx, query, args...)
+		if err != nil {
 			return nil, newObjectError(
 				opColumns,
 				i.schema,
 				"",
-				fmt.Errorf("scan metadata: %w", err),
+				fmt.Errorf("query metadata: %w", err),
 			)
 		}
+		defer rows.Close()
 
-		column.Unsigned = containsUnsigned(columnType)
-		decomposed := parseColumnExtra(extra.String)
-		column.Invisible = decomposed.invisible
-		column.Generated = decomposed.generated == GeneratedVirtual ||
-			decomposed.generated == GeneratedStored
-		byTable[table] = append(byTable[table], column)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, newObjectError(
-			opColumns,
-			i.schema,
-			"",
-			fmt.Errorf("iterate metadata: %w", err),
-		)
+		for rows.Next() {
+			var (
+				table      string
+				column     ColumnInfo
+				columnType string
+				extra      sql.NullString
+			)
+			if err := rows.Scan(
+				&table,
+				&column.Name,
+				&column.Ordinal,
+				&column.DataType,
+				&columnType,
+				&extra,
+			); err != nil {
+				return nil, newObjectError(
+					opColumns,
+					i.schema,
+					"",
+					fmt.Errorf("scan metadata: %w", err),
+				)
+			}
+
+			column.Unsigned = containsUnsigned(columnType)
+			decomposed := parseColumnExtra(extra.String)
+			column.Invisible = decomposed.invisible
+			column.Generated = decomposed.generated == GeneratedVirtual ||
+				decomposed.generated == GeneratedStored
+			byTable[table] = append(byTable[table], column)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, newObjectError(
+				opColumns,
+				i.schema,
+				"",
+				fmt.Errorf("iterate metadata: %w", err),
+			)
+		}
 	}
 
 	found := make([]TableColumns, 0, len(tables))
@@ -177,44 +186,53 @@ func (i *Inspector) InvisibleColumns(
 		return nil, nil
 	}
 
-	const query = `
-		SELECT TABLE_NAME, COLUMN_NAME
-		FROM information_schema.COLUMNS
-		WHERE TABLE_SCHEMA = ?
-		  AND EXTRA LIKE '%INVISIBLE%'
-		ORDER BY TABLE_NAME, ORDINAL_POSITION`
-
-	rows, err := i.q.QueryContext(ctx, query, i.schema)
-	if err != nil {
-		return nil, newObjectError(
-			opInvisibleColumns,
-			i.schema,
-			"",
-			fmt.Errorf("query metadata: %w", err),
-		)
-	}
-	defer rows.Close()
-
 	byTable := make(map[string][]string)
-	for rows.Next() {
-		var table, column string
-		if err := rows.Scan(&table, &column); err != nil {
+	// A schema rejected by representable cannot be the exact spelling of anything
+	// information_schema reports, so this request is answerable without asking.
+	// A supplementary character would make the fixed comparison fail with
+	// ER_IMPOSSIBLE_STRING_CONVERSION (3988); invalid UTF-8 already matches
+	// nothing. See representable and docs/COMPAT.md entry 8. Skipping the
+	// statement preserves InvisibleColumns' absence result for both cases and
+	// repairs the supplementary one.
+	if representable(i.schema) {
+		const query = `
+			SELECT TABLE_NAME, COLUMN_NAME
+			FROM information_schema.COLUMNS
+			WHERE TABLE_SCHEMA = ?
+			  AND EXTRA LIKE '%INVISIBLE%'
+			ORDER BY TABLE_NAME, ORDINAL_POSITION`
+
+		rows, err := i.q.QueryContext(ctx, query, i.schema)
+		if err != nil {
 			return nil, newObjectError(
 				opInvisibleColumns,
 				i.schema,
 				"",
-				fmt.Errorf("scan metadata: %w", err),
+				fmt.Errorf("query metadata: %w", err),
 			)
 		}
-		byTable[table] = append(byTable[table], column)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, newObjectError(
-			opInvisibleColumns,
-			i.schema,
-			"",
-			fmt.Errorf("iterate metadata: %w", err),
-		)
+		defer rows.Close()
+
+		for rows.Next() {
+			var table, column string
+			if err := rows.Scan(&table, &column); err != nil {
+				return nil, newObjectError(
+					opInvisibleColumns,
+					i.schema,
+					"",
+					fmt.Errorf("scan metadata: %w", err),
+				)
+			}
+			byTable[table] = append(byTable[table], column)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, newObjectError(
+				opInvisibleColumns,
+				i.schema,
+				"",
+				fmt.Errorf("iterate metadata: %w", err),
+			)
+		}
 	}
 
 	found := make([]InvisibleColumns, 0, len(byTable))

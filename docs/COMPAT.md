@@ -370,17 +370,18 @@ hatch above has no 9.x equivalent.
 
 **Affected:** all supported versions.
 
-**Symptom:** MySQL accepts a quoted identifier containing a Unicode character
-above `U+FFFF`, but does not preserve it. For example, a table requested as
-`supp_𐀀` is stored and reported by `information_schema` as `supp_?`. Reusing
-the original SQL text can appear to work because the same replacement happens
-again, but the configured name does not round-trip and can collide with a
-literal question mark. Looking the original name up afterwards does not simply
-fail to match: comparing `information_schema.TABLES.TABLE_NAME` against the
-original supplementary-character parameter **raises error 3988**
+**Symptom:** MySQL accepts a quoted database or table identifier containing a
+Unicode character above `U+FFFF`, but does not preserve it. For example, an
+object requested as `supp_𐀀` is stored and reported by `information_schema` as
+`supp_?`. Reusing the original SQL text can appear to work because the same
+replacement happens again, but the configured name does not round-trip and can
+collide with a literal question mark. Looking the original name up afterwards
+does not simply fail to match: comparing an `information_schema` schema or
+table name column against the original supplementary-character parameter
+**raises error 3988**
 (`ER_IMPOSSIBLE_STRING_CONVERSION`), because MySQL cannot convert the `utf8mb4`
 parameter into the metadata column's `utf8mb3` collation. Code must not read
-that error as "the table does not exist". The message template is `Conversion
+that error as "the object does not exist". The message template is `Conversion
 from collation %s into %s impossible for %s`, so both collation names are
 substituted from the session — the error *number* is the stable part, and the
 message text is not.
@@ -395,8 +396,10 @@ pinned by
 on MySQL 8.0, 8.4, and 9.7; the validator result is pinned independently by
 [`TestValidateIdentifier`](../pkg/sqlutil/sqlutil_test.go).
 
-The same error reaches three further name columns that `pkg/validations`
-compares against, measured on 8.0, 8.4, and 9.7 with identical results:
+The same error reaches the fixed schema parameters used by five facts, both
+fixed parameters used to resolve a `TableSpec`, and the standard foreign-key
+source. Dynamic requested-table predicates reach three further name columns,
+measured on 8.0, 8.4, and 9.7 with identical results:
 
 | Column | Read by |
 |---|---|
@@ -404,21 +407,42 @@ compares against, measured on 8.0, 8.4, and 9.7 with identical results:
 | `KEY_COLUMN_USAGE.TABLE_NAME` | `ForeignKeys`, standard source |
 | `INNODB_FOREIGN.FOR_NAME` | `ForeignKeys`, InnoDB source |
 
-`pkg/validations` therefore omits the name predicate for any request carrying
-such a name and selects in Go instead, so the call reports absence rather than
-failing. That is possible because these predicates only narrow — the returned
-spelling is always compared in Go, per entry 2 — and it is what keeps a
-requested name that matches nothing an absence rather than an error. Pinned by
-[`TestPredicateGuardReportsAbsenceIntegration`](../pkg/validations/predicate_integration_test.go)
-and
-[`TestPredicateFallbackMatchesNarrowedResultIntegration`](../pkg/validations/predicate_integration_test.go),
-which cover both foreign-key sources separately, since a connection holding
-`PROCESS` never reaches the standard one.
+`pkg/validations` uses two mechanisms so these requests report absence rather
+than failing:
 
-A name that is not valid UTF-8 is handled the same way, but for a different
-reason: the server returns no rows for it rather than failing, so the omission
-is defensive rather than a repair. It is pinned at unit level only — an
-integration test would pass without it.
+- **Dynamic table-name lists** in `Columns` and both `ForeignKeys` sources omit
+  an unrepresentable narrowing predicate and select exact returned spellings in
+  Go. These predicates only narrow — they never decide — so dropping one widens
+  the read but not the answer, per entry 2. Pinned by
+  [`TestPredicateGuardReportsAbsenceIntegration`](../pkg/validations/predicate_integration_test.go)
+  and
+  [`TestPredicateFallbackMatchesNarrowedResultIntegration`](../pkg/validations/predicate_integration_test.go),
+  which cover both foreign-key sources separately, since a connection holding
+  `PROCESS` never reaches the standard one.
+- **Fixed identities** short-circuit before issuing the affected statement.
+  `Columns`, `InvisibleColumns`, `Tables`, `PrimaryKeys`, and `Triggers` return
+  their documented empty result for an unrepresentable Inspector schema;
+  `TableSpec` returns `ErrTableNotFound` for an unrepresentable schema or table;
+  and the standard `ForeignKeys` fallback returns empty with
+  `VisibilityUnconfirmed`. The `PROCESS`-gated InnoDB source remains queried,
+  because `VisibilityComplete` is evidence that this source succeeded, not an
+  inference from a skipped read. Pinned by
+  [`TestFactsReportAbsenceForUnrepresentableSchemaIntegration`](../pkg/validations/fixed_parameter_representability_integration_test.go),
+  [`TestTableSpecReportsTableNotFoundForUnrepresentableRefIntegration`](../pkg/validations/fixed_parameter_representability_integration_test.go),
+  and
+  [`TestForeignKeysStandardFallbackReportsUnconfirmedForUnrepresentableSchemaIntegration`](../pkg/validations/fixed_parameter_representability_integration_test.go).
+
+Because a fixed-identity short-circuit issues no query, it does not surface an
+already-cancelled context or an error from a caller-supplied `Querier` for that
+request. Argument validation and the existing empty-input returns still take
+precedence.
+
+A name that is not valid UTF-8 is rejected by the same private representability
+predicate, but for a different reason: the server already returns no rows for
+it rather than failing. Dynamic predicate omission and fixed-identity
+short-circuiting are therefore defensive for invalid UTF-8 rather than a
+repair. That half is pinned at unit level only — an integration test would pass
+without either guard.
 
 **Reference:** documented in part. The 8.0, 8.4, and 9.7 Error Message
 References, Chapter 2, "Server Error Message Reference", all give error 3988 as

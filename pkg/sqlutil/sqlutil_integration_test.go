@@ -75,6 +75,7 @@ func TestIdentifierCharacterSetIntegration(t *testing.T) {
 	}
 
 	assertSupplementaryIdentifierReplacement(t, db, schema, supplementaryName)
+	assertSupplementaryDatabaseIdentifierReplacement(t, db)
 
 	// MySQL rejects each of these six characters in the final position of a
 	// database, table, or column name but accepts every one of them in the
@@ -238,6 +239,78 @@ func assertSupplementaryIdentifierReplacement(t *testing.T, db *sql.DB, schema, 
 		err,
 		erCannotConvert,
 		"metadata lookup of original name "+strconv.Quote(table),
+	)
+}
+
+// assertSupplementaryDatabaseIdentifierReplacement extends
+// assertSupplementaryIdentifierReplacement's pin from a table name to a
+// schema name. It measures that CREATE DATABASE silently stores a different
+// spelling too. pkg/validations' fixed-parameter guard needs only the requested
+// supplementary spelling to be impossible as an exact stored identifier;
+// replacement is the server behavior this test pins, not a necessary premise
+// of the guard.
+func assertSupplementaryDatabaseIdentifierReplacement(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatalf("generate supplementary database suffix: %v", err)
+	}
+	requested := "dbsgomysql_supp_db_" + hex.EncodeToString(suffix) + "_\U00010000"
+
+	execIntegrationSQL(t, db, "CREATE DATABASE "+sqlutil.QuoteIdentifier(requested)+" CHARACTER SET utf8mb4")
+
+	wantStoredName := strings.ReplaceAll(requested, "\U00010000", "?")
+
+	// Clean up the stored spelling, not the requested one: the two spellings
+	// differ on the server, so DROP DATABASE with the original supplementary
+	// name would either fail or address a different object — the exact
+	// substitution this pin exists to measure.
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		if _, err := db.ExecContext(
+			cleanupCtx,
+			"DROP DATABASE "+sqlutil.QuoteIdentifier(wantStoredName),
+		); err != nil {
+			t.Errorf("drop supplementary database %q: %v", wantStoredName, err)
+		}
+	})
+
+	var storedName string
+	err := db.QueryRowContext(
+		t.Context(),
+		"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
+		wantStoredName,
+	).Scan(&storedName)
+	if err != nil {
+		t.Fatalf("look up stored database name %q: %v", wantStoredName, err)
+	}
+	if storedName != wantStoredName {
+		t.Errorf("stored database name = %q, want %q", storedName, wantStoredName)
+	}
+
+	// Looking the original name up in metadata does not merely fail to match:
+	// the utf8mb4 parameter cannot be converted into the utf8mb3 collation of
+	// SCHEMATA.SCHEMA_NAME, so the server raises an error instead of reporting
+	// no rows — the same failure mode entry 8 already documents for a table
+	// name, now measured for a schema name too.
+	var lookupName string
+	lookupErr := db.QueryRowContext(
+		t.Context(),
+		"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
+		requested,
+	).Scan(&lookupName)
+	if lookupErr == nil {
+		t.Errorf("metadata lookup of the original database name %q unexpectedly succeeded", requested)
+
+		return
+	}
+	assertIntegrationServerErrorNumber(
+		t,
+		lookupErr,
+		erCannotConvert,
+		"metadata lookup of original database name "+strconv.Quote(requested),
 	)
 }
 

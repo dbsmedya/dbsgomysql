@@ -100,6 +100,21 @@ func (i *Inspector) TableSpec(
 // happens to be the charset today, but deriving one identifier from another by
 // string surgery is exactly the fragility this package avoids elsewhere.
 func (i *Inspector) resolveTable(ctx context.Context, ref TableRef) (TableSpec, error) {
+	// A schema or table rejected by representable cannot be the exact spelling of
+	// anything information_schema reports, so the resolved-and-absent result is
+	// known without asking. A supplementary character would make either fixed
+	// comparison fail with ER_IMPOSSIBLE_STRING_CONVERSION (3988); invalid UTF-8
+	// already matches nothing. See representable and docs/COMPAT.md entry 8.
+	// Skipping the query preserves ErrTableNotFound for both cases and repairs the
+	// supplementary one.
+	//
+	// Both parts are checked because this call compares both in Go below and a
+	// supplementary character in either was measured raising 3988.
+	if !representable(ref.schema) || !representable(ref.table) {
+		return TableSpec{}, newObjectError(opTableSpec, ref.schema, ref.table,
+			fmt.Errorf("resolve table: %w", ErrTableNotFound))
+	}
+
 	const query = `
 		SELECT t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_TYPE, t.ENGINE,
 		       c.CHARACTER_SET_NAME, t.TABLE_COLLATION, t.TABLE_COMMENT

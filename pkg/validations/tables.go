@@ -38,34 +38,43 @@ func (i *Inspector) Tables(ctx context.Context, tables []string) ([]TableInfo, e
 		return nil, nil
 	}
 
-	const query = `
-		SELECT TABLE_NAME, TABLE_TYPE, ENGINE
-		FROM information_schema.TABLES
-		WHERE TABLE_SCHEMA = ?
-		ORDER BY TABLE_NAME`
-
-	rows, err := i.q.QueryContext(ctx, query, i.schema)
-	if err != nil {
-		return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("query metadata: %w", err))
-	}
-	defer rows.Close()
-
 	byName := make(map[string]TableInfo)
-	for rows.Next() {
-		var (
-			info   TableInfo
-			engine sql.NullString
-		)
-		if err := rows.Scan(&info.Table, &info.Type, &engine); err != nil {
-			return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("scan metadata: %w", err))
+	// A schema rejected by representable cannot be the exact spelling of anything
+	// information_schema reports, so this request is answerable without asking.
+	// A supplementary character would make the fixed comparison fail with
+	// ER_IMPOSSIBLE_STRING_CONVERSION (3988); invalid UTF-8 already matches
+	// nothing. See representable and docs/COMPAT.md entry 8. Skipping the
+	// statement preserves Tables' absence result for both cases and repairs the
+	// supplementary one.
+	if representable(i.schema) {
+		const query = `
+			SELECT TABLE_NAME, TABLE_TYPE, ENGINE
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = ?
+			ORDER BY TABLE_NAME`
+
+		rows, err := i.q.QueryContext(ctx, query, i.schema)
+		if err != nil {
+			return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("query metadata: %w", err))
 		}
-		if engine.Valid {
-			info.Engine = engine.String
+		defer rows.Close()
+
+		for rows.Next() {
+			var (
+				info   TableInfo
+				engine sql.NullString
+			)
+			if err := rows.Scan(&info.Table, &info.Type, &engine); err != nil {
+				return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("scan metadata: %w", err))
+			}
+			if engine.Valid {
+				info.Engine = engine.String
+			}
+			byName[info.Table] = info
 		}
-		byName[info.Table] = info
-	}
-	if err := rows.Err(); err != nil {
-		return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("iterate metadata: %w", err))
+		if err := rows.Err(); err != nil {
+			return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("iterate metadata: %w", err))
+		}
 	}
 
 	found := make([]TableInfo, 0, len(tables))
