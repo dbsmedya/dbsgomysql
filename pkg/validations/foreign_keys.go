@@ -211,7 +211,16 @@ func (i *Inspector) foreignKeysInnoDB(
 	if sel.kind == fkSelectorIncoming {
 		column = "f.REF_NAME"
 	}
-	query := `
+	// INNODB_FOREIGN names a table as "schema/table" in one column, so the
+	// bound parameters are composed values rather than the caller's table
+	// names. narrowNames must see exactly what is bound: the schema reaches
+	// the wire here, and NewInspector validates nothing.
+	composed := make([]string, 0, len(sel.tables))
+	for _, table := range sel.tables {
+		composed = append(composed, i.schema+"/"+table)
+	}
+
+	narrowed := `
 		SELECT
 			f.ID,
 			f.FOR_NAME,
@@ -223,14 +232,32 @@ func (i *Inspector) foreignKeysInnoDB(
 			c.POS
 		FROM information_schema.INNODB_FOREIGN AS f
 		JOIN information_schema.INNODB_FOREIGN_COLS AS c
-		  ON c.ID = f.ID
-		WHERE ` + column + ` IN (` + sqlPlaceholders(len(sel.tables)) + `)
+		  ON c.ID = f.ID`
+
+	// This table carries no schema column — the schema is embedded in the
+	// name — so there is no narrower predicate to keep, and dropping the IN
+	// clause widens the read from one schema to the whole server. That is
+	// deliberate. The alternative, a LIKE 'schema/%' pattern, needs % and _
+	// escaped out of the schema name, and a defect of exactly that shape
+	// already reached review once (see the v0.6.4 record). selectForeignKeys
+	// compares schemas in Go, so the wider read cannot widen the answer.
+	//
+	// It can widen the *error* surface: scanInnoDBForeignKeys validates every
+	// row it reads, so a malformed constraint in a schema this call never
+	// named can fail it. That is the accepted cost of a fallback that only
+	// runs for a request no narrowed statement could represent.
+	var args []any
+	if params, ok := narrowNames(composed, 0); ok {
+		narrowed += `
+		WHERE ` + column + ` IN (` + sqlPlaceholders(len(params)) + `)`
+		args = make([]any, 0, len(params))
+		for _, name := range params {
+			args = append(args, name)
+		}
+	}
+	query := narrowed + `
 		ORDER BY f.ID, c.POS`
 
-	args := make([]any, 0, len(sel.tables))
-	for _, table := range sel.tables {
-		args = append(args, i.schema+"/"+table)
-	}
 	rows, err := i.q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query InnoDB foreign-key metadata: %w", err)
@@ -441,7 +468,16 @@ func (i *Inspector) foreignKeysStandard(
 		columnSchema = "kcu.REFERENCED_TABLE_SCHEMA"
 		columnTable = "kcu.REFERENCED_TABLE_NAME"
 	}
-	query := `
+	// Unlike the InnoDB source, this one has a schema column, so the
+	// unnarrowed form keeps its schema equality and only drops the table list.
+	//
+	// The schema is a fixed parameter here rather than part of the IN list, so
+	// an unrepresentable schema still reaches the server and still raises
+	// error 3988. Avoiding that would mean dropping the schema predicate too,
+	// which is a different change than this one; the case is reachable only
+	// when the InnoDB source has already failed for some other reason, since
+	// otherwise it answers first.
+	narrowed := `
 		SELECT
 			kcu.TABLE_SCHEMA,
 			kcu.TABLE_NAME,
@@ -458,18 +494,22 @@ func (i *Inspector) foreignKeysStandard(
 		  ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA
 		 AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
 		WHERE kcu.REFERENCED_TABLE_NAME IS NOT NULL
-		  AND ` + columnSchema + ` = ?
-		  AND ` + columnTable + ` IN (` + sqlPlaceholders(len(sel.tables)) + `)
+		  AND ` + columnSchema + ` = ?`
+	args := make([]any, 0, len(sel.tables)+1)
+	args = append(args, i.schema)
+	if params, ok := narrowNames(sel.tables, len(args)); ok {
+		narrowed += `
+		  AND ` + columnTable + ` IN (` + sqlPlaceholders(len(params)) + `)`
+		for _, table := range params {
+			args = append(args, table)
+		}
+	}
+	query := narrowed + `
 		ORDER BY
 			kcu.TABLE_SCHEMA,
 			kcu.TABLE_NAME,
 			kcu.CONSTRAINT_NAME,
 			kcu.ORDINAL_POSITION`
-	args := make([]any, 0, len(sel.tables)+1)
-	args = append(args, i.schema)
-	for _, table := range sel.tables {
-		args = append(args, table)
-	}
 
 	rows, err := i.q.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -578,6 +618,52 @@ func (i *Inspector) populateFallbackIndexes(
 		pairs = append(pairs, pair)
 	}
 
+	// This predicate binds two parameters per pair and is built by hand rather
+	// than through sqlPlaceholders, so it needs the same ceiling by its own
+	// arithmetic. It batches instead of falling back to an unnarrowed query:
+	// the scan below density-checks every row it reads before anything is
+	// selected, so reading the whole server's index metadata would validate
+	// tables this call never named, and one non-dense index anywhere would
+	// fail it.
+	//
+	// Batches partition whole pairs. That is load-bearing rather than tidy —
+	// the density check counts what has accumulated for an (identity, index)
+	// so far, so a pair split across two statements would fail it spuriously.
+	//
+	// Merging is safe here in a way it is not for the IN (...) sites: this
+	// accumulates into a lookup map, and every caller-visible ordering
+	// decision is made afterwards by selectForeignKeys.
+	indexes := make(map[tableIdentity]map[string][]string)
+	for start := 0; start < len(pairs); start += maxStatementParameters / 2 {
+		end := min(start+maxStatementParameters/2, len(pairs))
+		if err := i.readFallbackIndexes(ctx, pairs[start:end], indexes); err != nil {
+			return err
+		}
+	}
+
+	for index := range keys {
+		identity := tableIdentity{
+			schema: keys[index].ChildSchema,
+			table:  keys[index].ChildTable,
+		}
+		byName := indexes[identity]
+		candidates := make([][]string, 0, len(byName))
+		for _, columns := range byName {
+			candidates = append(candidates, columns)
+		}
+		keys[index].Indexed = foreignKeyColumnsIndexed(keys[index].ChildColumns, candidates)
+	}
+
+	return nil
+}
+
+// readFallbackIndexes reads one batch of pairs into indexes, which spans every
+// batch of one call.
+func (i *Inspector) readFallbackIndexes(
+	ctx context.Context,
+	pairs []tableIdentity,
+	indexes map[tableIdentity]map[string][]string,
+) error {
 	clauses := make([]string, 0, len(pairs))
 	args := make([]any, 0, len(pairs)*2)
 	for _, pair := range pairs {
@@ -596,7 +682,6 @@ func (i *Inspector) populateFallbackIndexes(
 	}
 	defer rows.Close()
 
-	indexes := make(map[tableIdentity]map[string][]string)
 	for rows.Next() {
 		var (
 			schema, table, index string
@@ -636,19 +721,6 @@ func (i *Inspector) populateFallbackIndexes(
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate fallback supporting indexes: %w", err)
-	}
-
-	for index := range keys {
-		identity := tableIdentity{
-			schema: keys[index].ChildSchema,
-			table:  keys[index].ChildTable,
-		}
-		byName := indexes[identity]
-		candidates := make([][]string, 0, len(byName))
-		for _, columns := range byName {
-			candidates = append(candidates, columns)
-		}
-		keys[index].Indexed = foreignKeyColumnsIndexed(keys[index].ChildColumns, candidates)
 	}
 
 	return nil
@@ -739,8 +811,4 @@ func foreignKeyMatchesSelector(
 	default:
 		return false
 	}
-}
-
-func sqlPlaceholders(count int) string {
-	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }

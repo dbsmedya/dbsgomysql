@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Requesting a table or view whose name contains a character above `U+FFFF` now
+  reports absence, as `Columns` and `ForeignKeys` document, instead of failing
+  with MySQL error 3988 (`ER_IMPOSSIBLE_STRING_CONVERSION`). Such a name cannot
+  be compared against an `information_schema` name column, so the affected
+  queries drop their name predicate and filter in Go, which is what they already
+  do for every other name. Verified on MySQL 8.0, 8.4, and 9.7.
+- Predicates built from a requested table list emitted one placeholder per
+  requested element rather than per distinct name, so the same table named `n`
+  times cost `n` parameters. They now bind one parameter per distinct name.
+  Requested order and duplicate positions are unchanged: they are reconstructed
+  from the caller's slice, not from the returned rows.
+- Every dynamically built predicate is now bounded, and a request exceeding the
+  bound falls back to an unfiltered query instead of producing a statement the
+  server rejects with error 1390 (`ER_PS_MANY_PARAM`, "Prepared statement
+  contains too many placeholders"). The supporting-index lookup used by the
+  foreign-key fallback binds two parameters per table and is batched rather than
+  unfiltered, because it validates every row it reads.
+
 ## [0.7.3] - 2026-08-08
 
 ### Added
