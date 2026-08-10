@@ -375,7 +375,10 @@ func diffColumnPair(a, b *ColumnSpec) []SpecDiff {
 		emit(ColumnCollationMismatch, a.Collation, b.Collation)
 	}
 	if !sameDefault(a, b) {
-		emit(ColumnDefaultMismatch, defaultText(a), defaultText(b))
+		diffs = append(diffs, SpecDiff{
+			Kind: ColumnDefaultMismatch, Side: defaultSide(a, b), Column: a.Name,
+			A: defaultText(a), B: defaultText(b),
+		})
 	}
 	if a.Ordinal != b.Ordinal {
 		emit(ColumnOrderMismatch, strconv.Itoa(a.Ordinal), strconv.Itoa(b.Ordinal))
@@ -400,21 +403,42 @@ func diffColumnPair(a, b *ColumnSpec) []SpecDiff {
 	return diffs
 }
 
+// defaultSide names the side that has no default at all, honoring DiffSide's
+// contract: SideA and SideB name the spec that lacks something, SideBoth means
+// both supplied a value. A pointer to the empty string is a supplied value —
+// the literal empty-string default — which is exactly the distinction
+// defaultText alone cannot carry, since it renders absence and the empty
+// string identically. sameDefault treats two nil defaults as equal, so by the
+// time this runs, a nil pointer sits opposite a non-nil one or both are
+// non-nil.
+func defaultSide(a, b *ColumnSpec) DiffSide {
+	switch {
+	case a.Default == nil && b.Default != nil:
+		return SideA
+	case a.Default != nil && b.Default == nil:
+		return SideB
+	default:
+		return SideBoth
+	}
+}
+
 // sameDefault compares defaults including whether each is an expression. A
 // literal default of the text "curdate()" and an expression default that the
 // server rewrote to "curdate()" hold the same string and are different
-// defaults; see docs/COMPAT.md entry 14.
+// defaults; see docs/COMPAT.md entry 14. The flag qualifies Default's text,
+// so it counts only when both sides have one: two nil defaults are equal
+// regardless of DefaultIsExpression, because DEFAULT_GENERATED marks columns
+// that have an expression default value, and a column with a nil Default
+// has none for the flag to describe.
 func sameDefault(a, b *ColumnSpec) bool {
-	if a.DefaultIsExpression != b.DefaultIsExpression {
-		return false
-	}
 	switch {
 	case a.Default == nil && b.Default == nil:
 		return true
 	case a.Default == nil || b.Default == nil:
 		return false
 	default:
-		return *a.Default == *b.Default
+		return *a.Default == *b.Default &&
+			a.DefaultIsExpression == b.DefaultIsExpression
 	}
 }
 
