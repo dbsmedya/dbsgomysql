@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `DiffSpecs` no longer loses which side of a `ColumnDefaultMismatch` has no
+  default when the other side's default is the empty string (`DEFAULT ''`).
+  `SpecDiff.Side` now honors its documented contract for defaults: `SideA` or
+  `SideB` names the spec with no default at all, and `SideBoth` means both
+  sides supplied defaults that differ. Previously every
+  `ColumnDefaultMismatch` carried `SideBoth`, so "no default" versus
+  `DEFAULT ''` produced byte-identical payloads in both orientations, in
+  memory and in JSON. Consumers that read `Side` on default mismatches will
+  now see `SideA`/`SideB` where one side is absent. Additionally, two columns
+  that both lack a default now compare equal regardless of
+  `DefaultIsExpression`: the flag qualifies the default's text, so with no
+  text on either side there is nothing for it to distinguish, and no
+  `ColumnDefaultMismatch` is emitted. (#56)
+
 ## [0.8.0] - 2026-08-08
 
 ### Changed

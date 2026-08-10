@@ -1,6 +1,7 @@
 package validations
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -377,6 +378,118 @@ func TestDiffSpecsExpressionDefaultDiffersFromLiteral(t *testing.T) {
 		t.Fatalf("a literal default of %q against an expression default of the same "+
 			"text produced %+v, want one ColumnDefaultMismatch; only DEFAULT_GENERATED "+
 			"distinguishes them", literal, diffs)
+	}
+}
+
+func TestDiffSpecsDefaultAbsenceNamesTheSideThatLacksIt(t *testing.T) {
+	t.Parallel()
+
+	empty := ""
+	value := "x"
+
+	tests := []struct {
+		name     string
+		a, b     *string
+		wantSide DiffSide
+	}{
+		{name: "no default vs empty string", a: nil, b: &empty, wantSide: SideA},
+		{name: "empty string vs no default", a: &empty, b: nil, wantSide: SideB},
+		{name: "no default vs non-empty", a: nil, b: &value, wantSide: SideA},
+		{name: "non-empty vs no default", a: &value, b: nil, wantSide: SideB},
+		{name: "empty string vs non-empty", a: &empty, b: &value, wantSide: SideBoth},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			base := ColumnSpec{
+				Name: "c", Ordinal: 1, Type: "varchar(10)",
+				NormalizedType: "varchar(10)", Nullable: true,
+				Generated: GeneratedNone,
+			}
+			columnA, columnB := base, base
+			columnA.Default = test.a
+			columnB.Default = test.b
+
+			diffs := DiffSpecs(specWithColumns(columnA), specWithColumns(columnB))
+			if len(diffs) != 1 || diffs[0].Kind != ColumnDefaultMismatch {
+				t.Fatalf("DiffSpecs returned %+v, want one ColumnDefaultMismatch",
+					diffs)
+			}
+			if diffs[0].Side != test.wantSide {
+				t.Errorf("Side = %v, want %v; SideA and SideB name the spec "+
+					"that has no default at all", diffs[0].Side, test.wantSide)
+			}
+		})
+	}
+}
+
+func TestDiffSpecsNilDefaultsAreEqualRegardlessOfExpressionFlag(t *testing.T) {
+	t.Parallel()
+
+	base := ColumnSpec{
+		Name: "c", Ordinal: 1, Type: "date", NormalizedType: "date",
+		Nullable: true, Generated: GeneratedNone,
+	}
+	flagged := base
+	flagged.DefaultIsExpression = true
+
+	if diffs := DiffSpecs(specWithColumns(base), specWithColumns(flagged)); len(diffs) != 0 {
+		t.Errorf("DiffSpecs returned %+v, want none; DefaultIsExpression "+
+			"qualifies Default's text, so with no text on either side there "+
+			"is nothing to differ on", diffs)
+	}
+}
+
+func TestSpecDiffJSONPreservesDefaultAbsenceOrientation(t *testing.T) {
+	t.Parallel()
+
+	empty := ""
+	base := ColumnSpec{
+		Name: "c", Ordinal: 1, Type: "varchar(10)",
+		NormalizedType: "varchar(10)", Nullable: true, Generated: GeneratedNone,
+	}
+	withEmpty := base
+	withEmpty.Default = &empty
+
+	// The numeric literals are the point: this pins the wire format, so a
+	// renumbering of the kind or side vocabulary must break it. 11 is
+	// ColumnDefaultMismatch; 1 and 2 are SideA and SideB.
+	tests := []struct {
+		name string
+		a, b ColumnSpec
+		want string
+	}{
+		{
+			name: "absence on a",
+			a:    base, b: withEmpty,
+			want: `{"kind":11,"side":1,"column":"c"}`,
+		},
+		{
+			name: "absence on b",
+			a:    withEmpty, b: base,
+			want: `{"kind":11,"side":2,"column":"c"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			diffs := DiffSpecs(specWithColumns(test.a), specWithColumns(test.b))
+			if len(diffs) != 1 {
+				t.Fatalf("DiffSpecs returned %+v, want one diff", diffs)
+			}
+			got, err := json.Marshal(diffs[0])
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if string(got) != test.want {
+				t.Errorf("JSON = %s, want %s; the two orientations must stay "+
+					"distinguishable after serialization", got, test.want)
+			}
+		})
 	}
 }
 
