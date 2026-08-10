@@ -1,0 +1,36 @@
+services:
+  percona80:
+    image: percona/percona-server:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3480:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  percona84:
+    image: percona/percona-server:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3484:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  percona97:
+    image: percona/percona-server:9.7
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3497:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24

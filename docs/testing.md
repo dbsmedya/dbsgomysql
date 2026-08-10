@@ -23,7 +23,8 @@ pure logic without Docker.
 
 ## Running the matrix locally
 
-Compose definitions for all three tested versions live in `tests/docker/`.
+Compose definitions for the Oracle MySQL and Percona Server for MySQL matrices
+live in `tests/docker/`.
 
 ```sh
 # Bring up the version you want to test against
@@ -35,13 +36,38 @@ export DBSGOMYSQL_TEST_DSN='root:root@tcp(127.0.0.1:3384)/'
 make test-integration
 ```
 
-Each version listens on its own port so several can run at once:
+The Oracle MySQL matrix uses:
 
 | Version | Service | Port |
 |---|---|---|
 | 8.0 | `mysql80` | 3380 |
 | 8.4 | `mysql84` | 3384 |
 | 9.7 | `mysql97` | 3397 |
+
+The Percona matrix uses the official moving `8.0`, `8.4`, and `9.7` image
+tags:
+
+```sh
+docker compose -p dbsgomysql-percona \
+  -f tests/docker/compose_percona.yml up -d
+
+export DBSGOMYSQL_TEST_DSN='root:root@tcp(127.0.0.1:3484)/'
+make test-integration
+make test-e2e
+```
+
+| Version | Service | Port |
+|---|---|---|
+| 8.0 | `percona80` | 3480 |
+| 8.4 | `percona84` | 3484 |
+| 9.7 | `percona97` | 3497 |
+
+Record `SELECT VERSION()` when the matrix runs: moving image tags are not
+evidence of an exact server release. On 2026-08-10 they resolved to Percona
+Server 8.0.46-37, 8.4.10-10, and 9.7.1-1; the complete integration and E2E
+suites passed on all three. Percona is a supported distribution, but this
+local matrix is not currently part of the GitHub Actions gate. See
+[LIMITATIONS.md](LIMITATIONS.md) for the complete distribution-support scope.
 
 Tests skip rather than fail when `DBSGOMYSQL_TEST_DSN` is unset, so an
 accidental `go test -tags=integration ./...` without a server does not produce
@@ -92,7 +118,7 @@ another project's test infrastructure in place.
 | Workflow | Trigger | What runs |
 |---|---|---|
 | `ci.yml` | every push and pull request | `make check` without a database, plus MySQL 8.4 smoke |
-| `integration.yml` | version tags, manual dispatch, or the `run-integration` PR label | the full 8.0 / 8.4 / 9.7 matrix |
+| `integration.yml` | version tags, manual dispatch, or the `run-integration` PR label | the full Oracle MySQL 8.0 / 8.4 / 9.7 matrix |
 
 Smoke runs on every push so every fact and check gets a real-server go/no-go.
 The full three-version integration and E2E matrix remains off the per-push path
