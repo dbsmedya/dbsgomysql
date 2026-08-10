@@ -341,6 +341,20 @@ index, or constraint difference blocks an operation is consumer policy. See
 [COMPAT.md](COMPAT.md) entries 1 and 13–17 for the MySQL behavior that shapes
 capture and comparison.
 
+`ColumnDefaultMismatch` distinguishes a column with no default from one whose
+default is the literal empty string. `SpecDiff.Side` carries the distinction:
+`SideA` or `SideB` names the spec that has no default at all, while `SideBoth`
+means both sides supplied defaults that differ. An empty `A` or `B` on the
+side `Side` names is absence; an empty value on the other side is
+`DEFAULT ''`. The distinction survives JSON, where `a` and `b` are omitted
+when empty: `side` is always present, so absence on A
+(`{"kind":11,"side":1,"column":"c"}`) never collides with absence on B
+(`{"kind":11,"side":2,"column":"c"}`), and no sentinel text is introduced
+that a real default value could collide with. Two columns that both lack a
+default compare equal regardless of `DefaultIsExpression`: the flag qualifies
+the default's text, so with no text on either side there is nothing for it to
+distinguish, and no diff is emitted.
+
 `AllSpecDiffKinds()` returns every nonzero `SpecDiffKind` `DiffSpecs` may emit,
 in declaration order, so a consumer can prove a policy switch over `SpecDiff.Kind`
 is exhaustive at review time instead of discovering a new kind through a

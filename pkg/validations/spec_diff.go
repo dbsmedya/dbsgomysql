@@ -212,7 +212,11 @@ type SpecDiff struct {
 	// Index is the index or constraint the difference concerns, empty
 	// otherwise.
 	Index string `json:"index,omitempty"`
-	// A and B are the two values, empty where a side has none.
+	// A and B are the two values, empty where a side has none. For
+	// ColumnDefaultMismatch, Side disambiguates the empty string: SideA or
+	// SideB names the spec with no default at all, so an empty value on the
+	// named side means absence, and an empty value on the other side is the
+	// literal empty-string default.
 	A string `json:"a,omitempty"`
 	B string `json:"b,omitempty"`
 }
