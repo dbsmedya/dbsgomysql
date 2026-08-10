@@ -10,11 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-11
+
 ### Added
 
 - `make bench` and representative allocation-reporting benchmarks now cover
   identifier utilities, validation checks, foreign-key selection and closure,
   grant lookup, catalog lookup, schema diffs, and metadata predicate builders.
+- A consumer limitations contract now centralizes the supported database
+  distributions and the library's metadata-visibility, consistency, eager
+  memory, large-schema, foreign-key-cost, privilege, identifier, and
+  `TableSpec` boundaries. The README links it directly. Google Cloud SQL for
+  MySQL and Amazon RDS for MySQL document the required `PROCESS` privilege but
+  remain explicitly untested and unsupported until the live suites pass.
+- A repository-owned Percona Server for MySQL Compose matrix now covers the
+  official 8.0, 8.4, and 9.7 image lines. The complete integration and E2E
+  suites passed on Percona Server 8.0.46-37, 8.4.10-10, and 9.7.1-1.
 
 ### Changed
 
@@ -568,7 +579,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/dbsmedya/dbsgomysql/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.5...v0.8.0
 [0.7.5]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.4...v0.7.5
