@@ -18,6 +18,14 @@ import (
 // 1390, on all three.
 const maxStatementParameters = 65535
 
+// maxPointLookupTables bounds the derived table used to turn metadata requests
+// into indexed equality lookups. It is a performance bound, not a server
+// correctness limit: measurements on MySQL 8.0.46, 8.4.9 and 9.7.1 found the
+// derived form comfortably ahead of a schema scan through 2,000 requested
+// objects, while requesting an entire 5,000-table schema reached the crossover.
+// Above this conservative boundary callers retain the schema-scan fallback.
+const maxPointLookupTables = 2048
+
 // narrowNames returns the parameter values for a dynamic IN (...) predicate
 // over names, and reports whether that predicate may be used at all.
 //
@@ -58,6 +66,43 @@ func narrowNames(names []string, fixedArgs int) ([]string, bool) {
 	}
 
 	return params, true
+}
+
+// requestedObjects builds a derived table containing exact schema/table pairs
+// for metadata joins. MySQL can use its data-dictionary indexes for these
+// equality joins; an IN predicate on TABLE_NAME still scaled with total schema
+// size in the supported-version measurements.
+//
+// A false result tells the caller to use its schema-scan query. As with
+// narrowNames, this helper only chooses a query shape: exact Go filtering owns
+// result semantics. Empty input is refused because it cannot form a SELECT.
+func requestedObjects(
+	schema string,
+	tables []string,
+) (query string, args []any, ok bool) {
+	if !representable(schema) || len(tables) == 0 {
+		return "", nil, false
+	}
+
+	params, ok := narrowNames(tables, 0)
+	if !ok || len(params) > maxPointLookupTables {
+		return "", nil, false
+	}
+
+	var statement strings.Builder
+	statement.Grow(len(params)*24 + 64)
+	statement.WriteString("(SELECT ? AS TABLE_SCHEMA, ? AS TABLE_NAME")
+	for range len(params) - 1 {
+		statement.WriteString("\n\tUNION ALL SELECT ?, ?")
+	}
+	statement.WriteString(") AS requested")
+
+	args = make([]any, 0, len(params)*2)
+	for _, table := range params {
+		args = append(args, schema, table)
+	}
+
+	return statement.String(), args, true
 }
 
 // representable reports whether name can be compared against an

@@ -59,14 +59,27 @@ func (i *Inspector) Triggers(
 		// index, not by their text — a plain string sort would invert the pair.
 		// Do not "fix" this into a lexical ordering; see docs/COMPAT.md entry 10,
 		// pinned by TestTriggerTimingEnumOrderIntegration.
-		const query = `
+		query := `
 			SELECT EVENT_OBJECT_TABLE, TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING
-			FROM information_schema.TRIGGERS
-			WHERE EVENT_OBJECT_SCHEMA = ?
-			  AND EVENT_MANIPULATION = ?
-			ORDER BY EVENT_OBJECT_TABLE, ACTION_TIMING, TRIGGER_NAME`
+			FROM information_schema.TRIGGERS AS tr
+			WHERE tr.EVENT_OBJECT_SCHEMA = ?
+			  AND tr.EVENT_MANIPULATION = ?
+			ORDER BY tr.EVENT_OBJECT_TABLE, tr.ACTION_TIMING, tr.TRIGGER_NAME`
+		args := []any{i.schema, serverEvent}
+		if requested, requestedArgs, ok := requestedObjects(i.schema, tables); ok {
+			query = `
+			SELECT tr.EVENT_OBJECT_TABLE, tr.TRIGGER_NAME, tr.EVENT_MANIPULATION, tr.ACTION_TIMING
+			FROM ` + requested + `
+			JOIN information_schema.TRIGGERS AS tr
+			  ON tr.EVENT_OBJECT_SCHEMA = requested.TABLE_SCHEMA
+			 AND tr.EVENT_OBJECT_TABLE = requested.TABLE_NAME
+			WHERE tr.EVENT_MANIPULATION = ?
+			ORDER BY tr.EVENT_OBJECT_TABLE, tr.ACTION_TIMING, tr.TRIGGER_NAME`
+			args = requestedArgs
+			args = append(args, serverEvent)
+		}
 
-		rows, err := i.q.QueryContext(ctx, query, i.schema, serverEvent)
+		rows, err := i.q.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, newObjectError(opTriggers, i.schema, "", fmt.Errorf("query metadata: %w", err))
 		}

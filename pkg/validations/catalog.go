@@ -80,96 +80,106 @@ type CheckInfo struct {
 // without affecting any other caller. Catalog is safe for concurrent use.
 func Catalog() []CheckInfo {
 	return []CheckInfo{
-		{
-			ID:        IDCascadeRules,
-			Rationale: "ON DELETE CASCADE removes rows from tables the caller never named.",
-			Status:    StatusImplemented,
-			Phase:     "1c",
-		},
-		{
-			ID:        IDFKClosure,
-			Rationale: "A foreign key pointing into the table set from outside it can block or cascade a delete the caller did not account for.",
-			Status:    StatusImplemented,
-			Phase:     "1c",
-		},
-		{
-			ID:        IDFKIndexed,
-			Rationale: "MySQL guarantees a leftmost-prefix child index for every foreign key and refuses to drop it, so a finding means the fact did not come from a conforming InnoDB source.",
-			Status:    StatusImplemented,
-			Phase:     "1c",
-		},
-		{
-			ID:        IDFKMetadataVisibility,
-			Rationale: "Without a successful PROCESS-gated InnoDB metadata query, the visibility-filtered fallback cannot prove incoming-key discovery complete.",
-			Status:    StatusImplemented,
-			Phase:     "1c",
-		},
-		{
-			ID:        IDInvisibleColumns,
-			Rationale: "SELECT * omits invisible columns, so their values are dropped from any copy and from any verification hash, and then deleted from the source.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
-		{
-			ID:        IDPKExists,
-			Rationale: "Without a primary key no column provably identifies one row, so any delete by key over-matches.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
-		{
-			ID:        IDPKIntegerType,
-			Rationale: "Checkpointing advances an ordered numeric high-water mark, which a UUID, varchar, decimal, or datetime key cannot be resumed from.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
-		{
-			ID:        IDPKMatchesExpected,
-			Rationale: "A column that is not the primary key is probably not unique, so deleting by it over-matches.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
-		{
-			ID:        IDPKNameCase,
-			Rationale: "information_schema.COLUMNS.COLUMN_NAME collates case-insensitively, so a configured log_id silently finds an actual LOG_ID.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
-		{
-			ID:        IDPKSingleColumn,
-			Rationale: "A composite key cannot be filtered by one column without over-matching rows outside the intended set.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
-		{
-			ID:        IDSchemaPrivileges,
-			Rationale: "Schema-level work fails partway through if the account lacks the privilege, after the operation has already begun.",
-			Status:    StatusImplemented,
-			Phase:     "1c",
-		},
-		{
-			ID:        IDStorageEngine,
-			Rationale: "Non-transactional engines cannot provide the integrity a copy-verify-delete cycle depends on; MyISAM discards the transaction silently.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
-		{
-			ID:        IDTablesExist,
-			Rationale: "A configured table that does not exist fails at execution time, after the operation has already begun.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
-		{
-			ID:        IDTablePrivileges,
-			Rationale: "An operation that discovers a missing table privilege at execution time fails after it has already begun.",
-			Status:    StatusImplemented,
-			Phase:     "1c",
-		},
-		{
-			ID:        IDTriggersPresent,
-			Rationale: "A trigger's logic is invisible to the caller; one that touches other tables produces effects outside the operation's model and outside its verification.",
-			Status:    StatusImplemented,
-			Phase:     "1b",
-		},
+		checkInfo(IDCascadeRules),
+		checkInfo(IDFKClosure),
+		checkInfo(IDFKIndexed),
+		checkInfo(IDFKMetadataVisibility),
+		checkInfo(IDInvisibleColumns),
+		checkInfo(IDPKExists),
+		checkInfo(IDPKIntegerType),
+		checkInfo(IDPKMatchesExpected),
+		checkInfo(IDPKNameCase),
+		checkInfo(IDPKSingleColumn),
+		checkInfo(IDSchemaPrivileges),
+		checkInfo(IDStorageEngine),
+		checkInfo(IDTablesExist),
+		checkInfo(IDTablePrivileges),
+		checkInfo(IDTriggersPresent),
+	}
+}
+
+// checkInfo is the allocation-free source of truth shared by Catalog,
+// LookupCheck, and finding message assembly. Keeping the rationales here avoids
+// rebuilding the whole catalog for every finding.
+func checkInfo(id string) CheckInfo {
+	switch id {
+	case IDCascadeRules:
+		return CheckInfo{
+			ID: id, Rationale: "ON DELETE CASCADE removes rows from tables the caller never named.",
+			Status: StatusImplemented, Phase: "1c",
+		}
+	case IDFKClosure:
+		return CheckInfo{
+			ID: id, Rationale: "A foreign key pointing into the table set from outside it can block or cascade a delete the caller did not account for.",
+			Status: StatusImplemented, Phase: "1c",
+		}
+	case IDFKIndexed:
+		return CheckInfo{
+			ID: id, Rationale: "MySQL guarantees a leftmost-prefix child index for every foreign key and refuses to drop it, so a finding means the fact did not come from a conforming InnoDB source.",
+			Status: StatusImplemented, Phase: "1c",
+		}
+	case IDFKMetadataVisibility:
+		return CheckInfo{
+			ID: id, Rationale: "Without a successful PROCESS-gated InnoDB metadata query, the visibility-filtered fallback cannot prove incoming-key discovery complete.",
+			Status: StatusImplemented, Phase: "1c",
+		}
+	case IDInvisibleColumns:
+		return CheckInfo{
+			ID: id, Rationale: "SELECT * omits invisible columns, so their values are dropped from any copy and from any verification hash, and then deleted from the source.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDPKExists:
+		return CheckInfo{
+			ID: id, Rationale: "Without a primary key no column provably identifies one row, so any delete by key over-matches.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDPKIntegerType:
+		return CheckInfo{
+			ID: id, Rationale: "Checkpointing advances an ordered numeric high-water mark, which a UUID, varchar, decimal, or datetime key cannot be resumed from.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDPKMatchesExpected:
+		return CheckInfo{
+			ID: id, Rationale: "A column that is not the primary key is probably not unique, so deleting by it over-matches.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDPKNameCase:
+		return CheckInfo{
+			ID: id, Rationale: "information_schema.COLUMNS.COLUMN_NAME collates case-insensitively, so a configured log_id silently finds an actual LOG_ID.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDPKSingleColumn:
+		return CheckInfo{
+			ID: id, Rationale: "A composite key cannot be filtered by one column without over-matching rows outside the intended set.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDSchemaPrivileges:
+		return CheckInfo{
+			ID: id, Rationale: "Schema-level work fails partway through if the account lacks the privilege, after the operation has already begun.",
+			Status: StatusImplemented, Phase: "1c",
+		}
+	case IDStorageEngine:
+		return CheckInfo{
+			ID: id, Rationale: "Non-transactional engines cannot provide the integrity a copy-verify-delete cycle depends on; MyISAM discards the transaction silently.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDTablesExist:
+		return CheckInfo{
+			ID: id, Rationale: "A configured table that does not exist fails at execution time, after the operation has already begun.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDTablePrivileges:
+		return CheckInfo{
+			ID: id, Rationale: "An operation that discovers a missing table privilege at execution time fails after it has already begun.",
+			Status: StatusImplemented, Phase: "1c",
+		}
+	case IDTriggersPresent:
+		return CheckInfo{
+			ID: id, Rationale: "A trigger's logic is invisible to the caller; one that touches other tables produces effects outside the operation's model and outside its verification.",
+			Status: StatusImplemented, Phase: "1b",
+		}
+	default:
+		return CheckInfo{}
 	}
 }
 
@@ -178,11 +188,6 @@ func Catalog() []CheckInfo {
 //
 // LookupCheck is safe for concurrent use.
 func LookupCheck(id string) (CheckInfo, bool) {
-	for _, entry := range Catalog() {
-		if entry.ID == id {
-			return entry, true
-		}
-	}
-
-	return CheckInfo{}, false
+	entry := checkInfo(id)
+	return entry, entry.ID != ""
 }

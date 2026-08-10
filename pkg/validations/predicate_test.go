@@ -162,3 +162,99 @@ func TestNarrowNamesAcceptsAnEmptyRequest(t *testing.T) {
 		t.Errorf("narrowNames(nil) = %#v, want empty", got)
 	}
 }
+
+func TestRequestedObjectsDeduplicatesAndPreservesFirstOccurrence(t *testing.T) {
+	t.Parallel()
+
+	query, args, ok := requestedObjects("shop", []string{"beta", "alpha", "beta"})
+	if !ok {
+		t.Fatal("requestedObjects refused representable names below its bound")
+	}
+	wantQuery := `(SELECT ? AS TABLE_SCHEMA, ? AS TABLE_NAME
+	UNION ALL SELECT ?, ?) AS requested`
+	if query != wantQuery {
+		t.Errorf("query = %q, want %q", query, wantQuery)
+	}
+	wantArgs := []any{"shop", "beta", "shop", "alpha"}
+	if !reflect.DeepEqual(args, wantArgs) {
+		t.Errorf("args = %#v, want %#v", args, wantArgs)
+	}
+}
+
+func TestRequestedObjectsUsesItsMeasuredBound(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name  string
+		count int
+		want  bool
+	}{
+		{"at the bound", maxPointLookupTables, true},
+		{"above the bound", maxPointLookupTables + 1, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			query, args, ok := requestedObjects("shop", distinctNames(testCase.count))
+			if ok != testCase.want {
+				t.Fatalf("requestedObjects(%d names) ok = %t, want %t",
+					testCase.count, ok, testCase.want)
+			}
+			if ok {
+				if query == "" {
+					t.Error("accepted call returned an empty query")
+				}
+				if len(args) != testCase.count*2 {
+					t.Errorf("accepted call returned %d args, want %d", len(args), testCase.count*2)
+				}
+			} else if query != "" || args != nil {
+				t.Errorf("refused call returned query %q and %d args", query, len(args))
+			}
+		})
+	}
+}
+
+func TestRequestedObjectsCountsDistinctNamesAtItsBound(t *testing.T) {
+	t.Parallel()
+
+	names := make([]string, maxPointLookupTables*2)
+	for index := range names {
+		names[index] = "only"
+	}
+
+	_, args, ok := requestedObjects("shop", names)
+	if !ok {
+		t.Fatal("requestedObjects refused one distinct name repeated past its bound")
+	}
+	if want := []any{"shop", "only"}; !reflect.DeepEqual(args, want) {
+		t.Errorf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestRequestedObjectsRefusesUnrepresentableInput(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name   string
+		schema string
+		tables []string
+	}{
+		{"schema supplementary character", "shop_\U00010000", []string{"orders"}},
+		{"schema invalid utf-8", "shop_\xff", []string{"orders"}},
+		{"table supplementary character", "shop", []string{"orders_\U00010000"}},
+		{"table invalid utf-8", "shop", []string{"orders_\xff"}},
+		{"empty tables", "shop", nil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			query, args, ok := requestedObjects(testCase.schema, testCase.tables)
+			if ok {
+				t.Fatalf("requestedObjects(%q, %q) succeeded", testCase.schema, testCase.tables)
+			}
+			if query != "" || args != nil {
+				t.Errorf("refused call returned query %q and %#v", query, args)
+			}
+		})
+	}
+}

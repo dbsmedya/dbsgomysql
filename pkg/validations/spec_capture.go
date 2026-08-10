@@ -424,10 +424,19 @@ func (i *Inspector) captureForeignKeyConstraints(
 		JOIN information_schema.KEY_COLUMN_USAGE AS kcu
 		  ON kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
 		 AND kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+		 AND kcu.TABLE_NAME = rc.TABLE_NAME
 		WHERE rc.CONSTRAINT_SCHEMA = ? AND rc.TABLE_NAME = ?
+		  AND kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ?
 		ORDER BY rc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION`
 
-	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
+	rows, err := i.q.QueryContext(
+		ctx,
+		query,
+		ref.schema,
+		ref.table,
+		ref.schema,
+		ref.table,
+	)
 	if err != nil {
 		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
 			fmt.Errorf("query foreign-key metadata: %w", err))

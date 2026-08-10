@@ -53,20 +53,22 @@ func CheckFKClosure(
 		targets[table] = struct{}{}
 	}
 
-	var findings []Finding
-	for _, target := range tables {
-		external := make([]ForeignKey, 0)
-		for index := range result.Keys {
-			key := &result.Keys[index]
-			if key.ParentSchema != schema || key.ParentTable != target {
-				continue
-			}
-			_, childInSet := targets[key.ChildTable]
-			if key.ChildSchema == schema && childInSet {
-				continue
-			}
-			external = append(external, *key)
+	externalByParent := make(map[string][]ForeignKey)
+	for index := range result.Keys {
+		key := &result.Keys[index]
+		if key.ParentSchema != schema {
+			continue
 		}
+		if _, parentInSet := targets[key.ParentTable]; !parentInSet {
+			continue
+		}
+		_, childInSet := targets[key.ChildTable]
+		if key.ChildSchema == schema && childInSet {
+			continue
+		}
+		externalByParent[key.ParentTable] = append(externalByParent[key.ParentTable], *key)
+	}
+	for _, external := range externalByParent {
 		sort.Slice(external, func(left, right int) bool {
 			if external[left].ChildSchema != external[right].ChildSchema {
 				return external[left].ChildSchema < external[right].ChildSchema
@@ -77,6 +79,11 @@ func CheckFKClosure(
 
 			return external[left].ConstraintName < external[right].ConstraintName
 		})
+	}
+
+	var findings []Finding
+	for _, target := range tables {
+		external := externalByParent[target]
 		for index := range external {
 			findings = append(findings, foreignKeyFinding(
 				IDFKClosure,

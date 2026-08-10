@@ -168,3 +168,17 @@ func TestLookupCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestLookupCheckDoesNotAllocate(t *testing.T) {
+	t.Parallel()
+
+	allocations := testing.AllocsPerRun(100, func() {
+		entry, ok := LookupCheck(IDTriggersPresent)
+		if !ok || entry.ID != IDTriggersPresent {
+			t.Fatalf("LookupCheck(%q) = (%#v, %t)", IDTriggersPresent, entry, ok)
+		}
+	})
+	if allocations != 0 {
+		t.Errorf("LookupCheck() allocations = %v, want 0", allocations)
+	}
+}

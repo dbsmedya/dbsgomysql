@@ -47,13 +47,24 @@ func (i *Inspector) Tables(ctx context.Context, tables []string) ([]TableInfo, e
 	// statement preserves Tables' absence result for both cases and repairs the
 	// supplementary one.
 	if representable(i.schema) {
-		const query = `
+		query := `
 			SELECT TABLE_NAME, TABLE_TYPE, ENGINE
-			FROM information_schema.TABLES
-			WHERE TABLE_SCHEMA = ?
-			ORDER BY TABLE_NAME`
+			FROM information_schema.TABLES AS t
+			WHERE t.TABLE_SCHEMA = ?
+			ORDER BY t.TABLE_NAME`
+		args := []any{i.schema}
+		if requested, requestedArgs, ok := requestedObjects(i.schema, tables); ok {
+			query = `
+			SELECT t.TABLE_NAME, t.TABLE_TYPE, t.ENGINE
+			FROM ` + requested + `
+			JOIN information_schema.TABLES AS t
+			  ON t.TABLE_SCHEMA = requested.TABLE_SCHEMA
+			 AND t.TABLE_NAME = requested.TABLE_NAME
+			ORDER BY t.TABLE_NAME`
+			args = requestedArgs
+		}
 
-		rows, err := i.q.QueryContext(ctx, query, i.schema)
+		rows, err := i.q.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("query metadata: %w", err))
 		}

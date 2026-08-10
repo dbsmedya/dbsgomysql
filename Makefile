@@ -6,6 +6,10 @@
 MODULE       := github.com/dbsmedya/dbsgomysql
 GO           ?= go
 COVERPROFILE ?= coverage.out
+BENCH        ?= .
+BENCHTIME    ?= 1s
+BENCHPKG     ?= ./pkg/...
+BENCHFLAGS   ?=
 
 # Tools live in a gitignored repo-local directory, and the gate calls this copy
 # by absolute path rather than whatever `golangci-lint` resolves to on PATH.
@@ -243,6 +247,11 @@ test: ## Unit tests (no database required)
 	else \
 		echo "test: skipped (no Go packages yet)"; \
 	fi
+
+.PHONY: bench
+bench: ## Run package benchmarks with allocation reporting
+	$(GO) test -run='^$$' -bench='$(BENCH)' -benchtime='$(BENCHTIME)' \
+		-benchmem $(BENCHFLAGS) $(BENCHPKG)
 
 .PHONY: cover
 cover: ## Unit tests with coverage report
