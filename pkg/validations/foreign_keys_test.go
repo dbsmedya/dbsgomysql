@@ -437,6 +437,75 @@ func TestForeignKeyChecks(t *testing.T) {
 	}
 }
 
+func TestCheckFKClosurePreservesTargetOrderAndMultiplicity(t *testing.T) {
+	t.Parallel()
+
+	key := func(parent, child, constraint string) ForeignKey {
+		return ForeignKey{
+			ConstraintName: constraint,
+			ChildSchema:    "external",
+			ChildTable:     child,
+			ParentSchema:   "shop",
+			ParentTable:    parent,
+			Indexed:        true,
+		}
+	}
+	result := ForeignKeyResult{
+		Keys: []ForeignKey{
+			key("beta", "z_child", "fk_z"),
+			key("alpha", "a_child", "fk_a"),
+			key("beta", "a_child", "fk_b"),
+		},
+		Visibility: VisibilityComplete,
+	}
+
+	got := CheckFKClosure(result, "shop", []string{"beta", "alpha", "beta"})
+	want := []string{"fk_b", "fk_z", "fk_a", "fk_b", "fk_z"}
+	names := make([]string, 0, len(got))
+	for _, finding := range got {
+		fact, ok := finding.Facts.(ForeignKey)
+		if !ok {
+			t.Fatalf("finding Facts has type %T, want ForeignKey", finding.Facts)
+		}
+		names = append(names, fact.ConstraintName)
+	}
+	if !slices.Equal(names, want) {
+		t.Errorf("constraint order = %v, want %v", names, want)
+	}
+}
+
+func TestSelectForeignKeysPreservesSelectorOrderAndMultiplicity(t *testing.T) {
+	t.Parallel()
+
+	key := func(child, parent, constraint string) ForeignKey {
+		return ForeignKey{
+			ConstraintName: constraint,
+			ChildSchema:    "shop",
+			ChildTable:     child,
+			ChildColumns:   []string{"parent_id"},
+			ParentSchema:   "shop",
+			ParentTable:    parent,
+			ParentColumns:  []string{"id"},
+			Indexed:        true,
+		}
+	}
+	keys := []ForeignKey{
+		key("z_child", "beta", "fk_z"),
+		key("a_child", "alpha", "fk_a"),
+		key("a_child", "beta", "fk_b"),
+	}
+
+	got := selectForeignKeys(keys, "shop", IncomingTo("beta", "alpha", "beta"))
+	want := []string{"fk_b", "fk_z", "fk_a", "fk_b", "fk_z"}
+	names := make([]string, 0, len(got))
+	for _, fact := range got {
+		names = append(names, fact.ConstraintName)
+	}
+	if !slices.Equal(names, want) {
+		t.Errorf("constraint order = %v, want %v", names, want)
+	}
+}
+
 func TestFKMetadataVisibilityCheck(t *testing.T) {
 	t.Parallel()
 

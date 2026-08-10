@@ -375,6 +375,50 @@ func TestTableSpecForeignKeyQueryFailureIsWrapped(t *testing.T) {
 	}
 }
 
+func TestTableSpecForeignKeyQueryPinsBothSidesToTheResolvedTable(t *testing.T) {
+	t.Parallel()
+
+	// These equalities are redundant for results but not for MySQL's plan. On
+	// the supported matrix they keep the data-dictionary join independent of
+	// the number of foreign keys elsewhere in the schema.
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("shop", "items"),
+		testsupport.ScriptedQuery{
+			Match: checkConstraintQueryMarker,
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "CHECK_CLAUSE",
+				"ENFORCED",
+			},
+		},
+		testsupport.ScriptedQuery{
+			Match: "AND kcu.TABLE_NAME = rc.TABLE_NAME",
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME",
+				"UPDATE_RULE", "DELETE_RULE", "COLUMN_NAME",
+				"REFERENCED_TABLE_SCHEMA", "REFERENCED_TABLE_NAME",
+				"REFERENCED_COLUMN_NAME",
+			},
+			Rows: [][]driver.Value{
+				{"shop", "items", "fk_category", "RESTRICT", "CASCADE", "category_id",
+					"shop", "categories", "id"},
+			},
+		},
+		testsupport.ScriptedQuery{
+			Match:   foreignKeyQueryMarker,
+			Columns: []string{"unused"},
+		},
+	)
+
+	spec, err := NewInspector(db, "shop").TableSpec(
+		t.Context(), Ref("shop", "items"), WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+	if len(spec.Constraints) != 1 || spec.Constraints[0].Name != "fk_category" {
+		t.Errorf("constraints = %#v, want the row from the fully pinned query", spec.Constraints)
+	}
+}
+
 func TestTableSpecDiscardsConstraintsOfACaseVariantTable(t *testing.T) {
 	t.Parallel()
 

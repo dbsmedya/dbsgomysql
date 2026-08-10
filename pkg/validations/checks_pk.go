@@ -61,7 +61,7 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 	// statement preserves PrimaryKeys' absence result for both cases and repairs
 	// the supplementary one.
 	if representable(i.schema) {
-		const query = `
+		query := `
 			SELECT
 				t.TABLE_NAME,
 				s.COLUMN_NAME,
@@ -78,8 +78,31 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 			 AND c.COLUMN_NAME = s.COLUMN_NAME
 			WHERE t.TABLE_SCHEMA = ?
 			ORDER BY t.TABLE_NAME, s.SEQ_IN_INDEX`
+		args := []any{i.schema}
+		if requested, requestedArgs, ok := requestedObjects(i.schema, tables); ok {
+			query = `
+			SELECT
+				t.TABLE_NAME,
+				s.COLUMN_NAME,
+				c.DATA_TYPE,
+				c.COLUMN_TYPE
+			FROM ` + requested + `
+			JOIN information_schema.TABLES AS t
+			  ON t.TABLE_SCHEMA = requested.TABLE_SCHEMA
+			 AND t.TABLE_NAME = requested.TABLE_NAME
+			LEFT JOIN information_schema.STATISTICS AS s
+			  ON s.TABLE_SCHEMA = t.TABLE_SCHEMA
+			 AND s.TABLE_NAME = t.TABLE_NAME
+			 AND s.INDEX_NAME = 'PRIMARY'
+			LEFT JOIN information_schema.COLUMNS AS c
+			  ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
+			 AND c.TABLE_NAME = s.TABLE_NAME
+			 AND c.COLUMN_NAME = s.COLUMN_NAME
+			ORDER BY t.TABLE_NAME, s.SEQ_IN_INDEX`
+			args = requestedArgs
+		}
 
-		rows, err := i.q.QueryContext(ctx, query, i.schema)
+		rows, err := i.q.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, newObjectError(opPrimaryKeys, i.schema, "", fmt.Errorf("query metadata: %w", err))
 		}

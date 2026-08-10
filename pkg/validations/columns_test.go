@@ -8,7 +8,7 @@ import (
 	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
 )
 
-// columnsScript answers the narrowed and unnarrowed forms of the Columns query
+// columnsScript answers the point-lookup and schema-scan forms of the Columns query
 // with different column names, so a result says which statement was issued.
 //
 // The scripted driver matches on a substring of the statement and takes the
@@ -18,7 +18,7 @@ import (
 // a substring of "information_schema". Key it on the table instead, which only
 // the statement that dropped its IN clause reaches without matching an earlier
 // rule.
-func columnsScript(narrowedPlaceholders string) []testsupport.ScriptedQuery {
+func columnsScript(exactTwoObjects bool) []testsupport.ScriptedQuery {
 	row := func(table, column string) []driver.Value {
 		return []driver.Value{table, column, int64(1), "int", "int", ""}
 	}
@@ -27,9 +27,10 @@ func columnsScript(narrowedPlaceholders string) []testsupport.ScriptedQuery {
 	}
 
 	script := make([]testsupport.ScriptedQuery, 0, 3)
-	if narrowedPlaceholders != "" {
+	if exactTwoObjects {
 		script = append(script, testsupport.ScriptedQuery{
-			Match:   "TABLE_NAME IN (" + narrowedPlaceholders + ")",
+			Match: `(SELECT ? AS TABLE_SCHEMA, ? AS TABLE_NAME
+	UNION ALL SELECT ?, ?) AS requested`,
 			Columns: columns,
 			Rows: [][]driver.Value{
 				row("narrow_alpha", "exact_count_col"),
@@ -41,7 +42,7 @@ func columnsScript(narrowedPlaceholders string) []testsupport.ScriptedQuery {
 
 	return append(script,
 		testsupport.ScriptedQuery{
-			Match:   "TABLE_NAME IN (",
+			Match:   ") AS requested",
 			Columns: columns,
 			Rows: [][]driver.Value{
 				row("narrow_alpha", "narrowed_col"),
@@ -89,10 +90,9 @@ func TestColumnsDeduplicatesPredicateAndKeepsRequestedMultiplicity(t *testing.T)
 	t.Parallel()
 
 	// Two distinct names in three requested positions must emit exactly two
-	// placeholders — IN (?,?) is not a substring of IN (?,?,?), so this rule
-	// fires only on the deduplicated statement — while the result still
+	// requested-object rows, while the result still
 	// repeats narrow_alpha at both positions it was asked for.
-	got, err := columnsInspector(t, columnsScript("?,?")...).Columns(
+	got, err := columnsInspector(t, columnsScript(true)...).Columns(
 		t.Context(),
 		[]string{"narrow_alpha", "narrow_beta", "narrow_alpha"},
 	)
@@ -100,7 +100,7 @@ func TestColumnsDeduplicatesPredicateAndKeepsRequestedMultiplicity(t *testing.T)
 		t.Fatalf("Columns: %v", err)
 	}
 	if name := firstColumnName(t, got); name != "exact_count_col" {
-		t.Errorf("answered by %q, want the two-placeholder statement", name)
+		t.Errorf("answered by %q, want the two-object statement", name)
 	}
 
 	tables := make([]string, 0, len(got))
@@ -126,7 +126,7 @@ func TestColumnsFallsBackWhenAnyRequestedNameIsUnrepresentable(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := columnsInspector(t, columnsScript("")...).Columns(
+			got, err := columnsInspector(t, columnsScript(false)...).Columns(
 				t.Context(),
 				[]string{"narrow_alpha", testCase.bad},
 			)
@@ -143,25 +143,24 @@ func TestColumnsFallsBackWhenAnyRequestedNameIsUnrepresentable(t *testing.T) {
 	}
 }
 
-func TestColumnsBoundAccountsForItsSchemaParameter(t *testing.T) {
+func TestColumnsUsesTheMeasuredPointLookupBound(t *testing.T) {
 	t.Parallel()
 
-	// Columns binds TABLE_SCHEMA = ? as well, so its budget is one below the
-	// ceiling. A site declaring the wrong fixed-argument count flips narrowing
-	// and fallback at exactly this boundary, and nothing in the results shows
-	// it — everywhere except here the two agree.
+	// The point-lookup limit is deliberately below MySQL's parameter ceiling:
+	// it marks the measured crossover with a schema scan. The exact boundary is
+	// invisible in results, so distinguish the statements here.
 	for _, testCase := range []struct {
 		name   string
 		count  int
 		answer string
 	}{
-		{"at the bound", maxStatementParameters - 1, "narrowed_col"},
-		{"above the bound", maxStatementParameters, "fallback_col"},
+		{"at the bound", maxPointLookupTables, "narrowed_col"},
+		{"above the bound", maxPointLookupTables + 1, "fallback_col"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := columnsInspector(t, columnsScript("")...).Columns(
+			got, err := columnsInspector(t, columnsScript(false)...).Columns(
 				t.Context(),
 				distinctNames(testCase.count),
 			)

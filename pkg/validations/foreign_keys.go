@@ -827,55 +827,63 @@ func selectForeignKeys(keys []ForeignKey, schema string, sel FKSelector) []Forei
 		tableSet[table] = struct{}{}
 	}
 
-	var selected []ForeignKey
-	for _, requested := range sel.tables {
-		matches := make([]ForeignKey, 0)
-		for index := range keys {
-			key := &keys[index]
-			if !foreignKeyMatchesSelector(key, schema, requested, tableSet, sel.kind) {
-				continue
-			}
-			match := *key
-			match.ChildColumns = slices.Clone(key.ChildColumns)
-			match.ParentColumns = slices.Clone(key.ParentColumns)
-			matches = append(matches, match)
+	byRequested := make(map[string][]int, len(tableSet))
+	for index := range keys {
+		requested, ok := foreignKeySelectorTable(&keys[index], schema, tableSet, sel.kind)
+		if !ok {
+			continue
 		}
-		sort.Slice(matches, func(left, right int) bool {
-			if matches[left].ChildSchema != matches[right].ChildSchema {
-				return matches[left].ChildSchema < matches[right].ChildSchema
+		byRequested[requested] = append(byRequested[requested], index)
+	}
+	for _, indexes := range byRequested {
+		sort.Slice(indexes, func(left, right int) bool {
+			leftKey := &keys[indexes[left]]
+			rightKey := &keys[indexes[right]]
+			if leftKey.ChildSchema != rightKey.ChildSchema {
+				return leftKey.ChildSchema < rightKey.ChildSchema
 			}
-			if matches[left].ChildTable != matches[right].ChildTable {
-				return matches[left].ChildTable < matches[right].ChildTable
+			if leftKey.ChildTable != rightKey.ChildTable {
+				return leftKey.ChildTable < rightKey.ChildTable
 			}
 
-			return matches[left].ConstraintName < matches[right].ConstraintName
+			return leftKey.ConstraintName < rightKey.ConstraintName
 		})
-		selected = append(selected, matches...)
+	}
+
+	var selected []ForeignKey
+	for _, requested := range sel.tables {
+		for _, index := range byRequested[requested] {
+			match := keys[index]
+			match.ChildColumns = slices.Clone(match.ChildColumns)
+			match.ParentColumns = slices.Clone(match.ParentColumns)
+			selected = append(selected, match)
+		}
 	}
 
 	return selected
 }
 
-func foreignKeyMatchesSelector(
+func foreignKeySelectorTable(
 	key *ForeignKey,
 	schema string,
-	requested string,
 	tableSet map[string]struct{},
 	kind fkSelectorKind,
-) bool {
+) (string, bool) {
 	switch kind {
 	case fkSelectorIncoming:
-		return key.ParentSchema == schema && key.ParentTable == requested
+		_, requested := tableSet[key.ParentTable]
+		return key.ParentTable, key.ParentSchema == schema && requested
 	case fkSelectorOutgoing:
-		return key.ChildSchema == schema && key.ChildTable == requested
+		_, requested := tableSet[key.ChildTable]
+		return key.ChildTable, key.ChildSchema == schema && requested
 	case fkSelectorWithin:
-		if key.ChildSchema != schema || key.ChildTable != requested || key.ParentSchema != schema {
-			return false
+		if key.ChildSchema != schema || key.ParentSchema != schema {
+			return "", false
 		}
-		_, ok := tableSet[key.ParentTable]
-
-		return ok
+		_, childRequested := tableSet[key.ChildTable]
+		_, parentRequested := tableSet[key.ParentTable]
+		return key.ChildTable, childRequested && parentRequested
 	default:
-		return false
+		return "", false
 	}
 }

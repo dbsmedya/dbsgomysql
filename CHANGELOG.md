@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `make bench` and representative allocation-reporting benchmarks now cover
+  identifier utilities, validation checks, foreign-key selection and closure,
+  grant lookup, catalog lookup, schema diffs, and metadata predicate builders.
+
+### Changed
+
+- `Tables`, `Columns`, `InvisibleColumns`, `PrimaryKeys`, and `Triggers` now
+  join up to 2,048 distinct requested schema/table pairs to MySQL's data
+  dictionary instead of scanning the requested schema. Requested order,
+  duplicates, absence behavior, and the oversized/unrepresentable-name
+  fallbacks are unchanged. With three requested objects, handler reads stayed
+  constant as the fixture grew from 500 to 5,000 tables on MySQL 8.0, 8.4, and
+  9.7; the previous queries grew with the schema. This resolves #19 and also
+  covers `Columns`, which had the same unreported scaling shape.
+- `TableSpec` foreign-key capture now pins both sides of its metadata join to
+  the resolved table. On 5,000-table foreign-key-heavy fixtures this reduced
+  median query time by 6.5x to 23x across MySQL 8.0, 8.4, and 9.7 without
+  changing captured constraints.
+- Foreign-key closure checks and selector reconstruction now group facts once
+  instead of repeatedly scanning the complete key set for every requested
+  table. Their 1,000-table benchmark cases improved by approximately 15x and
+  21x respectively while retaining requested order, duplicate positions, and
+  slice ownership.
+- Finding construction now looks up check metadata without rebuilding the
+  public catalog. `LookupCheck` performs no allocations, cutting representative
+  10,000-finding workloads by up to roughly half in time and by 49% to 60% in
+  allocated bytes; `Catalog` still returns a fresh caller-owned slice.
+
 ## [0.8.1] - 2026-08-10
 
 ### Fixed

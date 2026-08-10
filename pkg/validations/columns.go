@@ -68,24 +68,22 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 	// statement preserves Columns' absence result for both cases and repairs the
 	// supplementary one.
 	if representable(i.schema) {
-		// The predicate narrows; it never decides. Every returned name is
-		// compared to the requested one in Go below, so dropping the predicate
-		// changes how much the server reads and nothing else. See narrowNames.
-		narrowed := `
+		query := `
 			SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE, EXTRA
-			FROM information_schema.COLUMNS
-			WHERE TABLE_SCHEMA = ?`
-		args := make([]any, 0, len(tables)+1)
-		args = append(args, i.schema)
-		if params, ok := narrowNames(tables, len(args)); ok {
-			narrowed += `
-			  AND TABLE_NAME IN (` + sqlPlaceholders(len(params)) + `)`
-			for _, table := range params {
-				args = append(args, table)
-			}
+			FROM information_schema.COLUMNS AS c
+			WHERE c.TABLE_SCHEMA = ?
+			ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION`
+		args := []any{i.schema}
+		if requested, requestedArgs, ok := requestedObjects(i.schema, tables); ok {
+			query = `
+			SELECT c.TABLE_NAME, c.COLUMN_NAME, c.ORDINAL_POSITION, c.DATA_TYPE, c.COLUMN_TYPE, c.EXTRA
+			FROM ` + requested + `
+			JOIN information_schema.COLUMNS AS c
+			  ON c.TABLE_SCHEMA = requested.TABLE_SCHEMA
+			 AND c.TABLE_NAME = requested.TABLE_NAME
+			ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION`
+			args = requestedArgs
 		}
-		query := narrowed + `
-			ORDER BY TABLE_NAME, ORDINAL_POSITION`
 
 		rows, err := i.q.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -195,14 +193,26 @@ func (i *Inspector) InvisibleColumns(
 	// statement preserves InvisibleColumns' absence result for both cases and
 	// repairs the supplementary one.
 	if representable(i.schema) {
-		const query = `
+		query := `
 			SELECT TABLE_NAME, COLUMN_NAME
-			FROM information_schema.COLUMNS
-			WHERE TABLE_SCHEMA = ?
-			  AND EXTRA LIKE '%INVISIBLE%'
-			ORDER BY TABLE_NAME, ORDINAL_POSITION`
+			FROM information_schema.COLUMNS AS c
+			WHERE c.TABLE_SCHEMA = ?
+			  AND c.EXTRA LIKE '%INVISIBLE%'
+			ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION`
+		args := []any{i.schema}
+		if requested, requestedArgs, ok := requestedObjects(i.schema, tables); ok {
+			query = `
+			SELECT c.TABLE_NAME, c.COLUMN_NAME
+			FROM ` + requested + `
+			JOIN information_schema.COLUMNS AS c
+			  ON c.TABLE_SCHEMA = requested.TABLE_SCHEMA
+			 AND c.TABLE_NAME = requested.TABLE_NAME
+			WHERE c.EXTRA LIKE '%INVISIBLE%'
+			ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION`
+			args = requestedArgs
+		}
 
-		rows, err := i.q.QueryContext(ctx, query, i.schema)
+		rows, err := i.q.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, newObjectError(
 				opInvisibleColumns,
