@@ -192,6 +192,9 @@ type IndexPart struct {
 // a key part: a prefix length, a direction, and a functional expression are all
 // schema properties that change which queries the index can serve.
 //
+// Each returned value owns its Parts slice; see the package documentation on
+// ownership of returned slices.
+//
 // IndexSpec is safe for concurrent reads. Callers must synchronize mutation of
 // Parts.
 type IndexSpec struct {
@@ -211,6 +214,9 @@ type IndexSpec struct {
 
 // ConstraintSpec describes one CHECK or FOREIGN KEY constraint. Which fields
 // are populated depends on Kind.
+//
+// Each returned value owns its Columns and RefColumns slices; see the package
+// documentation on ownership of returned slices.
 //
 // ConstraintSpec is safe for concurrent reads. Callers must synchronize
 // mutation of Columns or RefColumns.
@@ -249,6 +255,10 @@ type ConstraintSpec struct {
 // .AUTO_INCREMENT. That is the next counter value, not a schema property: it
 // advances on every insert and InnoDB reports it approximately, so two
 // otherwise identical tables always differ on it.
+//
+// Each returned value owns its Columns, Indexes, and Constraints slices and
+// every slice nested within them; see the package documentation on ownership
+// of returned slices.
 //
 // TableSpec is safe for concurrent reads. Callers must synchronize mutation of
 // its slices.

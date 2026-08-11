@@ -10,8 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A focused catalog contract test now pins every field of a representative
+  `CheckInfo`, supplementing the existing `Catalog` and `LookupCheck` coverage
+  before the v1.0.0 API freeze.
+
 ### Changed
 
+- `Grants` GoDoc now states that the method-based fact deliberately has no
+  general JSON representation and that generic JSON encoding produces an empty
+  object. Slice-bearing `TableSpec`, `IndexSpec`, and `ConstraintSpec` GoDoc now
+  links explicitly to the package ownership contract.
+- Make targets now distinguish a genuinely empty package set from a failed
+  `go list`. Package and dependency discovery errors fail the target instead of
+  being reported as successful skips.
 - `docs/COMPAT.md` entry 6 (replication statement and column renames) is now
   an explicitly declared known limitation whose handling `pkg/replication`
   delivers in v1.1.0, and the status legend defines 🔜 as a declared

@@ -121,6 +121,24 @@ func TestCatalogReturnsIndependentSlices(t *testing.T) {
 	}
 }
 
+func TestCheckInfoMetadataContract(t *testing.T) {
+	t.Parallel()
+
+	want := CheckInfo{
+		ID:        IDPKSingleColumn,
+		Rationale: "A composite key cannot be filtered by one column without over-matching rows outside the intended set.",
+		Status:    StatusImplemented,
+		Phase:     "1b",
+	}
+	got, ok := LookupCheck(IDPKSingleColumn)
+	if !ok {
+		t.Fatalf("LookupCheck(%q) reported no such check", IDPKSingleColumn)
+	}
+	if got != want {
+		t.Errorf("LookupCheck(%q) = %#v, want %#v", IDPKSingleColumn, got, want)
+	}
+}
+
 // TestCheckStatusString asserts both declared values render as their word,
 // and that the zero value — which CheckStatus does not declare a member for —
 // renders as CheckStatus(0) rather than as unknownEnum. The second assertion

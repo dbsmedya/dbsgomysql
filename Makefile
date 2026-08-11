@@ -74,12 +74,23 @@ endif
 export GOTOOLCHAIN := go$(GO_VERSION)
 
 # `go vet`, `go test`, and `golangci-lint` all exit non-zero on a module that
-# contains no packages. Until the first package lands, targets guarded by these
-# skip cleanly rather than failing the gate for the wrong reason. The guards
-# disappear on their own the moment the packages exist — they are never a way to
-# make a real failure quiet.
-HAVE_PKGS     := $(GO) list ./... 2>/dev/null | grep -q .
-HAVE_E2E_PKGS := $(GO) list -tags=e2e ./tests/e2e/... 2>/dev/null | grep -q .
+# contains no packages. Until the first package lands, guarded targets skip
+# cleanly. Package discovery is part of the target recipe rather than a
+# parse-time pipe: this preserves `go list`'s exit status, so a real discovery
+# failure can never be mislabeled as a successful "no packages" skip.
+define RUN_IF_PACKAGES
+	@pkgs="$$($(GO) list $(1))"; \
+	status=$$?; \
+	if [ "$$status" -ne 0 ]; then \
+		echo "$(2): FAIL — package discovery failed"; \
+		exit "$$status"; \
+	fi; \
+	if [ -n "$$pkgs" ]; then \
+		$(3); \
+	else \
+		echo "$(2): skipped ($(4))"; \
+	fi
+endef
 
 .DEFAULT_GOAL := help
 
@@ -189,11 +200,7 @@ fmt-check: ## Fail if any file is unformatted
 
 .PHONY: vet
 vet: ## Run go vet
-	@if $(HAVE_PKGS); then \
-		$(GO) vet ./...; \
-	else \
-		echo "vet: skipped (no Go packages yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,./...,vet,$(GO) vet ./...,no Go packages yet)
 
 # Neither `go vet ./...` nor `golangci-lint run` compiles files behind a build
 # tag, so an `integration`- or `e2e`-tagged test can stop compiling without the
@@ -205,32 +212,18 @@ vet: ## Run go vet
 # `&&`, not `;`: a `;` would let the second vet's exit status mask the first's.
 .PHONY: vet-tags
 vet-tags: ## Type-check the build-tagged test layers (integration, e2e)
-	@if $(HAVE_PKGS); then \
-		$(GO) vet -tags=integration ./... && \
-		$(GO) vet -tags=e2e ./...; \
-	else \
-		echo "vet-tags: skipped (no Go packages yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,./...,vet-tags,$(GO) vet -tags=integration ./... && $(GO) vet -tags=e2e ./...,no Go packages yet)
 
 .PHONY: lint
 lint: ## Run golangci-lint
-	@if $(HAVE_PKGS); then \
-		$(GOLANGCI) run; \
-	else \
-		echo "lint: skipped (no Go packages yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,./...,lint,$(GOLANGCI) run,no Go packages yet)
 
 # Like vet, golangci-lint ignores build-tagged files unless the tags are named.
 # Keep the passes separate so helpers that may eventually exist in both layers
 # do not become duplicate declarations.
 .PHONY: lint-tags
 lint-tags: ## Lint the build-tagged test layers (integration, e2e)
-	@if $(HAVE_PKGS); then \
-		$(GOLANGCI) run --build-tags=integration && \
-		$(GOLANGCI) run --build-tags=e2e; \
-	else \
-		echo "lint-tags: skipped (no Go packages yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,./...,lint-tags,$(GOLANGCI) run --build-tags=integration && $(GOLANGCI) run --build-tags=e2e,no Go packages yet)
 
 # ---------------------------------------------------------------------------
 # Build & test
@@ -242,11 +235,7 @@ build: ## Compile all packages
 
 .PHONY: test
 test: ## Unit tests (no database required)
-	@if $(HAVE_PKGS); then \
-		$(GO) test -race -shuffle=on ./...; \
-	else \
-		echo "test: skipped (no Go packages yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,./...,test,$(GO) test -race -shuffle=on ./...,no Go packages yet)
 
 .PHONY: bench
 bench: ## Run package benchmarks with allocation reporting
@@ -255,37 +244,19 @@ bench: ## Run package benchmarks with allocation reporting
 
 .PHONY: cover
 cover: ## Unit tests with coverage report
-	@if $(HAVE_PKGS); then \
-		$(GO) test -race -coverprofile=$(COVERPROFILE) -covermode=atomic ./... && \
-		$(GO) tool cover -func=$(COVERPROFILE) | tail -1 && \
-		echo "HTML report: $(GO) tool cover -html=$(COVERPROFILE)"; \
-	else \
-		echo "cover: skipped (no Go packages yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,./...,cover,$(GO) test -race -coverprofile=$(COVERPROFILE) -covermode=atomic ./... && $(GO) tool cover -func=$(COVERPROFILE) | tail -1 && echo "HTML report: $(GO) tool cover -html=$(COVERPROFILE)",no Go packages yet)
 
 .PHONY: test-smoke
 test-smoke: ## Smoke tests against a single MySQL 8.4 container
-	@if $(HAVE_PKGS); then \
-		$(GO) test -tags=integration -run 'Smoke' ./...; \
-	else \
-		echo "test-smoke: skipped (no Go packages yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,./...,test-smoke,$(GO) test -tags=integration -run 'Smoke' ./...,no Go packages yet)
 
 .PHONY: test-integration
 test-integration: ## Integration tests (requires MySQL; see docs/testing.md)
-	@if $(HAVE_PKGS); then \
-		$(GO) test -tags=integration ./...; \
-	else \
-		echo "test-integration: skipped (no Go packages yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,./...,test-integration,$(GO) test -tags=integration ./...,no Go packages yet)
 
 .PHONY: test-e2e
 test-e2e: ## End-to-end scenarios (requires MySQL; see docs/testing.md)
-	@if $(HAVE_E2E_PKGS); then \
-		$(GO) test -tags=e2e ./tests/e2e/...; \
-	else \
-		echo "test-e2e: skipped (no packages under ./tests/e2e yet)"; \
-	fi
+	$(call RUN_IF_PACKAGES,-tags=e2e ./tests/e2e/...,test-e2e,$(GO) test -tags=e2e ./tests/e2e/...,no packages under ./tests/e2e yet)
 
 # ---------------------------------------------------------------------------
 # Dependency discipline (AGENTS.md)
@@ -293,12 +264,23 @@ test-e2e: ## End-to-end scenarios (requires MySQL; see docs/testing.md)
 
 .PHONY: deps-check
 deps-check: ## Assert public packages depend on stdlib only
-	@pkgs="$$($(GO) list ./pkg/... 2>/dev/null)"; \
+	@pkgs="$$($(GO) list ./pkg/...)"; \
+	status=$$?; \
+	if [ "$$status" -ne 0 ]; then \
+		echo "deps-check: FAIL — package discovery failed"; \
+		exit "$$status"; \
+	fi; \
 	if [ -z "$$pkgs" ]; then \
 		echo "deps-check: ok (no packages under ./pkg yet)"; \
 		exit 0; \
 	fi; \
-	ext="$$($(GO) list -deps ./pkg/... 2>/dev/null \
+	deps="$$($(GO) list -deps ./pkg/...)"; \
+	status=$$?; \
+	if [ "$$status" -ne 0 ]; then \
+		echo "deps-check: FAIL — dependency discovery failed"; \
+		exit "$$status"; \
+	fi; \
+	ext="$$(printf '%s\n' "$$deps" \
 		| awk -F/ '$$1 ~ /\./' \
 		| grep -v '^$(MODULE)' || true)"; \
 	if [ -n "$$ext" ]; then \
