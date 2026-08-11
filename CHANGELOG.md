@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-11
+
 ### Added
 
 - A focused catalog contract test now pins every field of a representative
@@ -18,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- v1.0.0 declares the existing `pkg/sqlutil` and `pkg/validations` surfaces to
+  be the stable v1 API. Exported Go APIs, check identifiers, and documented JSON
+  contracts now follow Semantic Versioning; breaking changes wait for v2. This
+  is a stability promotion with no runtime library behavior change from v0.9.0.
+  The v1 support contract retains Go 1.24+, Oracle MySQL 8.0.40+ with
+  transitional EOL 8.0 support, and the tested 8.4 and 9.7 lines.
 - `Grants` GoDoc now states that the method-based fact deliberately has no
   general JSON representation and that generic JSON encoding produces an empty
   object. Slice-bearing `TableSpec`, `IndexSpec`, and `ConstraintSpec` GoDoc now
@@ -609,7 +617,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/dbsmedya/dbsgomysql/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.7.5...v0.8.0

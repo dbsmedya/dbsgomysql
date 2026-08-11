@@ -1,19 +1,20 @@
 # dbsgomysql
 
-> ## ⚠️ Under heavy development — use at your own risk
+> ## Stable v1 API
 >
-> This library is pre-1.0. **Anything may break before v1.0.0**: exported types,
-> function signatures, check identifiers, and finding payloads are all subject to
-> change without a deprecation period. Pin an exact tag and read the changelog
-> before every bump.
+> v1.0.0 is the compatibility baseline. Within v1.x, exported Go APIs, stable
+> check identifiers, and documented JSON contracts follow Semantic Versioning;
+> breaking changes wait for v2. Additive APIs and compatible fixes may
+> ship in later v1 releases, so read the changelog when upgrading.
 >
-> `v1.0.0` is the stability announcement. Until then, treat this repository as a
-> preview.
+> v1 requires Go 1.24 or newer. Oracle MySQL support begins at 8.0.40; support
+> for the EOL 8.0 line is transitional. The complete server and distribution
+> contract is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 **A reference library of MySQL schema facts and validations for Go.**
 
-Module: `github.com/dbsmedya/dbsgomysql` · Go 1.24+ · Status: **phase 1
-implementation** · Version: see [CHANGELOG.md](CHANGELOG.md)
+Module: `github.com/dbsmedya/dbsgomysql` · Go 1.24+ · Status: **stable v1 API**
+· Version: see [CHANGELOG.md](CHANGELOG.md)
 
 `dbsgomysql` gives Go projects a single, well-tested answer to questions like
 *"does this table have a single, composite, or no primary key?"*, *"which
@@ -53,12 +54,13 @@ go get github.com/dbsmedya/dbsgomysql
 Available now: `pkg/sqlutil` for MySQL identifier validation and quoting, plus
 the `pkg/validations` metadata, column, foreign-key, and privilege facts and all
 15 pure catalog checks, including table specification and diff facts.
-`pkg/replication` follows later.
+`pkg/replication` follows in v1.1.0.
 
 Which release added what is recorded in [CHANGELOG.md](CHANGELOG.md), the sole
 owner of version history.
 
-Planned consumers: [goarchive](https://github.com/dbsmedya/goarchive), gocdc.
+Known consumer: [goarchive](https://github.com/dbsmedya/goarchive). Planned
+consumer: gocdc.
 
 ## Documentation
 

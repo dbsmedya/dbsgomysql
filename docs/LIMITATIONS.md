@@ -1,7 +1,7 @@
 # Limitations
 
-> **Applies to:** v0.9.0. These boundaries are intended to remain the v1.0.0
-> consumer contract unless changed before that release.
+> **Applies to:** v1.0.0. These boundaries are the v1 consumer contract unless
+> a later release documents an additive expansion or correction.
 
 `dbsgomysql` is a reference library of MySQL schema facts and validations. It
 does not attempt to be a complete database catalog, authorization engine, DDL
