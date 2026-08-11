@@ -183,6 +183,11 @@ type PrivilegeFact struct {
 // roles active on one session, where this fact reports relational rows about
 // the account. See docs/COMPAT.md entry 4.
 //
+// Grants deliberately has no general JSON representation. Its state is
+// private, so encoding it with encoding/json produces an empty object.
+// Consumers should query the privilege answers they need and serialize those
+// derived values instead.
+//
 // Grants is safe for concurrent use.
 type Grants struct {
 	populated      bool
