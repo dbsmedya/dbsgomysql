@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `docs/COMPAT.md` entry 6 (replication statement and column renames) is now
+  an explicitly declared known limitation whose handling `pkg/replication`
+  delivers in v1.1.0, and the status legend defines 🔜 as a declared
+  limitation naming its delivery release. The introduction now carries the
+  no-divergence claim with the exact verified server versions. Entries 3
+  and 10 record completed 8.0/8.4/9.7 manual searches, and stale `AGENTS.md`
+  section references were corrected.
+
+### Removed
+
+- `docs/mysql-version-specific-compatibility.md`, the version divergence
+  register. It recorded no divergence for the supported baseline; that claim
+  and the exact verified server versions now live in `docs/COMPAT.md`'s
+  introduction, which `docs/LIMITATIONS.md` and the README point to instead.
+
 ## [0.9.0] - 2026-08-11
 
 ### Added

@@ -11,15 +11,19 @@ that surprise callers of `information_schema`. Each entry states the affected
 versions, the observable symptom, and how the library handles it.
 
 Most entries here describe behavior MySQL exhibits *identically* on every
-supported version. Where a behavior genuinely differs between versions, it is
-also listed in the
-[version divergence register](mysql-version-specific-compatibility.md), which
-records nothing else and is currently empty.
+supported version — no behavior the current library exercises differs between
+them. That is a measured claim, not an assumption: the complete integration
+and E2E matrix, run as described in [testing.md](testing.md), last verified it
+on MySQL 8.0.46, 8.4.11, and 9.7.2 (2026-08-10, workflow run 31437959134),
+and each entry below names the test that pins it. Where a behavior genuinely
+differs between supported versions, its entry's **Affected** line says so.
 
 > **Status legend** — ✅ handled and pinned by a test · ⚠️ bounded and pinned
 > limitation (safe behavior exists; the underlying server gap is not solved) ·
-> 🔜 registered, handling lands with the package that needs it · 👁 operator
-> guidance only, no library code involved.
+> 🔜 declared known limitation — the facts and references are settled here,
+> the library deliberately ships no handling code, and the entry names the
+> release that delivers it · 👁 operator guidance only, no library code
+> involved.
 >
 > An entry becomes ✅ when its handling lands with a linked pinning test.
 
@@ -68,13 +72,15 @@ holding §17.15's foreign-key example is not at the address its section title
 suggests, and a guess there returns 404. A dead link is worse than the
 title-only citation this file used everywhere before, because it reads as
 verification that never happened. These URLs are navigation; the corpus named
-in AGENTS.md section 3 is what settles a claim.
+in AGENTS.md, "Look before asserting", is what settles a claim.
 
 **Validation coverage.** Every claim below was checked on **2026-08-01** against
-the corpus described in AGENTS.md section 3. Entries carrying a version
-threshold, an error number, or an "all supported versions" claim were queried
-once per version file and the answers diffed — the method that turned up the
-three corrections recorded in `CHANGELOG.md`. Two limits worth stating plainly:
+the corpus described in AGENTS.md, "Look before asserting". Entries carrying a
+version threshold, an error number, or an "all supported versions" claim were
+queried once per version file and the answers diffed — the method that turned up
+the three corrections recorded in `CHANGELOG.md`. Where an entry's **Reference**
+line records a narrower search than that, the entry's line is the accurate
+record and the gap is deliberate. Two limits worth stating plainly:
 a documented behavior confirmed in all three manuals is still only evidence
 about the *documentation*, and the integration matrix remains what pins the
 server; and the corpus is a point-in-time snapshot of the 8.0, 8.4, and 9.7
@@ -209,17 +215,18 @@ server's actual behavior is the requirement here. Pure formatting is pinned by
 server output is pinned across the matrix by
 [`TestGranteeAndRolePrivilegesIntegration`](../pkg/validations/validations_integration_test.go).
 
-**Reference:** no supporting statement found. Searched the 8.4 manual for the
-`*_PRIVILEGES` `GRANTEE` column and for account-name quoting rules. What the
-manual gives is the *format* — "the name of the account to which the privilege
-is granted, in `'user_name'@'host_name'` format" — with nothing on what happens
-when either part contains a quote. Refman §28.3.10, "The INFORMATION_SCHEMA
+**Reference:** no supporting statement found. Searched the 8.0, 8.4, and 9.7
+manuals for the `*_PRIVILEGES` `GRANTEE` column and for account-name quoting
+rules. All three give the *format* — "the name of the account to which the
+privilege is granted, in `'user_name'@'host_name'` format" — with nothing on
+what happens when either part contains a quote, so the live pin remains
+authoritative. Refman §28.3.10, "The INFORMATION_SCHEMA
 COLUMN_PRIVILEGES Table". One structural detail does corroborate the
 concatenation: §28.3.27, "The INFORMATION_SCHEMA ROLE_COLUMN_GRANTS Table",
 exposes `GRANTEE` and `GRANTEE_HOST` as *separate* columns and so has no
 escaping problem at all, which is only possible because the `*_PRIVILEGES`
-tables join the two into one string. Not searched: the 8.0 and 9.7 manuals, and
-the `GRANT` statement reference, where an escaping rule could plausibly live.
+tables join the two into one string. Not searched: the `GRANT` statement
+reference, where an escaping rule could plausibly live.
 
 ## 4. Privileges held through nested roles are not resolved ⚠️
 
@@ -314,7 +321,10 @@ error; accept both column names; convert the value defensively rather than
 type-switching on a single expected type. The defensive conversion covers a
 second drift the rename hides: 8.4 also narrowed when the column is `NULL`, so
 a value that was previously non-`NULL` on a half-running replica may now arrive
-as `NULL`. Reserved for `pkg/replication` (phase 2).
+as `NULL`. Delivered by `pkg/replication` in **v1.1.0**, the release after 1.0.
+The v1.0 library deliberately contains no replication code and makes no
+replication promise; this entry records the settled facts and references so the
+implementation starts from them rather than rediscovering the rename waves.
 
 **Reference:** documented. MySQL 8.0 Release Notes, 8.0.22 (2020-10-19),
 Deprecation and Removal Notes (WL #14171), deprecates `START SLAVE`, `STOP
@@ -518,12 +528,13 @@ additionally asserts the `Timing` values themselves rather than only the
 resulting name order.
 
 **Reference:** no supporting statement found — and that is the point of the
-entry. Refman §28.3.44 in the 8.4 manual and §28.3.50 in 9.7, both "The
-INFORMATION_SCHEMA TRIGGERS Table", document only the permitted *values*:
-`ACTION_TIMING` is "whether the trigger activates before or after the triggering
-event. The value is `BEFORE` or `AFTER`", and `EVENT_MANIPULATION` is "`INSERT`,
-`DELETE`, or `UPDATE`". Neither version says the columns are `ENUM`, so the
-ordering the query depends on has no documented basis in either. Nothing
+entry. Refman "The INFORMATION_SCHEMA TRIGGERS Table" — §28.3.45 in the 8.0
+manual, §28.3.44 in 8.4, §28.3.50 in 9.7 — documents only the permitted
+*values* in all three: `ACTION_TIMING` is "whether the trigger activates before
+or after the triggering event. The value is `BEFORE` or `AFTER`", and
+`EVENT_MANIPULATION` is `INSERT`, `DELETE`, or `UPDATE`. No version says the
+columns are `ENUM`, so the ordering the query depends on has no documented
+basis in any of them. Nothing
 upstream will announce a change to it; the pinning test is the only guarantee,
 which is why it asserts the column type and not just the order. Not searched:
 the data dictionary chapter, where the column definitions may be given.
@@ -968,8 +979,7 @@ the code is shaped that way.
 Each entry also gets a **Reference** line. Look the claim up before writing it
 down — a version threshold, an error number, or an `information_schema` column
 recalled from memory is not a fact, and three of the entries above were wrong
-until they were checked against the source. See AGENTS.md section 3, "MySQL
-documentation is a lookup, not a recollection", for where to look and how to
-cite. When the manual turns out to be silent, say so: "not documented" is a
+until they were checked against the source. See AGENTS.md, "Look before
+asserting", for where to look and how to cite. When the manual turns out to be silent, say so: "not documented" is a
 useful finding, because it tells the next reader that the pinning test is the
 only thing standing between us and a silent behavior change.
