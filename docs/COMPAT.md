@@ -1001,10 +1001,15 @@ identical — output columns (`File`, `Position`, `Binlog_Do_DB`,
 equals the server's `gtid_executed`.
 
 **Handling:** strategy principle 2 — try `SHOW BINARY LOG STATUS`, fall back
-to `SHOW MASTER STATUS` on error 1064. This is the only version-divergent
-statement pair `pkg/replication` needs; every other statement it issues has
-one spelling valid across the whole range (entry 6). Delivered by
-`pkg/replication` in **v1.1.0**.
+to `SHOW MASTER STATUS`. Error 1064 is the documented cause, not the
+detection mechanism: the stdlib-only library does not inspect driver error
+numbers, so the fallback triggers on any error from the first form, and when
+both forms fail the first error is the one returned. This is the only
+version-divergent statement pair `pkg/replication` needs — every other
+statement it issues has one spelling valid across the whole range (entry 6) —
+and it is the package's entire accommodation of the EOL 8.0 line: the
+fallback is bound to the transitional 8.0 support window and is deleted with
+it. Delivered by `pkg/replication` in **v1.1.0**.
 
 **Reference:** documented. MySQL 8.4 Release Notes, Changes in MySQL 8.2.0
 (2023-10-25), SQL Syntax Notes (WL #14190), deprecates the `MASTER` set and
