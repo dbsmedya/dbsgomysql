@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pkg/replication` package skeleton: the package-local `Querier` interface,
+  the server-scoped `Inspector` with its infallible `NewInspector` constructor,
+  the `ErrNilQuerier` sentinel, and the `OpError` type reporting a failed fact
+  read with operation, channel, and column attribution. The package declares
+  its own `Querier` instead of importing `pkg/validations`, so neither package
+  depends on the other. Fact and check surfaces follow.
 - `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
   observability sweep that scopes `pkg/replication` (v1.1.0): the
   `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
