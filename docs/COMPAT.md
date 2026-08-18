@@ -1003,8 +1003,11 @@ equals the server's `gtid_executed`.
 **Handling:** strategy principle 2 — try `SHOW BINARY LOG STATUS`, fall back
 to `SHOW MASTER STATUS`. Error 1064 is the documented cause, not the
 detection mechanism: the stdlib-only library does not inspect driver error
-numbers, so the fallback triggers on any error from the first form, and when
-both forms fail the first error is the one returned. This is the only
+numbers, so the fallback triggers on any error from the first form. When
+both forms fail, both errors are preserved in the returned error, each named
+by the statement that produced it — either one can be the decisive cause,
+because on 8.0 the first failure is the expected syntax error and the second
+is the operational one, while on 8.4+ the roles reverse. This is the only
 version-divergent statement pair `pkg/replication` needs — every other
 statement it issues has one spelling valid across the whole range (entry 6) —
 and it is the package's entire accommodation of the EOL 8.0 line: the
