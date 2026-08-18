@@ -75,7 +75,10 @@ verification that never happened. These URLs are navigation; the corpus named
 in AGENTS.md, "Look before asserting", is what settles a claim.
 
 **Validation coverage.** Every claim below was checked on **2026-08-01** against
-the corpus described in AGENTS.md, "Look before asserting". Entries carrying a
+the corpus described in AGENTS.md, "Look before asserting"; the replication
+entries (6 and 20–23) were checked or re-checked on **2026-08-19** during the
+`pkg/replication` scoping sweep, which is also what corrected entry 6's `NULL`
+claim. Entries carrying a
 version threshold, an error number, or an "all supported versions" claim were
 queried once per version file and the answers diffed — the method that turned up
 the three corrections recorded in `CHANGELOG.md`. Where an entry's **Reference**
@@ -309,35 +312,47 @@ General Tables"; that the two sources therefore disagree is ours.
 
 **Affected:** the `REPLICA` spellings were added in **8.0.22**, which
 simultaneously deprecated the `SLAVE` ones; the `SLAVE` statements were
-**removed in 8.4**. The column `Seconds_Behind_Master` became
-`Seconds_Behind_Source` in the same 8.0.22 terminology change.
+**removed in 8.4**. The rename covers each statement *and its output*:
+`SHOW REPLICA STATUS` returns the new column names (`Replica_IO_Running`,
+`Replica_SQL_Running`, `Seconds_Behind_Source`, …) on every release that
+accepts the statement. Because the library floor is 8.0.40, the `REPLICA`
+forms exist on every supported version.
 
-**Symptom:** a single hard-coded statement or column name fails on one end of
-the supported range. Additionally, 8.4 returns the seconds-behind column with a
-different Go driver type, which breaks naive type switches that worked on 8.0.
+**Symptom:** a hard-coded legacy statement or column name fails from 8.4 on —
+`SHOW SLAVE STATUS` is a syntax error there (entry 20 pins the error number
+for the same removal class). Additionally, 8.4 has been observed to return the
+seconds-behind column with a different Go driver type, which breaks naive type
+switches that worked on 8.0.
 
-**Handling:** try the current form, fall back to the legacy one on a syntax
-error; accept both column names; convert the value defensively rather than
-type-switching on a single expected type. The defensive conversion covers a
-second drift the rename hides: 8.4 also narrowed when the column is `NULL`, so
-a value that was previously non-`NULL` on a half-running replica may now arrive
-as `NULL`. Delivered by `pkg/replication` in **v1.1.0**, the release after 1.0.
-The v1.0 library deliberately contains no replication code and makes no
-replication promise; this entry records the settled facts and references so the
-implementation starts from them rather than rediscovering the rename waves.
+**Handling:** always issue the `REPLICA` spelling and read only the new column
+names. At the 8.0.40 floor no `SLAVE` fallback and no dual column spellings
+are needed — the try-then-fallback an earlier revision of this entry
+prescribed is required only below 8.0.22, which the library does not support.
+Convert the seconds-behind value defensively rather than type-switching on a
+single expected type, and treat `NULL` as meaningful: the manual defines
+`Seconds_Behind_Source` as `NULL` when the applier thread is not running, or
+when the applier has consumed the relay log and the receiver is not running,
+and `0` when the receiver runs with an exhausted relay log. Delivered by
+`pkg/replication` in **v1.1.0**, the release after 1.0. The v1.0 library
+deliberately contains no replication code and makes no replication promise;
+this entry records the settled facts and references so the implementation
+starts from them rather than rediscovering the rename waves.
 
 **Reference:** documented. MySQL 8.0 Release Notes, 8.0.22 (2020-10-19),
 Deprecation and Removal Notes (WL #14171), deprecates `START SLAVE`, `STOP
-SLAVE`, `SHOW SLAVE STATUS`, `SHOW SLAVE HOSTS`, and `RESET SLAVE` and names the
-replacement for each. Refman §1.4, "What Is New in MySQL 8.4 since MySQL 8.0"
+SLAVE`, `SHOW SLAVE STATUS`, `SHOW SLAVE HOSTS`, and `RESET SLAVE`, names the
+replacement for each, and states that "only the terminology used for each
+statement and its output has changed" — the output columns follow the
+statement form. Refman §1.4, "What Is New in MySQL 8.4 since MySQL 8.0"
 (Features Removed in MySQL 8.4), confirms removal and lists the `MASTER`
-statements removed alongside them. Refman §19.1, "Configuring Replication",
-documents `Seconds_Behind_Source` including the 8.4 `NULL` rule. The rename ran
-in waves rather than one release — the MySQL 8.4 Release Notes, Changes in MySQL
-8.2.0 (2023-10-25), SQL Syntax Notes (WL #14190), deprecate a further set
-(`RESET MASTER`, `SHOW MASTER STATUS`, `SHOW MASTER LOGS`, `PURGE MASTER LOGS`)
-— so a phase-2 implementation should treat this as a family of renames with
-several thresholds, not a single 8.0.22/8.4 cut.
+statements removed alongside them; the source-side statement family is
+entry 20. Refman "SHOW REPLICA STATUS Statement" (8.0 and 8.4) states the
+identical `NULL` rule for `Seconds_Behind_Source` in both versions, each
+contrasting "older versions of MySQL" — that is, pre-8.0. An earlier revision
+of this entry read that contrast as an 8.4-specific narrowing; the 8.0/8.4
+manual diff run for the v1.1.0 sweep (2026-08-19) corrected it. The
+driver-type observation is not documented and is pinned by the integration
+matrix when `pkg/replication` lands.
 
 ## 7. `mysql_native_password` disabled in 8.4, removed in 9.0 👁
 
@@ -966,6 +981,142 @@ Why the documentation is wrong is not established here. A plausible account is
 that the text predates the 8.0 rename from `INNODB_SYS_FOREIGN_COLS`, but the
 corpus this repository validates against covers 8.0, 8.4, and 9.7 only, so
 nothing available supports it and it is left out rather than guessed.
+
+## 20. Source status statements diverge: `SHOW MASTER STATUS` vs `SHOW BINARY LOG STATUS` 🔜
+
+**Affected:** genuinely differs between supported versions. `SHOW BINARY LOG
+STATUS` (and `RESET BINARY LOGS AND GTIDS`) were **added in 8.2.0**, which
+deprecated the `MASTER` spellings; **8.4 removed** the `MASTER` spellings. The
+additions were never backported to the 8.0.x line, so on 8.0 only `SHOW
+MASTER STATUS` exists. Statements that already had binary-log spellings
+before the wave (`SHOW BINARY LOGS`, `PURGE BINARY LOGS`) exist on all
+supported versions and are unaffected.
+
+**Symptom:** each end of the range rejects the other end's statement with
+`ER_PARSE_ERROR` (1064, SQLSTATE 42000): `SHOW BINARY LOG STATUS` on 8.0,
+`SHOW MASTER STATUS` on 8.4 and 9.7. Everything else about the pair is
+identical — output columns (`File`, `Position`, `Binlog_Do_DB`,
+`Binlog_Ignore_DB`, `Executed_Gtid_Set`), the `REPLICATION CLIENT` privilege
+(or the deprecated `SUPER`), and the guarantee that `Executed_Gtid_Set`
+equals the server's `gtid_executed`.
+
+**Handling:** strategy principle 2 — try `SHOW BINARY LOG STATUS`, fall back
+to `SHOW MASTER STATUS` on error 1064. This is the only version-divergent
+statement pair `pkg/replication` needs; every other statement it issues has
+one spelling valid across the whole range (entry 6). Delivered by
+`pkg/replication` in **v1.1.0**.
+
+**Reference:** documented. MySQL 8.4 Release Notes, Changes in MySQL 8.2.0
+(2023-10-25), SQL Syntax Notes (WL #14190), deprecates the `MASTER` set and
+names each replacement. Refman 8.4 §15.7.7.1, "SHOW BINARY LOG STATUS
+Statement", and §1.4, "What Is New in MySQL 8.4 since MySQL 8.0" (Features
+Removed: attempting a removed statement "now produces a syntax error").
+Refman 8.0, "SHOW MASTER STATUS Statement", documents the 8.0 form; the 8.0
+manual's "RESET MASTER Statement" note — "replaced in later versions of
+MySQL … See … the MySQL 8.4 Manual" — is the 8.0 line documenting that the
+replacements are not available in 8.0. MySQL 8.0 Error Message Reference:
+error 1064, symbol `ER_PARSE_ERROR`, SQLSTATE 42000.
+
+## 21. GTID sets may contain tagged GTIDs from 8.4 🔜
+
+**Affected:** 8.4 and 9.7. MySQL 8.4.0 added tagged GTIDs — a three-part
+`UUID:TAG:NUMBER` format alongside the original two-part `UUID:NUMBER`,
+which continues unchanged.
+
+**Symptom:** any GTID-set parser written to the two-part shape mis-reads a
+set containing tags. Every GTID-set surface the library touches can carry
+them on 8.4+: `gtid_executed`, `gtid_purged`, `Executed_Gtid_Set` and
+`Retrieved_Gtid_Set` in `SHOW REPLICA STATUS`, and `Executed_Gtid_Set` in
+`SHOW BINARY LOG STATUS`. The 8.4 manual is also internally inconsistent
+about the tag's maximum length — §1.4 says "up to 8 characters" while the
+`gtid_next` description's regular expression permits up to 32 — so a parser
+would have to pick a side the documentation does not settle.
+
+**Handling:** `pkg/replication` returns every GTID set as an opaque string
+and never parses one; interpreting or comparing sets is the consumer's
+affair. The 9.x line changes only the write path — setting `gtid_purged`
+requires the `TRANSACTION_GTID_TAG` privilege in 9.7 — and the library only
+reads. Delivered by `pkg/replication` in **v1.1.0**.
+
+**Reference:** documented. Refman 8.4 §1.4, "What Is New in MySQL 8.4 since
+MySQL 8.0" (Features Added: the `UUID:TAG:NUMBER` format, `gtid_next =
+AUTOMATIC:TAG`, the `TRANSACTION_GTID_TAG` privilege; "up to 8 characters").
+Refman 8.4 §19.1.6.5, "Global Transaction ID System Variables" (`gtid_next`
+valid values including `UUID:TAG:NUMBER`; the tag regular expression
+`[a-zA-Z_][a-zA-Z0-9_]{0,31}`). Refman 9.7, gtid_purged system variable
+description: "You must have the TRANSACTION_GTID_TAG to set gtid_purged."
+
+## 22. `SHOW REPLICAS` sees only replicas that report themselves 🔜
+
+**Affected:** all supported versions, identically. The statement exists from
+8.0.22 (`SHOW SLAVE HOSTS` before it; removed in 8.4).
+
+**Symptom:** three visibility limits, none of them errors. A replica
+registers with the source only when started with `report_host` set — the
+manual: "Leave the value unset if you do not want the replica to register
+itself with the source" — so an unregistered replica is silently absent.
+Rows cover replicas that "are or have been connected", so a listed replica
+is not necessarily connected now. And `Host` is the replica's self-reported
+`report_host`, deliberately, because the socket peer address "may not be
+valid for connecting to the replica" (NAT). The privilege also differs from
+the status statements: `REPLICATION SLAVE`, not `REPLICATION CLIENT`.
+
+**Handling:** the fact reports the registered replicas as-is and documents
+that completeness is unprovable; nothing in the library treats the list as
+exhaustive (the same conservatism as entry 5). No Performance Schema
+equivalent exists for asynchronous replication — the `replication_*` tables
+are all replica-side — and the manual's only source-side alternative,
+`performance_schema.threads WHERE PROCESSLIST_COMMAND LIKE 'Binlog Dump%'`,
+answers a different question: connections currently streaming binlog, with
+no `Server_id` or `Replica_UUID` identity. That query is recorded here as
+the documented complement and deliberately not used. Delivered by
+`pkg/replication` in **v1.1.0**.
+
+**Reference:** documented. Refman "SHOW REPLICAS Statement" (8.0 and 9.7,
+wording unchanged: "registered with the source", "are or have been
+connected", `REPLICATION SLAVE`). Refman §19.1, `report_host` description
+(registration opt-out; the NAT note). Refman §19.2.3.1, "Monitoring
+Replication Main Threads" (the `threads` query; `Binlog Dump%` covers both
+`Binlog Dump` and `Binlog Dump GTID`). Refman 8.4 §1.4 (SHOW SLAVE HOSTS
+removed; use SHOW REPLICAS).
+
+## 23. Replication system variables renamed in 8.0.26 and pruned in 9.x 🔜
+
+**Affected:** the `replica_*` system-variable spellings the v1.1.0 facts
+read (`log_replica_updates`, `replica_parallel_workers`, …) date from the
+**8.0.26** rename wave, so they exist on every supported version; the
+`slave_*` spellings were **removed in 8.4**. Two 9.x prunings sit adjacent
+to the facts: `replica_parallel_workers` can no longer be 0 from **9.3.0**
+(minimum 1 — the single-threaded applier configuration exists only on 8.x
+within the supported set), and `replica_parallel_type` was **removed in
+9.5.0** (deprecated since 8.0.29).
+
+**Symptom:** reading a removed spelling — `SELECT @@GLOBAL.slave_parallel_workers`
+on 8.4+, or `@@GLOBAL.replica_parallel_type` on 9.5+ — raises
+`ER_UNKNOWN_SYSTEM_VARIABLE` (1193, SQLSTATE HY000). A consumer that treats
+`replica_parallel_workers = 0` as a reachable state carries a dead branch
+from 9.3 on.
+
+**Handling:** read only spellings valid across the whole range: the
+`replica_*` forms, never the `slave_*` forms, and never
+`replica_parallel_type`. The other configuration facts carry no drift:
+`log_replica_updates` is enabled by default, and the `read_only` /
+`super_read_only` descriptions are unchanged from 8.0 to 9.7, including that
+the value on a replica is independent of the source's. Delivered by
+`pkg/replication` in **v1.1.0**.
+
+**Reference:** documented. MySQL 8.0 Release Notes, 8.0.26 (2021-07-20),
+"Incompatible Change": "new aliases or replacement names are provided for
+most remaining identifiers" containing master/slave/mts. Refman 8.4 §1.4 and
+§1.5 (options and variables removed in 8.4). MySQL 9.7 Release Notes,
+Changes in MySQL 9.3.0 (2025-04-15), Deprecation and Removal Notes (WL
+#13957: "can no longer be set to 0; the minimum permitted value is now 1");
+Changes in MySQL 9.5.0 (2025-10-21), Deprecation and Removal Notes (WL
+#13955: `replica_parallel_type` removed). MySQL 8.0 Error Message Reference:
+error 1193, symbol `ER_UNKNOWN_SYSTEM_VARIABLE`, SQLSTATE HY000. Refman 8.4
+§19.1.2.2, "Setting the Replica Configuration" (`log_replica_updates`
+"enabled by default"); Refman 8.0 and 9.7 server system variable
+descriptions for `read_only` and `super_read_only`.
 
 ---
 

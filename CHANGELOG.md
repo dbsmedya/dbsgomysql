@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
+  observability sweep that scopes `pkg/replication` (v1.1.0): the
+  `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
+  error-1064 fallback, tagged GTIDs making GTID sets opaque strings,
+  `SHOW REPLICAS`' `report_host` visibility limits, and the 8.0.26 `replica_*`
+  variable renames with their 9.3.0 and 9.5.0 prunings.
+
+### Fixed
+
+- `docs/COMPAT.md` entry 6 no longer claims MySQL 8.4 narrowed the
+  `Seconds_Behind_Source` `NULL` rule: the 8.0 and 8.4 manuals state the
+  identical rule, and the narrowing both contrast against is pre-8.0. The
+  entry now also records that at the 8.0.40 floor the `REPLICA` statement
+  spellings and output column names exist on every supported version, so no
+  `SLAVE` fallback is needed.
+
 ## [1.0.0] - 2026-08-11
 
 ### Added
