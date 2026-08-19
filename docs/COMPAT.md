@@ -308,7 +308,7 @@ examples of both tables appear in §17.15, "InnoDB INFORMATION_SCHEMA Tables"
 child-table privileges is documented per-table under §28.3, "INFORMATION_SCHEMA
 General Tables"; that the two sources therefore disagree is ours.
 
-## 6. Replication status statements and columns were renamed 🔜
+## 6. Replication status statements and columns were renamed ✅
 
 **Affected:** the `REPLICA` spellings were added in **8.0.22**, which
 simultaneously deprecated the `SLAVE` ones; the `SLAVE` statements were
@@ -333,10 +333,15 @@ single expected type, and treat `NULL` as meaningful: the manual defines
 `Seconds_Behind_Source` as `NULL` when the applier thread is not running, or
 when the applier has consumed the relay log and the receiver is not running,
 and `0` when the receiver runs with an exhausted relay log. Delivered by
-`pkg/replication` in **v1.1.0**, the release after 1.0. The v1.0 library
-deliberately contains no replication code and makes no replication promise;
-this entry records the settled facts and references so the implementation
-starts from them rather than rediscovering the rename waves.
+`pkg/replication` in **v1.1.0**: the fact reports the estimate as an
+`sql.NullInt64` that is invalid if and only if the server sent SQL `NULL`,
+never a fabricated zero. Pinned by
+[`TestCompat6SecondsBehindIntegration`](../pkg/replication/compat_integration_test.go),
+which reads a running replica (a reported, non-negative estimate) and then
+the same channel once the applier is stopped (`NULL`) — the stopped snapshot
+is taken only after one single observation showed the applier stopped and the
+estimate `NULL` together, because `SHOW REPLICA STATUS` is nonblocking and a
+snapshot taken during `STOP REPLICA` may be stale.
 
 **Reference:** documented. MySQL 8.0 Release Notes, 8.0.22 (2020-10-19),
 Deprecation and Removal Notes (WL #14171), deprecates `START SLAVE`, `STOP
@@ -351,8 +356,9 @@ identical `NULL` rule for `Seconds_Behind_Source` in both versions, each
 contrasting "older versions of MySQL" — that is, pre-8.0. An earlier revision
 of this entry read that contrast as an 8.4-specific narrowing; the 8.0/8.4
 manual diff run for the v1.1.0 sweep (2026-08-19) corrected it. The
-driver-type observation is not documented and is pinned by the integration
-matrix when `pkg/replication` lands.
+driver-type observation is not documented and is pinned by
+[`TestCompat6SecondsBehindIntegration`](../pkg/replication/compat_integration_test.go)
+across the 8.0, 8.4, and 9.7 matrix.
 
 ## 7. `mysql_native_password` disabled in 8.4, removed in 9.0 👁
 
@@ -982,7 +988,7 @@ that the text predates the 8.0 rename from `INNODB_SYS_FOREIGN_COLS`, but the
 corpus this repository validates against covers 8.0, 8.4, and 9.7 only, so
 nothing available supports it and it is left out rather than guessed.
 
-## 20. Source status statements diverge: `SHOW MASTER STATUS` vs `SHOW BINARY LOG STATUS` 🔜
+## 20. Source status statements diverge: `SHOW MASTER STATUS` vs `SHOW BINARY LOG STATUS` ✅
 
 **Affected:** genuinely differs between supported versions. `SHOW BINARY LOG
 STATUS` (and `RESET BINARY LOGS AND GTIDS`) were **added in 8.2.0**, which
@@ -1012,7 +1018,11 @@ version-divergent statement pair `pkg/replication` needs — every other
 statement it issues has one spelling valid across the whole range (entry 6) —
 and it is the package's entire accommodation of the EOL 8.0 line: the
 fallback is bound to the transitional 8.0 support window and is deleted with
-it. Delivered by `pkg/replication` in **v1.1.0**.
+it. Delivered by `pkg/replication` in **v1.1.0** and pinned by
+[`TestCompat20BinaryLogStatusIntegration`](../pkg/replication/compat_integration_test.go).
+Success alone is the proof of which statement ran, because on each version the
+*other* statement cannot succeed — so the test also asserts that rejection
+directly, keeping the inference valid if a future server ever accepts both.
 
 **Reference:** documented. MySQL 8.4 Release Notes, Changes in MySQL 8.2.0
 (2023-10-25), SQL Syntax Notes (WL #14190), deprecates the `MASTER` set and
@@ -1025,7 +1035,7 @@ MySQL … See … the MySQL 8.4 Manual" — is the 8.0 line documenting that the
 replacements are not available in 8.0. MySQL 8.0 Error Message Reference:
 error 1064, symbol `ER_PARSE_ERROR`, SQLSTATE 42000.
 
-## 21. GTID sets may contain tagged GTIDs from 8.4 🔜
+## 21. GTID sets may contain tagged GTIDs from 8.4 ✅
 
 **Affected:** 8.4 and 9.7. MySQL 8.4.0 added tagged GTIDs — a three-part
 `UUID:TAG:NUMBER` format alongside the original two-part `UUID:NUMBER`,
@@ -1044,7 +1054,14 @@ would have to pick a side the documentation does not settle.
 and never parses one; interpreting or comparing sets is the consumer's
 affair. The 9.x line changes only the write path — setting `gtid_purged`
 requires the `TRANSACTION_GTID_TAG` privilege in 9.7 — and the library only
-reads. Delivered by `pkg/replication` in **v1.1.0**.
+reads. Delivered by `pkg/replication` in **v1.1.0** and pinned by
+[`TestCompat21TaggedGTIDIntegration`](../pkg/replication/compat_integration_test.go),
+which on 8.4 and 9.7 commits one transaction under a tag generated fresh for
+that run and then finds that tag intact in the source's `gtid_executed` and,
+after the replica catches up, in its `Retrieved_Gtid_Set` — by substring, never
+by parsing. The tag is fresh per run deliberately: `gtid_executed` accumulates
+for the container's lifetime, so a fixed tag would let the assertion pass on a
+run that created nothing.
 
 **Reference:** documented. Refman 8.4 §1.4, "What Is New in MySQL 8.4 since
 MySQL 8.0" (Features Added: the `UUID:TAG:NUMBER` format, `gtid_next =
@@ -1054,7 +1071,7 @@ valid values including `UUID:TAG:NUMBER`; the tag regular expression
 `[a-zA-Z_][a-zA-Z0-9_]{0,31}`). Refman 9.7, gtid_purged system variable
 description: "You must have the TRANSACTION_GTID_TAG to set gtid_purged."
 
-## 22. `SHOW REPLICAS`: three documented behaviors the server does not have 🔜
+## 22. `SHOW REPLICAS`: three documented behaviors the server does not have ✅
 
 **Affected:** all supported versions, identically. The statement exists from
 8.0.22 (`SHOW SLAVE HOSTS` before it; removed in 8.4).
@@ -1126,7 +1143,13 @@ manual's only source-side alternative,
 answers a different question: connections currently streaming binlog, with
 no replica server-id or UUID identity. That query is recorded here as the
 documented complement and deliberately not used. Delivered by
-`pkg/replication` in **v1.1.0**.
+`pkg/replication` in **v1.1.0** and pinned by
+[`TestCompat22RegisteredReplicasIntegration`](../pkg/replication/compat_integration_test.go),
+which requires the source to list **both** replicas: `ServerID` 2 with its
+reported hostname, and `ServerID` 3 — the one that reports nothing — with an
+empty `Host` and `Port` 3306. An implementation that treated an empty `Host`
+as a row to discard fails that second assertion on every version, which is
+what makes this the pin rather than a restatement of the manual.
 
 **Reference:** documented, and contradicted by the server. Refman
 "SHOW REPLICAS Statement" (8.0, 8.4, and 9.7, wording identical) carries
@@ -1145,7 +1168,7 @@ statement page contradicts it. Refman "Monitoring Replication Main Threads"
 `Binlog Dump GTID`). Refman 8.4 "What Is New in MySQL 8.4 since MySQL 8.0"
 (SHOW SLAVE HOSTS removed; use SHOW REPLICAS).
 
-## 23. Replication system variables renamed in 8.0.26 and pruned in 9.x 🔜
+## 23. Replication system variables renamed in 8.0.26 and pruned in 9.x ✅
 
 **Affected:** the `replica_*` system-variable spellings the v1.1.0 facts
 read (`log_replica_updates`, `replica_parallel_workers`, …) date from the
@@ -1168,7 +1191,12 @@ from 9.3 on.
 `log_replica_updates` is enabled by default, and the `read_only` /
 `super_read_only` descriptions are unchanged from 8.0 to 9.7, including that
 the value on a replica is independent of the source's. Delivered by
-`pkg/replication` in **v1.1.0**.
+`pkg/replication` in **v1.1.0** and pinned by
+[`TestCompat23ReplicationConfigIntegration`](../pkg/replication/compat_integration_test.go),
+which reads the same single statement on the source and both replicas of every
+version's trio — proving one spelling suffices across the range — and asserts
+the source is writable while both replicas are `read_only`. On 9.7 it also
+requires `replica_parallel_workers >= 1`, the post-9.3.0 minimum (observed 4).
 
 **Reference:** documented. MySQL 8.0 Release Notes, 8.0.26 (2021-07-20),
 "Incompatible Change": "new aliases or replacement names are provided for

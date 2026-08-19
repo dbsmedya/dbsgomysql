@@ -80,6 +80,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   five checks once against that live topology, and a missing topology DSN
   fails rather than skips when `DBSGOMYSQL_TEST_REQUIRE_REPLICATION=1`, so a
   skipped replication test cannot pass for evidence.
+- Live matrix pins for every replication behavior `docs/COMPAT.md` records:
+  `TestCompat6SecondsBehindIntegration`,
+  `TestCompat20BinaryLogStatusIntegration`,
+  `TestCompat21TaggedGTIDIntegration`,
+  `TestCompat22RegisteredReplicasIntegration`, and
+  `TestCompat23ReplicationConfigIntegration` run against a source-replica trio
+  on MySQL 8.0, 8.4, and 9.7. They pin the `Seconds_Behind_Source` `NULL` rule
+  on a deliberately stopped applier, the statement each version accepts for the
+  source status (asserting that the other one is rejected, so success proves
+  which ran), a GTID tag generated fresh per run surviving intact from source
+  to replica, the source listing a replica that reports nothing as well as one
+  that does, and one variable spelling serving all three versions. Entries 6
+  and 20–23 in `docs/COMPAT.md` move from declared limitation to handled and
+  pinned, each naming its test.
 - `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
   observability sweep that scopes `pkg/replication` (v1.1.0): the
   `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
