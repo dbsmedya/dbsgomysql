@@ -322,9 +322,13 @@ func TestCheckSecondsBehindSourceWithin(t *testing.T) {
 	t.Run("negative bound fails every channel", func(t *testing.T) {
 		t.Parallel()
 
+		// ch2 carries a lag below the bound itself: a constructed value a
+		// consumer can supply, and the one that a plain "lag above the bound"
+		// comparison lets through. Every supplied channel fails a negative
+		// bound, so this one fails too.
 		channels := []ChannelStatus{
 			laggingChannel("ch1", sql.NullInt64{Int64: 0, Valid: true}),
-			laggingChannel("ch2", sql.NullInt64{Int64: 0, Valid: true}),
+			laggingChannel("ch2", sql.NullInt64{Int64: -2, Valid: true}),
 		}
 
 		findings := CheckSecondsBehindSourceWithin(channels, -1)

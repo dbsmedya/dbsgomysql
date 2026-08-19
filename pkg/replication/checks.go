@@ -139,6 +139,17 @@ func CheckSecondsBehindSourceWithin(channels []ChannelStatus, maxSeconds int64) 
 				"Replication channel %q reports an unknown Seconds_Behind_Source",
 				channels[index].ChannelName,
 			)
+		// Ordered ahead of the comparison below, which a negative reported
+		// estimate would otherwise satisfy: -2 is not above -1, yet no
+		// estimate can satisfy a negative bound. A NULL lag is matched first,
+		// so it keeps its own accurate message here too.
+		case maxSeconds < 0:
+			summary = fmt.Sprintf(
+				"Replication channel %q reports Seconds_Behind_Source %s against the negative bound %s, which no reported estimate can satisfy",
+				channels[index].ChannelName,
+				strconv.FormatInt(lag.Int64, 10),
+				strconv.FormatInt(maxSeconds, 10),
+			)
 		case lag.Int64 > maxSeconds:
 			summary = fmt.Sprintf(
 				"Replication channel %q reports Seconds_Behind_Source %s, above the bound %s",
