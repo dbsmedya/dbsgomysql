@@ -6,7 +6,7 @@ MySQL 8.4 smoke tests gate every commit.
 | Layer | Database | Command | Scope |
 |---|---|---|---|
 | Unit | none | `make test` | Pure logic — type normalization, spec diffing, grantee formatting, finding assembly |
-| Smoke | MySQL 8.4 | `make test-smoke` | Every fact and check runs once against a seeded fixture. Fast go/no-go |
+| Smoke | MySQL 8.4 | `make test-smoke` | Every fact and check runs once against a seeded fixture and a live source-replica trio. Fast go/no-go |
 | Integration | 8.0 / 8.4 / 9.7 | `make test-integration` | Per-version behavior, including every quirk pinned in [COMPAT.md](COMPAT.md) |
 | E2E | 8.0 / 8.4 / 9.7 | `make test-e2e` | Defect-schema scenarios compared against golden findings |
 
@@ -71,7 +71,81 @@ local matrix is not currently part of the GitHub Actions gate. See
 
 Tests skip rather than fail when `DBSGOMYSQL_TEST_DSN` is unset, so an
 accidental `go test -tags=integration ./...` without a server does not produce
-misleading failures.
+misleading failures. The replication layers are the one exception, described
+below.
+
+## The replication topology
+
+`pkg/replication` cannot be tested against a single container: it needs a
+source, a replica that reports itself, and a replica that does not. The third
+one is what makes `SHOW REPLICAS`' self-reporting behavior observable. All three
+per version live in `tests/docker/compose_replication.yaml`, on host ports
+disjoint from the standalone matrix above, so both stacks run at once.
+
+```sh
+# The standalone container the existing suites use, plus this version's trio
+docker compose -f tests/docker/compose.yaml up -d --wait mysql84
+docker compose -f tests/docker/compose_replication.yaml up -d --wait \
+  repl84-source repl84-replica repl84-silent
+```
+
+| Version | Source | Replica (reporting) | Silent replica | server-ids |
+|---|---|---|---|---|
+| 8.0 | `repl80-source` · 3580 | `repl80-replica` · 3680 | `repl80-silent` · 3780 | 1 / 2 / 3 |
+| 8.4 | `repl84-source` · 3584 | `repl84-replica` · 3684 | `repl84-silent` · 3784 | 1 / 2 / 3 |
+| 9.7 | `repl97-source` · 3597 | `repl97-replica` · 3697 | `repl97-silent` · 3797 | 1 / 2 / 3 |
+
+The tests find the topology through five variables, alongside the
+`DBSGOMYSQL_TEST_DSN` and `DBSGOMYSQL_TEST_MYSQL_VERSION` the other layers
+read:
+
+| Variable | Meaning | 8.4 local value |
+|---|---|---|
+| `DBSGOMYSQL_TEST_SOURCE_DSN` | source, host-mapped | `root:root@tcp(127.0.0.1:3584)/` |
+| `DBSGOMYSQL_TEST_REPLICA_DSN` | reporting replica | `root:root@tcp(127.0.0.1:3684)/` |
+| `DBSGOMYSQL_TEST_SILENT_REPLICA_DSN` | non-reporting replica | `root:root@tcp(127.0.0.1:3784)/` |
+| `DBSGOMYSQL_TEST_REPL_SOURCE_HOST` | the source's hostname **as the replicas reach it** — its compose service name, not the host-mapped address above | `repl84-source` |
+| `DBSGOMYSQL_TEST_REQUIRE_REPLICATION` | `1` in CI: a missing DSN **fails** instead of skipping | `1` |
+
+```sh
+export DBSGOMYSQL_TEST_DSN='root:root@tcp(127.0.0.1:3384)/'
+export DBSGOMYSQL_TEST_MYSQL_VERSION=8.4
+export DBSGOMYSQL_TEST_SOURCE_DSN='root:root@tcp(127.0.0.1:3584)/'
+export DBSGOMYSQL_TEST_REPLICA_DSN='root:root@tcp(127.0.0.1:3684)/'
+export DBSGOMYSQL_TEST_SILENT_REPLICA_DSN='root:root@tcp(127.0.0.1:3784)/'
+export DBSGOMYSQL_TEST_REPL_SOURCE_HOST=repl84-source
+
+make test-smoke
+make test-integration
+make test-e2e
+```
+
+`DBSGOMYSQL_TEST_REQUIRE_REPLICATION=1` inverts the skip rule for these
+variables only, and both workflows set it. A skipped replication test is not
+evidence: without the flag a mistyped variable produces a green run that
+proved nothing, which is indistinguishable from a pass in a summary. Set it
+locally too whenever you intend to quote a run as evidence.
+
+Bootstrap is **convergent**, not one-shot. Every call reads each replica's
+current state and acts on it — configure and start when there are no channels,
+restart when a thread is stopped, do nothing when both are running — and every
+path ends by proving the channels running. A replica an earlier test left
+stopped is repaired rather than waited on, so tests do not have to run in a
+particular order, and a failed run does not poison the next one.
+
+**No fixed sleeps anywhere.** Every wait polls a real observation under a
+bounded deadline and reports the last thing it saw on timeout. A test that
+stops a replication thread registers its restart *before* stopping, and waits
+for one single snapshot showing the thread stopped and the lag `NULL` together
+— `SHOW REPLICA STATUS` is nonblocking, so reading the stopped thread from one
+query and the `NULL` from a later one would be a race rather than a proof. No
+test that mutates replication state runs in parallel.
+
+The topology is disposable. Reset it with:
+
+```sh
+docker compose -f tests/docker/compose_replication.yaml down -v
+```
 
 ## Fixtures
 
@@ -117,8 +191,8 @@ another project's test infrastructure in place.
 
 | Workflow | Trigger | What runs |
 |---|---|---|
-| `ci.yml` | every push and pull request | `make check` without a database, plus MySQL 8.4 smoke |
-| `integration.yml` | version tags, manual dispatch, or the `run-integration` PR label | the full Oracle MySQL 8.0 / 8.4 / 9.7 matrix |
+| `ci.yml` | every push and pull request | `make check` without a database, plus MySQL 8.4 smoke against a standalone server and the 8.4 replication trio |
+| `integration.yml` | version tags, manual dispatch, or the `run-integration` PR label | the full Oracle MySQL 8.0 / 8.4 / 9.7 matrix, each version with its own replication trio |
 
 Smoke runs on every push so every fact and check gets a real-server go/no-go.
 The full three-version integration and E2E matrix remains off the per-push path

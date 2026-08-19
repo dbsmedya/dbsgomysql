@@ -80,6 +80,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   five checks once against that live topology, and a missing topology DSN
   fails rather than skips when `DBSGOMYSQL_TEST_REQUIRE_REPLICATION=1`, so a
   skipped replication test cannot pass for evidence.
+- `docs/replication.md`, the `pkg/replication` consumer guide: every fact with
+  the privilege it needs and what an empty result means, why GTID sets are
+  returned as opaque strings, the limits that make `RegisteredReplicas` a
+  registration history rather than a topology, what
+  `SECONDS_BEHIND_SOURCE_WITHIN` bounds and the four documented limits of the
+  estimate it bounds, the five checks with their rationales, and a job-loop
+  recipe that runs one snapshot through three checks with
+  `REPLICATION_CONFIGURED` first — so neither an unconfigured server nor a
+  channel-name typo can pass the gate. `README.md` and `docs/testing.md` gain
+  the package and its test topology.
 - Live matrix pins for every replication behavior `docs/COMPAT.md` records:
   `TestCompat6SecondsBehindIntegration`,
   `TestCompat20BinaryLogStatusIntegration`,
