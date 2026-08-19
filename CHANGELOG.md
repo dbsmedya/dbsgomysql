@@ -57,6 +57,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`docs/COMPAT.md` entry 22), so an empty slice must not be read as "this
   server has no replicas". `Port` 0 means `report_port` was unset and is a
   legitimate value rather than an error.
+- `pkg/replication` checks catalog: `Finding`, `CheckInfo`, `CheckStatus`,
+  `Catalog`, and `LookupCheck`, mirroring `pkg/validations`, plus five pure
+  check functions carrying no severity — `BINARY_LOG_ENABLED`,
+  `GTID_MODE_ON`, `REPLICATION_CHANNELS_RUNNING`, `REPLICATION_CONFIGURED`,
+  and `SECONDS_BEHIND_SOURCE_WITHIN`. The checks fail closed: a channel passes
+  only when both threads report the exact value `Yes`, and GTID mode passes
+  only on the exact value `ON`, so an unrecognized server value becomes a
+  visible finding rather than a silent pass. `SECONDS_BEHIND_SOURCE_WITHIN`
+  takes the caller's bound, so no threshold policy enters the library; it
+  fails a channel whose lag is `NULL` (unknowable) or above the bound, and a
+  negative bound produces a finding for every supplied channel rather than
+  being clamped. This package reserves no check identifiers, so `CheckStatus`
+  declares only `StatusImplemented`.
 - `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
   observability sweep that scopes `pkg/replication` (v1.1.0): the
   `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
