@@ -62,12 +62,38 @@ make test-e2e
 | 8.4 | `percona84` | 3484 |
 | 9.7 | `percona97` | 3497 |
 
-Record `SELECT VERSION()` when the matrix runs: moving image tags are not
+The same three lines also run the replication trios, in a service-for-service
+mirror of the Oracle topology described below:
+
+```sh
+docker compose -p dbsgomysql-percona-repl \
+  -f tests/docker/compose_percona_replication.yml up -d --wait
+```
+
+| Version | Source | Replica (reporting) | Silent replica |
+|---|---|---|---|
+| 8.0 | `percona-repl80-source` · 3880 | `percona-repl80-replica` · 3980 | `percona-repl80-silent` · 4080 |
+| 8.4 | `percona-repl84-source` · 3884 | `percona-repl84-replica` · 3984 | `percona-repl84-silent` · 4084 |
+| 9.7 | `percona-repl97-source` · 3897 | `percona-repl97-replica` · 3997 | `percona-repl97-silent` · 4097 |
+
+The environment recipe is the replication-topology section's below, with these
+ports and `DBSGOMYSQL_TEST_REPL_SOURCE_HOST=percona-repl<v>-source`.
+
+**Run one matrix at a time.** The Oracle and Percona matrices must not be
+co-resident on an 8 GB Docker VM: the servers exhaust it, and the kernel OOM
+killer takes casualties across stack boundaries — it has killed containers
+belonging to the *other* matrix mid-run. Stop one before starting the other,
+or give the VM about 16 GB.
+
+Record `SELECT VERSION()` when a matrix runs: moving image tags are not
 evidence of an exact server release. On 2026-08-10 they resolved to Percona
 Server 8.0.46-37, 8.4.10-10, and 9.7.1-1; the complete integration and E2E
-suites passed on all three. Percona is a supported distribution, but this
-local matrix is not currently part of the GitHub Actions gate. See
-[LIMITATIONS.md](LIMITATIONS.md) for the complete distribution-support scope.
+suites passed on all three. On 2026-08-19 all twelve servers of both Percona
+matrices reported those same three releases, and the complete suites passed
+again on every version — the `pkg/replication` source-replica layers included.
+Percona is a supported distribution, but this local matrix is not currently
+part of the GitHub Actions gate. See [LIMITATIONS.md](LIMITATIONS.md) for the
+complete distribution-support scope.
 
 Tests skip rather than fail when `DBSGOMYSQL_TEST_DSN` is unset, so an
 accidental `go test -tags=integration ./...` without a server does not produce

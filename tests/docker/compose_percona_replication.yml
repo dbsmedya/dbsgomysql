@@ -1,0 +1,98 @@
+# Source-replica topology for the replication test layers, on Percona Server.
+#
+# A service-for-service mirror of tests/docker/compose_replication.yaml, which
+# runs the same trios on Oracle MySQL. This file exists to re-prove the Percona
+# support claim in docs/LIMITATIONS.md against the replication layers: that
+# claim rests on standalone evidence that predates pkg/replication.
+#
+# Three services per supported MySQL version: a source, a replica with
+# explicit report_host, and a silent replica without it. The silent
+# replica is what makes SHOW REPLICAS' self-reporting rule observable — it
+# registers all the same, listed with an empty Host and its actual listening
+# port, which is exactly the row shape the tests pin (docs/COMPAT.md entry 22).
+#
+# Host ports are disjoint from every other stack in this directory — the
+# standalone containers of compose.yaml (3380 / 3384 / 3397) and
+# compose_percona.yml (3480 / 3484 / 3497), and the Oracle trios of
+# compose_replication.yaml (35xx / 36xx / 37xx) — so all four stacks run at
+# once, which is what the smoke, integration, and e2e layers need.
+#
+#   docker compose -p dbsgomysql-percona-repl \
+#     -f tests/docker/compose_percona_replication.yml up -d --wait \
+#     percona-repl84-source percona-repl84-replica percona-repl84-silent
+#   docker compose -p dbsgomysql-percona-repl \
+#     -f tests/docker/compose_percona_replication.yml down -v
+#
+# The 8.4 trio comes first because it defines the shared healthcheck anchor;
+# YAML requires an anchor to be defined before it is referenced. The 8.0 and
+# 9.7 trios are identical except for image, service prefix, and host ports.
+services:
+  percona-repl84-source:
+    image: percona/percona-server:8.4
+    command: --server-id=1 --gtid-mode=ON --enforce-gtid-consistency=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3884:3306"]
+    healthcheck: &hc
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+  percona-repl84-replica:
+    image: percona/percona-server:8.4
+    command: --server-id=2 --gtid-mode=ON --enforce-gtid-consistency=ON
+             --report-host=percona-repl84-replica --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3984:3306"]
+    depends_on: { percona-repl84-source: { condition: service_healthy } }
+    healthcheck: *hc
+  percona-repl84-silent:
+    image: percona/percona-server:8.4
+    command: --server-id=3 --gtid-mode=ON --enforce-gtid-consistency=ON --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["4084:3306"]
+    depends_on: { percona-repl84-source: { condition: service_healthy } }
+    healthcheck: *hc
+
+  percona-repl80-source:
+    image: percona/percona-server:8.0
+    command: --server-id=1 --gtid-mode=ON --enforce-gtid-consistency=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3880:3306"]
+    healthcheck: *hc
+  percona-repl80-replica:
+    image: percona/percona-server:8.0
+    command: --server-id=2 --gtid-mode=ON --enforce-gtid-consistency=ON
+             --report-host=percona-repl80-replica --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3980:3306"]
+    depends_on: { percona-repl80-source: { condition: service_healthy } }
+    healthcheck: *hc
+  percona-repl80-silent:
+    image: percona/percona-server:8.0
+    command: --server-id=3 --gtid-mode=ON --enforce-gtid-consistency=ON --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["4080:3306"]
+    depends_on: { percona-repl80-source: { condition: service_healthy } }
+    healthcheck: *hc
+
+  percona-repl97-source:
+    image: percona/percona-server:9.7
+    command: --server-id=1 --gtid-mode=ON --enforce-gtid-consistency=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3897:3306"]
+    healthcheck: *hc
+  percona-repl97-replica:
+    image: percona/percona-server:9.7
+    command: --server-id=2 --gtid-mode=ON --enforce-gtid-consistency=ON
+             --report-host=percona-repl97-replica --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3997:3306"]
+    depends_on: { percona-repl97-source: { condition: service_healthy } }
+    healthcheck: *hc
+  percona-repl97-silent:
+    image: percona/percona-server:9.7
+    command: --server-id=3 --gtid-mode=ON --enforce-gtid-consistency=ON --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["4097:3306"]
+    depends_on: { percona-repl97-source: { condition: service_healthy } }
+    healthcheck: *hc

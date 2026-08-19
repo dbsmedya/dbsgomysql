@@ -123,6 +123,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error-1064 fallback, tagged GTIDs making GTID sets opaque strings,
   `SHOW REPLICAS`' `report_host` visibility limits, and the 8.0.26 `replica_*`
   variable renames with their 9.3.0 and 9.5.0 prunings.
+- Percona Server for MySQL support evidence now covers the replication layers:
+  `tests/docker/compose_percona_replication.yml` mirrors the Oracle trios on
+  the official Percona image lines, and on 2026-08-19 the complete integration
+  and E2E suites — the `pkg/replication` source-replica layers included —
+  passed on all three, which resolved to Percona Server 8.0.46-37, 8.4.10-10,
+  and 9.7.1-1. `docs/LIMITATIONS.md` records the run against the Percona row,
+  whose evidence had until now been standalone-only and predated the package.
 
 ### Fixed
 
