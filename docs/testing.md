@@ -77,12 +77,11 @@ below.
 ## The replication topology
 
 `pkg/replication` cannot be tested against a single container: it needs a
-source, a replica that reports itself, and a replica that does not. The third
-runs without an explicit `report_host` and still registers, listed with an
-empty `Host` — that divergence between live behavior and the manual is what
-the topology makes observable. All three per version live in
-`tests/docker/compose_replication.yaml`, on host ports disjoint from the
-standalone matrix above, so both stacks run at once.
+source, a replica with explicit `report_host`, and a replica without it. The
+third still registers, listed with an empty `Host` — that divergence between
+live behavior and the manual is what the topology makes observable. All three
+per version live in `tests/docker/compose_replication.yaml`, on host ports
+disjoint from the standalone matrix above, so both stacks run at once.
 
 ```sh
 # The standalone container the existing suites use, plus this version's trio
@@ -104,8 +103,8 @@ read:
 | Variable | Meaning | 8.4 local value |
 |---|---|---|
 | `DBSGOMYSQL_TEST_SOURCE_DSN` | source, host-mapped | `root:root@tcp(127.0.0.1:3584)/` |
-| `DBSGOMYSQL_TEST_REPLICA_DSN` | reporting replica | `root:root@tcp(127.0.0.1:3684)/` |
-| `DBSGOMYSQL_TEST_SILENT_REPLICA_DSN` | non-reporting replica | `root:root@tcp(127.0.0.1:3784)/` |
+| `DBSGOMYSQL_TEST_REPLICA_DSN` | replica with explicit `report_host` | `root:root@tcp(127.0.0.1:3684)/` |
+| `DBSGOMYSQL_TEST_SILENT_REPLICA_DSN` | replica without explicit `report_host` | `root:root@tcp(127.0.0.1:3784)/` |
 | `DBSGOMYSQL_TEST_REPL_SOURCE_HOST` | the source's hostname **as the replicas reach it** — its compose service name, not the host-mapped address above | `repl84-source` |
 | `DBSGOMYSQL_TEST_REQUIRE_REPLICATION` | `1` in CI: a missing DSN **fails** instead of skipping | `1` |
 
