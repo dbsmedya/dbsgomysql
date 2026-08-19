@@ -10,9 +10,12 @@ import (
 	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
 )
 
-// The server spells these two columns with a lowercase id.
+// The live output shape, verified on MySQL 8.0.46, 8.4.9, and 9.7.1: the two
+// identity columns carry a capital I. The manual's own example prints
+// Server_id and Source_id, and no server spells them that way
+// (docs/COMPAT.md entry 22).
 func registeredReplicasColumns() []string {
-	return []string{"Server_id", "Host", "Port", "Source_id", "Replica_UUID"}
+	return []string{"Server_Id", "Host", "Port", "Source_Id", "Replica_UUID"}
 }
 
 func scriptRegisteredReplicas(t *testing.T, columns []string, rows [][]driver.Value) *sql.DB {
@@ -40,9 +43,13 @@ func TestRegisteredReplicas(t *testing.T) {
 			[]byte("3E11FA47-71CA-11E1-9E33-C80AA9429562"),
 		},
 		{
+			// A replica started without --report-host and without
+			// --report-port. It registers all the same, with an empty Host
+			// and its actual listening port — the live shape on every
+			// supported version.
 			[]byte("3"),
-			[]byte("replica2.example.com"),
-			int64(0), // report_port unset: a legitimate value, not a failure.
+			[]byte(""),
+			int64(3306),
 			[]byte("1"),
 			[]byte("5CD1FA47-71CA-11E1-9E33-C80AA9429999"),
 		},
@@ -71,8 +78,15 @@ func TestRegisteredReplicas(t *testing.T) {
 	if got[1].ServerID != 3 {
 		t.Errorf("RegisteredReplicas()[1].ServerID = %d, want 3", got[1].ServerID)
 	}
-	if got[1].Port != 0 {
-		t.Errorf("RegisteredReplicas()[1].Port = %d, want 0 for an unset report_port", got[1].Port)
+	// A row whose Host is empty is data the server returned, not a row to
+	// discard: the replica is registered and the source knows nothing about
+	// where to reach it. Dropping it would report a smaller topology than the
+	// server described.
+	if got[1].Host != "" {
+		t.Errorf("RegisteredReplicas()[1].Host = %q, want the empty host the server returned", got[1].Host)
+	}
+	if got[1].Port != 3306 {
+		t.Errorf("RegisteredReplicas()[1].Port = %d, want 3306 — the port the server reported", got[1].Port)
 	}
 	if got[1].SourceID != 1 {
 		t.Errorf("RegisteredReplicas()[1].SourceID = %d, want 1", got[1].SourceID)
@@ -101,7 +115,7 @@ func TestRegisteredReplicasMissingColumn(t *testing.T) {
 
 	const dropped = "Replica_UUID"
 	db := scriptRegisteredReplicas(t,
-		[]string{"Server_id", "Host", "Port", "Source_id"},
+		[]string{"Server_Id", "Host", "Port", "Source_Id"},
 		[][]driver.Value{{int64(2), []byte("replica1.example.com"), int64(3306), int64(1)}},
 	)
 

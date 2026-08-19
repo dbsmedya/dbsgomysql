@@ -11,13 +11,17 @@ import (
 // CLIENT the status facts need (docs/COMPAT.md entry 22).
 const sqlRegisteredReplicas = "SHOW REPLICAS"
 
-// Promised columns of SHOW REPLICAS. The server spells the two identity
-// columns with a lowercase id, unlike the SHOW REPLICA STATUS columns.
+// Promised columns of SHOW REPLICAS, spelled as the server spells them —
+// verified live on MySQL 8.0.46, 8.4.9, and 9.7.1. The manual's own example
+// output prints Server_id and Source_id with a lowercase id; no supported
+// server does (docs/COMPAT.md entry 22). The two identity columns carry the
+// Reg prefix to keep them apart from the SHOW REPLICA STATUS columns, whose
+// names follow a different convention.
 const (
-	colServerID    = "Server_id"
+	colRegServerID = "Server_Id"
 	colHost        = "Host"
 	colPort        = "Port"
-	colSourceID    = "Source_id"
+	colRegSourceID = "Source_Id"
 	colReplicaUUID = "Replica_UUID"
 )
 
@@ -33,9 +37,16 @@ type RegisteredReplica struct {
 	// connection came from. The server reports it this way deliberately,
 	// because a socket peer address may not be usable to reach the replica.
 	// Nothing verifies that the value resolves or is reachable.
+	//
+	// Host may be empty for a listed replica: a replica started without
+	// report_host still registers, and the source then knows it exists
+	// without knowing where to reach it. An empty Host is therefore data the
+	// server returned, never a row to discard.
 	Host string `json:"host"`
-	// Port is the replica's self-reported report_port. Zero means report_port
-	// was not set: a legitimate value, not a decode failure.
+	// Port is the port the replica reported. An unset report_port normally
+	// yields the replica's actual listening port rather than zero, so zero
+	// means only that the server returned zero — never that report_port was
+	// unset. Either way it is a legitimate value, not a decode failure.
 	Port uint16 `json:"port"`
 	// SourceID is the server_id of the source this replica registered with.
 	SourceID uint32 `json:"source_id"`
@@ -52,13 +63,14 @@ type RegisteredReplica struct {
 // list of currently connected replicas. Three limits apply, none of them
 // errors (docs/COMPAT.md entry 22):
 //
-//   - A replica registers only when it was started with report_host set. An
-//     unregistered replica is silently absent, and the source cannot tell the
-//     difference between "not configured to register" and "not there".
+//   - A replica that has never connected leaves no row. The source cannot
+//     distinguish "no replica exists" from "one exists and has not reached me
+//     yet", so the list is a registration history rather than a topology.
 //   - The rows cover replicas that are or have been connected, so an entry may
 //     be stale — the replica may have disconnected long ago.
 //   - Host and Port are self-reported by each replica; the source does not
-//     verify them.
+//     verify them, and Host may be empty for a replica that registered without
+//     report_host.
 //
 // Callers must therefore never read an empty result as "this server has no
 // replicas", nor a returned row as "this replica is connected now". The fact
@@ -123,10 +135,10 @@ func parseRegisteredReplicas(rows *sql.Rows) (replicas []RegisteredReplica, err 
 
 func promisedRegisteredReplicasColumns() []string {
 	return []string{
-		colServerID,
+		colRegServerID,
 		colHost,
 		colPort,
-		colSourceID,
+		colRegSourceID,
 		colReplicaUUID,
 	}
 }
@@ -135,7 +147,7 @@ func decodeRegisteredReplica(index columnIndex, values []any) (RegisteredReplica
 	row := rowDecoder{op: opRegisteredReplicas, index: index, values: values}
 
 	var replica RegisteredReplica
-	if err := decodeColumn(row, colServerID, decodeUint32, &replica.ServerID); err != nil {
+	if err := decodeColumn(row, colRegServerID, decodeUint32, &replica.ServerID); err != nil {
 		return RegisteredReplica{}, err
 	}
 	if err := decodeColumn(row, colHost, decodeString, &replica.Host); err != nil {
@@ -144,7 +156,7 @@ func decodeRegisteredReplica(index columnIndex, values []any) (RegisteredReplica
 	if err := decodeColumn(row, colPort, decodeUint16, &replica.Port); err != nil {
 		return RegisteredReplica{}, err
 	}
-	if err := decodeColumn(row, colSourceID, decodeUint32, &replica.SourceID); err != nil {
+	if err := decodeColumn(row, colRegSourceID, decodeUint32, &replica.SourceID); err != nil {
 		return RegisteredReplica{}, err
 	}
 	if err := decodeColumn(row, colReplicaUUID, decodeString, &replica.ReplicaUUID); err != nil {

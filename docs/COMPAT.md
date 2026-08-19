@@ -1054,39 +1054,96 @@ valid values including `UUID:TAG:NUMBER`; the tag regular expression
 `[a-zA-Z_][a-zA-Z0-9_]{0,31}`). Refman 9.7, gtid_purged system variable
 description: "You must have the TRANSACTION_GTID_TAG to set gtid_purged."
 
-## 22. `SHOW REPLICAS` sees only replicas that report themselves 🔜
+## 22. `SHOW REPLICAS`: three documented behaviors the server does not have 🔜
 
 **Affected:** all supported versions, identically. The statement exists from
 8.0.22 (`SHOW SLAVE HOSTS` before it; removed in 8.4).
 
-**Symptom:** three visibility limits, none of them errors. A replica
-registers with the source only when started with `report_host` set — the
-manual: "Leave the value unset if you do not want the replica to register
-itself with the source" — so an unregistered replica is silently absent.
-Rows cover replicas that "are or have been connected", so a listed replica
-is not necessarily connected now. And `Host` is the replica's self-reported
-`report_host`, deliberately, because the socket peer address "may not be
-valid for connecting to the replica" (NAT). The privilege also differs from
-the status statements: `REPLICATION SLAVE`, not `REPLICATION CLIENT`.
+**Symptom:** the manual's `SHOW REPLICAS` page gets three things wrong about
+its own output, and a client that trusts them reads the wrong topology — or
+no topology at all.
 
-**Handling:** the fact reports the registered replicas as-is and documents
-that completeness is unprovable; nothing in the library treats the list as
-exhaustive (the same conservatism as entry 5). No Performance Schema
-equivalent exists for asynchronous replication — the `replication_*` tables
-are all replica-side — and the manual's only source-side alternative,
+1. **Column spelling.** The manual's example output prints `Server_id` and
+   `Source_id`. Every supported server sends `Server_Id` and `Source_Id`,
+   with a capital `I`. A client that maps result columns by name — which is
+   the only way to survive columns being added — finds no such column and
+   reports a missing column instead of a replica.
+2. **Registration is not opt-out.** The `report_host` description says
+   "Leave the value unset if you do not want the replica to register itself
+   with the source." A replica started without `--report-host` registers all
+   the same and is listed, with an empty `Host`. There is no way to keep a
+   connected replica out of this list, so an empty `Host` is a row to read,
+   never a row to discard.
+3. **Zero does not mean "unset".** The statement's `Port` bullet says "A
+   zero in this column means that the replica port (`--report-port`) was not
+   set." A replica started without `--report-port` reports 3306 — its actual
+   listening port. Here **the manual contradicts itself**, and the server
+   follows the other page: the `report_port` variable description says "The
+   default value for this option is the port number actually used by the
+   replica. This is also the default value displayed by SHOW REPLICAS."
+
+What the manual gets right, and what the fact's contract rests on instead:
+rows cover "servers that are or have been connected as replicas", so a
+listed replica is not necessarily connected now; a replica that has never
+connected leaves no row at all; `Host` is the replica's self-reported
+`report_host`, deliberately, because the socket peer address "may not be
+valid for connecting to the replica" (NAT); and the privilege differs from
+the status statements — `REPLICATION SLAVE`, not `REPLICATION CLIENT`.
+
+**Reproduction.** One source and two replicas, both connected with
+`SOURCE_AUTO_POSITION=1`. Server-id 2 was started with
+`--report-host=repl<v>-replica`; server-id 3 with neither `--report-host`
+nor `--report-port`:
+
+```sql
+SHOW REPLICAS;
+```
+
+```
++-----------+----------------+------+-----------+--------------------------------------+
+| Server_Id | Host           | Port | Source_Id | Replica_UUID                         |
++-----------+----------------+------+-----------+--------------------------------------+
+|         3 |                | 3306 |         1 | 52706cf4-9b6b-11f1-aeed-4e420465c000 |
+|         2 | repl84-replica | 3306 |         1 | 5271e680-9b6b-11f1-9105-763aa1b53002 |
++-----------+----------------+------+-----------+--------------------------------------+
+```
+
+Identical in shape on **8.0.46, 8.4.9, and 9.7.1** (2026-08-19): the same
+header spelling on all three, and the replica that reports nothing listed on
+all three with an empty `Host` and `Port` 3306. Only the hostname and the
+UUIDs differ between them.
+
+**Handling:** the fact promises the spellings the server actually sends,
+returns every row it receives — empty `Host` included — and documents `Port`
+as the reported port, where zero means only that the server returned zero.
+The list is still never proof of absence, now on the two grounds that
+survive: a row may be stale, and a replica that never connected leaves none.
+Nothing in the library treats the list as exhaustive (the same conservatism
+as entry 5). No Performance Schema equivalent exists for asynchronous
+replication — the `replication_*` tables are all replica-side — and the
+manual's only source-side alternative,
 `performance_schema.threads WHERE PROCESSLIST_COMMAND LIKE 'Binlog Dump%'`,
 answers a different question: connections currently streaming binlog, with
-no `Server_id` or `Replica_UUID` identity. That query is recorded here as
-the documented complement and deliberately not used. Delivered by
+no replica server-id or UUID identity. That query is recorded here as the
+documented complement and deliberately not used. Delivered by
 `pkg/replication` in **v1.1.0**.
 
-**Reference:** documented. Refman "SHOW REPLICAS Statement" (8.0 and 9.7,
-wording unchanged: "registered with the source", "are or have been
-connected", `REPLICATION SLAVE`). Refman §19.1, `report_host` description
-(registration opt-out; the NAT note). Refman §19.2.3.1, "Monitoring
-Replication Main Threads" (the `threads` query; `Binlog Dump%` covers both
-`Binlog Dump` and `Binlog Dump GTID`). Refman 8.4 §1.4 (SHOW SLAVE HOSTS
-removed; use SHOW REPLICAS).
+**Reference:** documented, and contradicted by the server. Refman
+"SHOW REPLICAS Statement" (8.0, 8.4, and 9.7, wording identical) carries
+both wrong claims — the example output spelling `Server_id`/`Source_id`, and
+"A zero in this column means that the replica port (--report-port) was not
+set" — alongside the correct "servers that are or have been connected as
+replicas" and `REPLICATION SLAVE`. Refman, `report_host` system-variable
+description: "Leave the value unset if you do not want the replica to
+register itself with the source", plus the NAT note — the first half is
+contradicted live, the NAT rationale is not. Refman, `report_port`
+system-variable description: "The default value for this option is the port
+number actually used by the replica. This is also the default value
+displayed by SHOW REPLICAS" — this page is the one the server obeys, and the
+statement page contradicts it. Refman "Monitoring Replication Main Threads"
+(the `threads` query; `Binlog Dump%` covers both `Binlog Dump` and
+`Binlog Dump GTID`). Refman 8.4 "What Is New in MySQL 8.4 since MySQL 8.0"
+(SHOW SLAVE HOSTS removed; use SHOW REPLICAS).
 
 ## 23. Replication system variables renamed in 8.0.26 and pruned in 9.x 🔜
 

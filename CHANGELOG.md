@@ -79,6 +79,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pkg/replication.RegisteredReplicas` now reads what `SHOW REPLICAS` actually
+  returns. It promised the column names the MySQL manual prints in its own
+  example — `Server_id` and `Source_id` — which no supported server sends, so
+  against a real server the fact failed with a missing-column error instead of
+  reporting a replica. The promised columns are now `Server_Id` and
+  `Source_Id`. Two `RegisteredReplica` contract statements were wrong for the
+  same reason and are corrected: `Host` may be empty for a listed replica,
+  because a replica started without `report_host` registers anyway rather than
+  staying invisible, and `Port` zero means only that the server returned
+  zero — an unset `report_port` normally reports the replica's actual
+  listening port. The list is still never proof of absence, now grounded on
+  stale rows and replicas that never connected rather than on a registration
+  opt-out that does not exist. `docs/COMPAT.md` entry 22 records the
+  manual/live disagreement, verified on MySQL 8.0.46, 8.4.9, and 9.7.1.
 - `docs/COMPAT.md` entry 6 no longer claims MySQL 8.4 narrowed the
   `Seconds_Behind_Source` `NULL` rule: the 8.0 and 8.4 manuals state the
   identical rule, and the narrowing both contrast against is pre-8.0. The
