@@ -28,7 +28,15 @@ import (
 // t.Parallel: the trio is shared and two of them mutate its state.
 
 const (
-	envMySQLVersion = "DBSGOMYSQL_TEST_MYSQL_VERSION"
+	envMySQLVersion   = "DBSGOMYSQL_TEST_MYSQL_VERSION"
+	envReplSourceHost = "DBSGOMYSQL_TEST_REPL_SOURCE_HOST"
+
+	// The trio's service names differ per topology — repl80-source on the
+	// Oracle stack, percona-repl80-source on the Percona mirror — but the
+	// suffixes that distinguish the three servers do not. That is what makes
+	// the source-to-replica swap below sound rather than a guess.
+	sourceHostSuffix  = "-source"
+	replicaHostSuffix = "-replica"
 
 	mysqlVersion80 = "8.0"
 	mysqlVersion97 = "9.7"
@@ -66,10 +74,34 @@ func compatMySQLVersion(t *testing.T) string {
 	return version
 }
 
-// replicaReportedHost is the hostname the reporting replica of this version's
-// trio registers with, which is its compose service name.
-func replicaReportedHost(version string) string {
-	return "repl" + strings.ReplaceAll(version, ".", "") + "-replica"
+// replicaReportedHost is the hostname the reporting replica of the trio under
+// test registers with.
+//
+// It derives that name from the trio's own environment contract rather than
+// from the MySQL version, which keeps the pin portable across topologies: the
+// Oracle trio's replica reports repl80-replica and the Percona mirror's
+// reports percona-repl80-replica, and neither service name is written into
+// this file. The <prefix>-source / <prefix>-replica pair is structural in both
+// compose files, so swapping the suffix names the replica of whichever trio
+// the environment points at.
+func replicaReportedHost(t *testing.T) string {
+	t.Helper()
+
+	sourceHost := os.Getenv(envReplSourceHost)
+	if sourceHost == "" {
+		t.Fatalf(
+			"%s is unset: the compat pins derive the reporting replica's hostname from the trio's source",
+			envReplSourceHost,
+		)
+	}
+	if !strings.HasSuffix(sourceHost, sourceHostSuffix) {
+		t.Fatalf(
+			"%s = %q, which does not name the trio's source as %s: the compat pins derive the reporting replica's hostname by swapping that suffix for %s",
+			envReplSourceHost, sourceHost, "<prefix>"+sourceHostSuffix, replicaHostSuffix,
+		)
+	}
+
+	return strings.TrimSuffix(sourceHost, sourceHostSuffix) + replicaHostSuffix
 }
 
 // probeStatement runs statement for its acceptance only and returns the error
@@ -367,7 +399,7 @@ func TestCompat22RegisteredReplicasIntegration(t *testing.T) {
 	if !hasReporting {
 		t.Fatalf("no replica with ServerID 2 in %+v", replicas)
 	}
-	wantHost := replicaReportedHost(version)
+	wantHost := replicaReportedHost(t)
 	if reporting.Host != wantHost {
 		t.Errorf("ServerID 2 Host = %q, want %q", reporting.Host, wantHost)
 	}
