@@ -94,6 +94,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that does, and one variable spelling serving all three versions. Entries 6
   and 20–23 in `docs/COMPAT.md` move from declared limitation to handled and
   pinned, each naming its test.
+- Replication stop-start end-to-end scenario: `TestReplicationScenarioE2E`
+  drives one incident against a live source-replica pair on MySQL 8.0, 8.4, and
+  9.7 — a healthy replica passes the three-check gate with no findings, a
+  deliberately stopped applier produces exactly two, and the cleanup restores
+  the topology and proves it running again. The findings are compared against
+  goldens (`tests/e2e/testdata/replication_running.json`,
+  `replication_sql_stopped.json`) with the GTID sets and source coordinates
+  normalized, so what the goldens pin is what the state means:
+  `REPLICATION_CHANNELS_RUNNING` carrying an empty last-error pair, because a
+  deliberate stop is not an error, and `SECONDS_BEHIND_SOURCE_WITHIN` carrying
+  an invalid `Seconds_Behind_Source` rather than a zero.
 - `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
   observability sweep that scopes `pkg/replication` (v1.1.0): the
   `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
