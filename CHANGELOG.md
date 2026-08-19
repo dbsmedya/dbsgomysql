@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SecondsBehindSource` is invalid if and only if the server sent SQL `NULL`;
   any other undecodable value is an error naming the channel and column that
   caused it.
+- `pkg/replication` binary log status fact: `Inspector.BinaryLogStatus` reports
+  the server's binary log coordinates as a `*BinaryLogStatus`, and `nil` with
+  no error when the server returns no row — provable absence, meaning binary
+  logging is disabled. It issues `SHOW BINARY LOG STATUS` and falls back to
+  `SHOW MASTER STATUS`, the one statement pair that genuinely differs across
+  the supported range (`docs/COMPAT.md` entry 20); the fallback is issued only
+  when the first statement fails, and it is bound to the transitional MySQL
+  8.0 support window. When both statements fail, both causes are preserved in
+  the returned error, each named by the statement that produced it, so either
+  one remains reachable through `errors.Is` and `errors.As`.
 - `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
   observability sweep that scopes `pkg/replication` (v1.1.0): the
   `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
