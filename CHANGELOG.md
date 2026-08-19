@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read with operation, channel, and column attribution. The package declares
   its own `Querier` instead of importing `pkg/validations`, so neither package
   depends on the other. Fact and check surfaces follow.
+- `pkg/replication` variable facts: `Inspector.BinaryLogEnabled`,
+  `Inspector.GTIDStatus`, and `Inspector.ReplicationConfig`, with the
+  `GTIDStatus` and `Config` fact types and their JSON contracts.
+  Each fact issues exactly one `SELECT` of the system variables it reports.
+  GTID sets are returned as opaque strings and never parsed, so a tagged
+  `UUID:TAG:NUMBER` set from MySQL 8.4 or later survives intact
+  (`docs/COMPAT.md` entry 21). Only the `replica_*` variable spellings valid
+  on every supported version are read, so no version branch is involved
+  (`docs/COMPAT.md` entry 23). A value the server sends as SQL `NULL` or in an
+  undecodable form is reported as an error naming the variable, never as a
+  silently zeroed field.
 - `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
   observability sweep that scopes `pkg/replication` (v1.1.0): the
   `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its

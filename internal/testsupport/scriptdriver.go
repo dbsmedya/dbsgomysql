@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 )
 
 // ScriptedQuery is one rule for OpenScriptedDB.
@@ -34,10 +35,43 @@ func OpenScriptedDB(script ...ScriptedQuery) *sql.DB {
 	return sql.OpenDB(scriptedConnector{script: script})
 }
 
-type scriptedConnector struct{ script []ScriptedQuery }
+// OpenScriptedDBWithLog is OpenScriptedDB that also appends every executed
+// statement to log, in order, before matching it against the script. It is
+// what pins how many statements a fact issues and what their exact text is —
+// questions the returned rows cannot answer.
+//
+// The log is appended under a mutex, so a database shared across goroutines
+// records every statement; the order between concurrent statements is then the
+// order the driver saw them.
+func OpenScriptedDBWithLog(log *[]string, script ...ScriptedQuery) *sql.DB {
+	return sql.OpenDB(scriptedConnector{script: script, log: &statementLog{dst: log}})
+}
+
+// statementLog guards the caller's slice. It is held by pointer so that
+// copying a connector never copies a mutex.
+type statementLog struct {
+	mu  sync.Mutex
+	dst *[]string
+}
+
+func (l *statementLog) record(query string) {
+	if l == nil || l.dst == nil {
+		return
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	*l.dst = append(*l.dst, query)
+}
+
+type scriptedConnector struct {
+	script []ScriptedQuery
+	log    *statementLog
+}
 
 func (c scriptedConnector) Connect(context.Context) (driver.Conn, error) {
-	return &scriptedConn{script: c.script}, nil
+	return &scriptedConn{script: c.script, log: c.log}, nil
 }
 
 func (c scriptedConnector) Driver() driver.Driver { return scriptedDriver{} }
@@ -48,13 +82,18 @@ func (scriptedDriver) Open(string) (driver.Conn, error) {
 	return nil, errors.New("testsupport: scripted driver requires OpenScriptedDB")
 }
 
-type scriptedConn struct{ script []ScriptedQuery }
+type scriptedConn struct {
+	script []ScriptedQuery
+	log    *statementLog
+}
 
 // QueryContext satisfies driver.QueryerContext, which database/sql prefers over
 // Prepare, so statements never reach the unimplemented Prepare below.
 func (c *scriptedConn) QueryContext(
 	_ context.Context, query string, _ []driver.NamedValue,
 ) (driver.Rows, error) {
+	c.log.record(query)
+
 	for _, rule := range c.script {
 		if !strings.Contains(query, rule.Match) {
 			continue

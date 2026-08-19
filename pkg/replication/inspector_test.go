@@ -64,6 +64,62 @@ func TestNewInspectorNilQuerier(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("through fact methods", func(t *testing.T) {
+		t.Parallel()
+
+		inspector := NewInspector((*sql.DB)(nil))
+		facts := []struct {
+			name string
+			call func() error
+			op   string
+		}{
+			{
+				name: "binary log enabled",
+				call: func() error {
+					_, err := inspector.BinaryLogEnabled(t.Context())
+
+					return err
+				},
+				op: opBinaryLogEnabled,
+			},
+			{
+				name: "gtid status",
+				call: func() error {
+					_, err := inspector.GTIDStatus(t.Context())
+
+					return err
+				},
+				op: opGTIDStatus,
+			},
+			{
+				name: "replication config",
+				call: func() error {
+					_, err := inspector.ReplicationConfig(t.Context())
+
+					return err
+				},
+				op: opReplicationConfig,
+			},
+		}
+
+		for _, fact := range facts {
+			err := fact.call()
+			if !errors.Is(err, ErrNilQuerier) {
+				t.Errorf("%s: errors.Is(%v, ErrNilQuerier) = false, want true", fact.name, err)
+			}
+
+			var opErr *OpError
+			if !errors.As(err, &opErr) {
+				t.Errorf("%s: errors.As(%v, *OpError) = false, want true", fact.name, err)
+
+				continue
+			}
+			if opErr.Op != fact.op {
+				t.Errorf("%s: OpError.Op = %q, want %q", fact.name, opErr.Op, fact.op)
+			}
+		}
+	})
 }
 
 func TestValidateAcceptsUsableQuerier(t *testing.T) {
