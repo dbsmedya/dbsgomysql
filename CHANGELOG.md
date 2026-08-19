@@ -10,6 +10,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pkg/replication` package skeleton: the package-local `Querier` interface,
+  the server-scoped `Inspector` with its infallible `NewInspector` constructor,
+  the `ErrNilQuerier` sentinel, and the `OpError` type reporting a failed fact
+  read with operation, channel, and column attribution. The package declares
+  its own `Querier` instead of importing `pkg/validations`, so neither package
+  depends on the other. Fact and check surfaces follow.
+- `pkg/replication` variable facts: `Inspector.BinaryLogEnabled`,
+  `Inspector.GTIDStatus`, and `Inspector.ReplicationConfig`, with the
+  `GTIDStatus` and `Config` fact types and their JSON contracts.
+  Each fact issues exactly one `SELECT` of the system variables it reports.
+  GTID sets are returned as opaque strings and never parsed, so a tagged
+  `UUID:TAG:NUMBER` set from MySQL 8.4 or later survives intact
+  (`docs/COMPAT.md` entry 21). Only the `replica_*` variable spellings valid
+  on every supported version are read, so no version branch is involved
+  (`docs/COMPAT.md` entry 23). A value the server sends as SQL `NULL` or in an
+  undecodable form is reported as an error naming the variable, never as a
+  silently zeroed field.
+- `pkg/replication` replica channel status fact: `Inspector.ReplicaStatus`
+  reports one `ChannelStatus` per replication channel, in the order the server
+  returned them, and an empty slice when the server is not a replica. Columns
+  are read by name, so a column the server adds — including the `User` and
+  `Password` columns `--show-replica-auth-info` adds — is ignored rather than
+  misread, while a missing promised column fails the fact and names itself.
+  `SecondsBehindSource` is invalid if and only if the server sent SQL `NULL`;
+  any other undecodable value is an error naming the channel and column that
+  caused it.
+- `pkg/replication` binary log status fact: `Inspector.BinaryLogStatus` reports
+  the server's binary log coordinates as a `*BinaryLogStatus`, and `nil` with
+  no error when the server returns no row — provable absence, meaning binary
+  logging is disabled. It issues `SHOW BINARY LOG STATUS` and falls back to
+  `SHOW MASTER STATUS`, the one statement pair that genuinely differs across
+  the supported range (`docs/COMPAT.md` entry 20); the fallback is issued only
+  when the first statement fails, and it is bound to the transitional MySQL
+  8.0 support window. When both statements fail, both causes are preserved in
+  the returned error, each named by the statement that produced it, so either
+  one remains reachable through `errors.Is` and `errors.As`.
+- `pkg/replication` registered replicas fact: `Inspector.RegisteredReplicas`
+  reports one `RegisteredReplica` per replica registered with this server, in
+  the order the server returned them. Its GoDoc states the contract that gives
+  the fact its name: the list is never proof of absence. The rows cover
+  replicas that are or have been connected, a replica without explicit
+  `report_host` still registers and is listed with an empty `Host`, and
+  `Host` and `Port` are self-reported and unverified (`docs/COMPAT.md`
+  entry 22), so an empty slice must not be read as "this server has no
+  replicas". `Port` is the port the replica reported: omitting
+  `report_port` normally yields the replica's actual listening port, and
+  zero means only that the server returned zero.
+- `pkg/replication` checks catalog: `Finding`, `CheckInfo`, `CheckStatus`,
+  `Catalog`, and `LookupCheck`, mirroring `pkg/validations`, plus five pure
+  check functions carrying no severity — `BINARY_LOG_ENABLED`,
+  `GTID_MODE_ON`, `REPLICATION_CHANNELS_RUNNING`, `REPLICATION_CONFIGURED`,
+  and `SECONDS_BEHIND_SOURCE_WITHIN`. The checks fail closed: a channel passes
+  only when both threads report the exact value `Yes`, and GTID mode passes
+  only on the exact value `ON`, so an unrecognized server value becomes a
+  visible finding rather than a silent pass. `SECONDS_BEHIND_SOURCE_WITHIN`
+  takes the caller's bound, so no threshold policy enters the library; it
+  fails a channel whose lag is `NULL` (unknowable) or above the bound, and a
+  negative bound produces a finding for every supplied channel rather than
+  being clamped. This package reserves no check identifiers, so `CheckStatus`
+  declares only `StatusImplemented`.
+- Source-replica test topology and live smoke coverage for `pkg/replication`:
+  `tests/docker/compose_replication.yaml` starts a source, a self-reporting
+  replica, and a silent replica for each supported MySQL version, and
+  `internal/testsupport` gains the helpers that open the trio, converge it on
+  running replication, wait for a replica to catch up, and stop and restore an
+  applier. Every wait polls a real observation under a bound; there are no
+  fixed sleeps. The new `TestSmokeReplication` exercises all six facts and all
+  five checks once against that live topology, and a missing topology DSN
+  fails rather than skips when `DBSGOMYSQL_TEST_REQUIRE_REPLICATION=1`, so a
+  skipped replication test cannot pass for evidence.
+- `docs/replication.md`, the `pkg/replication` consumer guide: every fact with
+  the privilege it needs and what an empty result means, why GTID sets are
+  returned as opaque strings, the limits that make `RegisteredReplicas` a
+  registration history rather than a topology, what
+  `SECONDS_BEHIND_SOURCE_WITHIN` bounds and the four documented limits of the
+  estimate it bounds, the five checks with their rationales, and a job-loop
+  recipe that runs one snapshot through three checks with
+  `REPLICATION_CONFIGURED` first — so neither an unconfigured server nor a
+  channel-name typo can pass the gate. `README.md` and `docs/testing.md` gain
+  the package and its test topology.
+- Live matrix pins for every replication behavior `docs/COMPAT.md` records:
+  `TestCompat6SecondsBehindIntegration`,
+  `TestCompat20BinaryLogStatusIntegration`,
+  `TestCompat21TaggedGTIDIntegration`,
+  `TestCompat22RegisteredReplicasIntegration`, and
+  `TestCompat23ReplicationConfigIntegration` run against a source-replica trio
+  on MySQL 8.0, 8.4, and 9.7. They pin the `Seconds_Behind_Source` `NULL` rule
+  on a deliberately stopped applier, the statement each version accepts for the
+  source status (asserting that the other one is rejected, so success proves
+  which ran), a GTID tag generated fresh per run surviving intact from source
+  to replica, the source listing a replica that reports nothing as well as one
+  that does, and one variable spelling serving all three versions. Entries 6
+  and 20–23 in `docs/COMPAT.md` move from declared limitation to handled and
+  pinned, each naming its test.
+- Replication stop-start end-to-end scenario: `TestReplicationScenarioE2E`
+  drives one incident against a live source-replica pair on MySQL 8.0, 8.4, and
+  9.7 — a healthy replica passes the three-check gate with no findings, a
+  deliberately stopped applier produces exactly two, and the cleanup restores
+  the topology and proves it running again. The findings are compared against
+  goldens (`tests/e2e/testdata/replication_running.json`,
+  `replication_sql_stopped.json`) with the GTID sets and source coordinates
+  normalized, so what the goldens pin is what the state means:
+  `REPLICATION_CHANNELS_RUNNING` carrying an empty last-error pair, because a
+  deliberate stop is not an error, and `SECONDS_BEHIND_SOURCE_WITHIN` carrying
+  an invalid `Seconds_Behind_Source` rather than a zero.
+- `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
+  observability sweep that scopes `pkg/replication` (v1.1.0): the
+  `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
+  error-1064 fallback, tagged GTIDs making GTID sets opaque strings,
+  `SHOW REPLICAS`' `report_host` visibility limits, and the 8.0.26 `replica_*`
+  variable renames with their 9.3.0 and 9.5.0 prunings.
+- Percona Server for MySQL support evidence now covers the replication layers:
+  `tests/docker/compose_percona_replication.yml` mirrors the Oracle trios on
+  the official Percona image lines, and on 2026-08-19 the complete integration
+  and E2E suites — the `pkg/replication` source-replica layers included —
+  passed on all three, which resolved to Percona Server 8.0.46-37, 8.4.10-10,
+  and 9.7.1-1. `docs/LIMITATIONS.md` records the run against the Percona row,
+  whose evidence had until now been standalone-only and predated the package.
+
+### Fixed
+
+- `pkg/replication.RegisteredReplicas` now reads what `SHOW REPLICAS` actually
+  returns. It promised the column names the MySQL manual prints in its own
+  example — `Server_id` and `Source_id` — which no supported server sends, so
+  against a real server the fact failed with a missing-column error instead of
+  reporting a replica. The promised columns are now `Server_Id` and
+  `Source_Id`. Two `RegisteredReplica` contract statements were wrong for the
+  same reason and are corrected: `Host` may be empty for a listed replica,
+  because a replica started without `report_host` registers anyway rather than
+  staying invisible, and `Port` zero means only that the server returned
+  zero — an unset `report_port` normally reports the replica's actual
+  listening port. The list is still never proof of absence, now grounded on
+  stale rows and replicas that never connected rather than on a registration
+  opt-out that does not exist. `docs/COMPAT.md` entry 22 records the
+  manual/live disagreement, verified on MySQL 8.0.46, 8.4.9, and 9.7.1.
+- `docs/COMPAT.md` entry 6 no longer claims MySQL 8.4 narrowed the
+  `Seconds_Behind_Source` `NULL` rule: the 8.0 and 8.4 manuals state the
+  identical rule, and the narrowing both contrast against is pre-8.0. The
+  entry now also records that at the 8.0.40 floor the `REPLICA` statement
+  spellings and output column names exist on every supported version, so no
+  `SLAVE` fallback is needed.
+
 ## [1.0.0] - 2026-08-11
 
 ### Added

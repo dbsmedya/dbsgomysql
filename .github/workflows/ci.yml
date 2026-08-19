@@ -2,7 +2,9 @@
 # green CI and a green workstation mean the same thing.
 #
 # The check job requires no database. A separate MySQL 8.4 smoke job runs every
-# shipped fact and check once against the repository-owned fixture.
+# shipped fact and check once against the repository-owned fixture, against a
+# standalone server and a source-replica trio started from the repository's own
+# compose file.
 
 name: CI
 
@@ -75,6 +77,20 @@ jobs:
     env:
       DBSGOMYSQL_TEST_DSN: "root:root@tcp(127.0.0.1:3306)/"
       DBSGOMYSQL_TEST_MYSQL_VERSION: "8.4"
+      # The replication smoke coverage needs a source and two replicas, which
+      # a `services:` block cannot express — replicas must reach the source by
+      # name on a shared network, and the source must be healthy before they
+      # start. The repository's own compose file already states exactly that,
+      # so the topology comes up as a step instead.
+      DBSGOMYSQL_TEST_SOURCE_DSN: "root:root@tcp(127.0.0.1:3584)/"
+      DBSGOMYSQL_TEST_REPLICA_DSN: "root:root@tcp(127.0.0.1:3684)/"
+      DBSGOMYSQL_TEST_SILENT_REPLICA_DSN: "root:root@tcp(127.0.0.1:3784)/"
+      # The hostname as the replicas reach the source: its compose service
+      # name, not the host-mapped address the DSNs above use.
+      DBSGOMYSQL_TEST_REPL_SOURCE_HOST: "repl84-source"
+      # A skipped replication test is not evidence. With this set, a missing
+      # DSN fails the job instead of quietly reducing what ran.
+      DBSGOMYSQL_TEST_REQUIRE_REPLICATION: "1"
 
     steps:
       - name: Checkout
@@ -89,6 +105,22 @@ jobs:
         with:
           go-version: ${{ steps.go.outputs.version }}
           cache: true
+
+      # The same compose file developers run locally, which is what makes a
+      # green smoke job and a green workstation mean the same thing. `--wait`
+      # blocks until every named service reports healthy.
+      - name: Start the replication topology
+        run: |
+          docker compose -f tests/docker/compose_replication.yaml up -d --wait \
+            repl84-source repl84-replica repl84-silent
+
+      # Moving-tag evidence: mysql:8.4 is a moving tag, so the run records
+      # which releases it actually tested against.
+      - name: Record topology server versions
+        run: |
+          for p in 3584 3684 3784; do
+            mysql -h 127.0.0.1 -P "$p" -uroot -proot -e 'SELECT VERSION();'
+          done
 
       - name: Smoke tests
         run: make test-smoke

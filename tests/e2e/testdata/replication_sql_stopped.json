@@ -1,0 +1,38 @@
+[
+  {
+    "check": "REPLICATION_CHANNELS_RUNNING",
+    "channels": [""],
+    "facts": {
+      "channel_name": "",
+      "io_running": "Yes",
+      "sql_running": "No",
+      "seconds_behind_source": { "Int64": 0, "Valid": false },
+      "last_io_errno": 0,
+      "last_io_error": "",
+      "last_sql_errno": 0,
+      "last_sql_error": "",
+      "retrieved_gtid_set": "{{gtid_set}}",
+      "executed_gtid_set": "{{gtid_set}}",
+      "source_host": "{{source_host}}",
+      "source_port": 0
+    }
+  },
+  {
+    "check": "SECONDS_BEHIND_SOURCE_WITHIN",
+    "channels": [""],
+    "facts": {
+      "channel_name": "",
+      "io_running": "Yes",
+      "sql_running": "No",
+      "seconds_behind_source": { "Int64": 0, "Valid": false },
+      "last_io_errno": 0,
+      "last_io_error": "",
+      "last_sql_errno": 0,
+      "last_sql_error": "",
+      "retrieved_gtid_set": "{{gtid_set}}",
+      "executed_gtid_set": "{{gtid_set}}",
+      "source_host": "{{source_host}}",
+      "source_port": 0
+    }
+  }
+]
