@@ -51,12 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pkg/replication` registered replicas fact: `Inspector.RegisteredReplicas`
   reports one `RegisteredReplica` per replica registered with this server, in
   the order the server returned them. Its GoDoc states the contract that gives
-  the fact its name: the list is never proof of absence. A replica registers
-  only when started with `report_host`, the rows cover replicas that are or
-  have been connected, and `Host` and `Port` are self-reported and unverified
-  (`docs/COMPAT.md` entry 22), so an empty slice must not be read as "this
-  server has no replicas". `Port` 0 means `report_port` was unset and is a
-  legitimate value rather than an error.
+  the fact its name: the list is never proof of absence. The rows cover
+  replicas that are or have been connected, a replica without explicit
+  `report_host` still registers and is listed with an empty `Host`, and
+  `Host` and `Port` are self-reported and unverified (`docs/COMPAT.md`
+  entry 22), so an empty slice must not be read as "this server has no
+  replicas". `Port` is the port the replica reported: omitting
+  `report_port` normally yields the replica's actual listening port, and
+  zero means only that the server returned zero.
 - `pkg/replication` checks catalog: `Finding`, `CheckInfo`, `CheckStatus`,
   `Catalog`, and `LookupCheck`, mirroring `pkg/validations`, plus five pure
   check functions carrying no severity — `BINARY_LOG_ENABLED`,

@@ -3,7 +3,8 @@
 # Three services per supported MySQL version: a source, a replica that reports
 # itself (report_host set), and a silent replica that does not. The silent
 # replica is what makes SHOW REPLICAS' self-reporting rule observable — it
-# replicates but never appears in the source's registration list.
+# registers all the same, listed with an empty Host and its actual listening
+# port, which is exactly the row shape the tests pin (docs/COMPAT.md entry 22).
 #
 # Host ports are disjoint from tests/docker/compose.yaml's standalone
 # containers (3380 / 3384 / 3397), so both stacks run at once, which is what

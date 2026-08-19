@@ -78,9 +78,11 @@ below.
 
 `pkg/replication` cannot be tested against a single container: it needs a
 source, a replica that reports itself, and a replica that does not. The third
-one is what makes `SHOW REPLICAS`' self-reporting behavior observable. All three
-per version live in `tests/docker/compose_replication.yaml`, on host ports
-disjoint from the standalone matrix above, so both stacks run at once.
+runs without an explicit `report_host` and still registers, listed with an
+empty `Host` — that divergence between live behavior and the manual is what
+the topology makes observable. All three per version live in
+`tests/docker/compose_replication.yaml`, on host ports disjoint from the
+standalone matrix above, so both stacks run at once.
 
 ```sh
 # The standalone container the existing suites use, plus this version's trio

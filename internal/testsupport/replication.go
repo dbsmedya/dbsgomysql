@@ -65,7 +65,8 @@ const (
 )
 
 // ReplTopology holds the three servers of one replication trio: a source, a
-// replica that reports itself to the source, and a replica that does not.
+// replica that reports itself to the source, and a replica without explicit
+// report_host, which still registers with an empty Host.
 // SourceHost is the source's hostname as the replicas reach it (compose DNS),
 // which is not the host in any of the DSNs — those are host-mapped ports.
 //

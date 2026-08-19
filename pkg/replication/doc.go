@@ -32,6 +32,6 @@
 // # Design record
 //
 // The design this package implements is recorded internally as the replication
-// facts design spec, 2026-08-19-replication-facts-design-r5. Consumer-facing
+// facts design spec, 2026-08-19-replication-facts-design-r7. Consumer-facing
 // version behavior lives in docs/COMPAT.md.
 package replication
