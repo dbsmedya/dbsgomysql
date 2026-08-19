@@ -22,6 +22,13 @@ type ScriptedQuery struct {
 	Columns []string
 	// Rows holds the values, one slice per row, aligned with Columns.
 	Rows [][]driver.Value
+	// RowsErr, when non-nil, is returned by the driver's Next once the scripted
+	// rows are consumed, in place of io.EOF. It expresses an iteration failure
+	// that strikes after some rows have already been delivered, which no
+	// connection-level failure can express.
+	RowsErr error
+	// CloseErr, when non-nil, is returned by the driver rows' Close.
+	CloseErr error
 }
 
 // OpenScriptedDB returns a database that answers queries from script. A
@@ -102,7 +109,12 @@ func (c *scriptedConn) QueryContext(
 			return nil, rule.Err
 		}
 
-		return &scriptedRows{columns: rule.Columns, rows: rule.Rows}, nil
+		return &scriptedRows{
+			columns:  rule.Columns,
+			rows:     rule.Rows,
+			rowsErr:  rule.RowsErr,
+			closeErr: rule.CloseErr,
+		}, nil
 	}
 
 	return &scriptedRows{}, nil
@@ -119,17 +131,23 @@ func (c *scriptedConn) Begin() (driver.Tx, error) {
 }
 
 type scriptedRows struct {
-	columns []string
-	rows    [][]driver.Value
-	next    int
+	columns  []string
+	rows     [][]driver.Value
+	next     int
+	rowsErr  error
+	closeErr error
 }
 
 func (r *scriptedRows) Columns() []string { return r.columns }
 
-func (r *scriptedRows) Close() error { return nil }
+func (r *scriptedRows) Close() error { return r.closeErr }
 
 func (r *scriptedRows) Next(dest []driver.Value) error {
 	if r.next >= len(r.rows) {
+		if r.rowsErr != nil {
+			return r.rowsErr
+		}
+
 		return io.EOF
 	}
 	copy(dest, r.rows[r.next])

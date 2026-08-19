@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`docs/COMPAT.md` entry 23). A value the server sends as SQL `NULL` or in an
   undecodable form is reported as an error naming the variable, never as a
   silently zeroed field.
+- `pkg/replication` replica channel status fact: `Inspector.ReplicaStatus`
+  reports one `ChannelStatus` per replication channel, in the order the server
+  returned them, and an empty slice when the server is not a replica. Columns
+  are read by name, so a column the server adds — including the `User` and
+  `Password` columns `--show-replica-auth-info` adds — is ignored rather than
+  misread, while a missing promised column fails the fact and names itself.
+  `SecondsBehindSource` is invalid if and only if the server sent SQL `NULL`;
+  any other undecodable value is an error naming the channel and column that
+  caused it.
 - `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
   observability sweep that scopes `pkg/replication` (v1.1.0): the
   `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
