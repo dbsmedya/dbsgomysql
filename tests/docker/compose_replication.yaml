@@ -1,0 +1,88 @@
+# Source-replica topology for the replication test layers.
+#
+# Three services per supported MySQL version: a source, a replica that reports
+# itself (report_host set), and a silent replica that does not. The silent
+# replica is what makes SHOW REPLICAS' self-reporting rule observable — it
+# replicates but never appears in the source's registration list.
+#
+# Host ports are disjoint from tests/docker/compose.yaml's standalone
+# containers (3380 / 3384 / 3397), so both stacks run at once, which is what
+# the smoke, integration, and e2e layers need.
+#
+#   docker compose -f tests/docker/compose_replication.yaml up -d --wait \
+#     repl84-source repl84-replica repl84-silent
+#   docker compose -f tests/docker/compose_replication.yaml down -v
+#
+# The 8.4 trio comes first because it defines the shared healthcheck anchor;
+# YAML requires an anchor to be defined before it is referenced. The 8.0 and
+# 9.7 trios are identical except for image, service prefix, and host ports.
+services:
+  repl84-source:
+    image: mysql:8.4
+    command: --server-id=1 --gtid-mode=ON --enforce-gtid-consistency=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3584:3306"]
+    healthcheck: &hc
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+  repl84-replica:
+    image: mysql:8.4
+    command: --server-id=2 --gtid-mode=ON --enforce-gtid-consistency=ON
+             --report-host=repl84-replica --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3684:3306"]
+    depends_on: { repl84-source: { condition: service_healthy } }
+    healthcheck: *hc
+  repl84-silent:
+    image: mysql:8.4
+    command: --server-id=3 --gtid-mode=ON --enforce-gtid-consistency=ON --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3784:3306"]
+    depends_on: { repl84-source: { condition: service_healthy } }
+    healthcheck: *hc
+
+  repl80-source:
+    image: mysql:8.0
+    command: --server-id=1 --gtid-mode=ON --enforce-gtid-consistency=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3580:3306"]
+    healthcheck: *hc
+  repl80-replica:
+    image: mysql:8.0
+    command: --server-id=2 --gtid-mode=ON --enforce-gtid-consistency=ON
+             --report-host=repl80-replica --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3680:3306"]
+    depends_on: { repl80-source: { condition: service_healthy } }
+    healthcheck: *hc
+  repl80-silent:
+    image: mysql:8.0
+    command: --server-id=3 --gtid-mode=ON --enforce-gtid-consistency=ON --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3780:3306"]
+    depends_on: { repl80-source: { condition: service_healthy } }
+    healthcheck: *hc
+
+  repl97-source:
+    image: mysql:9.7
+    command: --server-id=1 --gtid-mode=ON --enforce-gtid-consistency=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3597:3306"]
+    healthcheck: *hc
+  repl97-replica:
+    image: mysql:9.7
+    command: --server-id=2 --gtid-mode=ON --enforce-gtid-consistency=ON
+             --report-host=repl97-replica --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3697:3306"]
+    depends_on: { repl97-source: { condition: service_healthy } }
+    healthcheck: *hc
+  repl97-silent:
+    image: mysql:9.7
+    command: --server-id=3 --gtid-mode=ON --enforce-gtid-consistency=ON --read-only=ON
+    environment: { MYSQL_ROOT_PASSWORD: root }
+    ports: ["3797:3306"]
+    depends_on: { repl97-source: { condition: service_healthy } }
+    healthcheck: *hc

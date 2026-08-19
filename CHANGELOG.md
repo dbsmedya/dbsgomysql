@@ -70,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   negative bound produces a finding for every supplied channel rather than
   being clamped. This package reserves no check identifiers, so `CheckStatus`
   declares only `StatusImplemented`.
+- Source-replica test topology and live smoke coverage for `pkg/replication`:
+  `tests/docker/compose_replication.yaml` starts a source, a self-reporting
+  replica, and a silent replica for each supported MySQL version, and
+  `internal/testsupport` gains the helpers that open the trio, converge it on
+  running replication, wait for a replica to catch up, and stop and restore an
+  applier. Every wait polls a real observation under a bound; there are no
+  fixed sleeps. The new `TestSmokeReplication` exercises all six facts and all
+  five checks once against that live topology, and a missing topology DSN
+  fails rather than skips when `DBSGOMYSQL_TEST_REQUIRE_REPLICATION=1`, so a
+  skipped replication test cannot pass for evidence.
 - `docs/COMPAT.md` entries 20–23, recording the MySQL 8.0/8.4/9.7 replication
   observability sweep that scopes `pkg/replication` (v1.1.0): the
   `SHOW MASTER STATUS` → `SHOW BINARY LOG STATUS` divergence and its
