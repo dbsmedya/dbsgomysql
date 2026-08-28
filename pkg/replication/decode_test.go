@@ -222,6 +222,24 @@ func TestDecodeProvenance(t *testing.T) {
 			want:   false,
 		},
 		{
+			name:   "bool from uint64 one",
+			decode: decodeBoolAny,
+			input:  uint64(1),
+			want:   true,
+		},
+		{
+			name:   "bool from uint64 zero",
+			decode: decodeBoolAny,
+			input:  uint64(0),
+			want:   false,
+		},
+		{
+			name:      "bool from uint64 two",
+			decode:    decodeBoolAny,
+			input:     uint64(2),
+			wantErrIs: errUnrecognizedValue,
+		},
+		{
 			name:      "bool from int64 two",
 			decode:    decodeBoolAny,
 			input:     int64(2),

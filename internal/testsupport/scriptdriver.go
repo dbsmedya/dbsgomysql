@@ -29,6 +29,10 @@ type ScriptedQuery struct {
 	RowsErr error
 	// CloseErr, when non-nil, is returned by the driver rows' Close.
 	CloseErr error
+	// PendingResultSet leaves one empty result set after Rows. It prevents
+	// database/sql from closing the rows automatically when the first result
+	// set reaches EOF, so a deferred Close can be tested as the first close.
+	PendingResultSet bool
 }
 
 // OpenScriptedDB returns a database that answers queries from script. A
@@ -110,10 +114,11 @@ func (c *scriptedConn) QueryContext(
 		}
 
 		return &scriptedRows{
-			columns:  rule.Columns,
-			rows:     rule.Rows,
-			rowsErr:  rule.RowsErr,
-			closeErr: rule.CloseErr,
+			columns:          rule.Columns,
+			rows:             rule.Rows,
+			rowsErr:          rule.RowsErr,
+			closeErr:         rule.CloseErr,
+			pendingResultSet: rule.PendingResultSet,
 		}, nil
 	}
 
@@ -131,11 +136,12 @@ func (c *scriptedConn) Begin() (driver.Tx, error) {
 }
 
 type scriptedRows struct {
-	columns  []string
-	rows     [][]driver.Value
-	next     int
-	rowsErr  error
-	closeErr error
+	columns          []string
+	rows             [][]driver.Value
+	next             int
+	rowsErr          error
+	closeErr         error
+	pendingResultSet bool
 }
 
 func (r *scriptedRows) Columns() []string { return r.columns }
@@ -152,6 +158,23 @@ func (r *scriptedRows) Next(dest []driver.Value) error {
 	}
 	copy(dest, r.rows[r.next])
 	r.next++
+
+	return nil
+}
+
+func (r *scriptedRows) HasNextResultSet() bool {
+	return r.pendingResultSet
+}
+
+func (r *scriptedRows) NextResultSet() error {
+	if !r.pendingResultSet {
+		return io.EOF
+	}
+
+	r.pendingResultSet = false
+	r.rows = nil
+	r.next = 0
+	r.rowsErr = nil
 
 	return nil
 }

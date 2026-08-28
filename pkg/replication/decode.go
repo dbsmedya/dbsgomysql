@@ -142,6 +142,15 @@ func decodeBool(value any) (bool, error) {
 		default:
 			return false, fmt.Errorf("%w: %d is neither 0 nor 1", errUnrecognizedValue, typed)
 		}
+	case uint64:
+		switch typed {
+		case 0:
+			return false, nil
+		case 1:
+			return true, nil
+		default:
+			return false, fmt.Errorf("%w: %d is neither 0 nor 1", errUnrecognizedValue, typed)
+		}
 	case []byte:
 		return parseBool(string(typed))
 	case string:

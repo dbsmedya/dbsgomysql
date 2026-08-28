@@ -102,6 +102,7 @@ func parseReplicaStatus(rows *sql.Rows) (channels []ChannelStatus, err error) {
 	defer func() {
 		closeErr := rows.Close()
 		if closeErr != nil && err == nil {
+			channels = nil
 			err = newOpError(opReplicaStatus, "", "", closeErr)
 		}
 	}()
@@ -264,7 +265,12 @@ func decodeColumn[T any](
 	decode func(any) (T, error),
 	target *T,
 ) error {
-	decoded, err := decode(row.values[row.index.positions[column]])
+	position, ok := row.index.positions[column]
+	if !ok {
+		return newOpError(row.op, row.channel, column, errMissingColumn)
+	}
+
+	decoded, err := decode(row.values[position])
 	if err != nil {
 		return newOpError(row.op, row.channel, column, err)
 	}

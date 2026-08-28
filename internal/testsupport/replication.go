@@ -334,16 +334,41 @@ func pollReplicaStatus(
 	ticker := time.NewTicker(replicationPollInterval)
 	defer ticker.Stop()
 
+	accepted, observed := pollReplicaStatusUntil(ctx, ticker.C, func(ctx context.Context) (bool, string, bool) {
+		return observeReplicaStatus(ctx, db, satisfied)
+	})
+	if !accepted {
+		t.Fatalf("waited %s for %s; last observed: %s", deadline, want, observed)
+	}
+}
+
+type replicaStatusObserver func(context.Context) (accepted bool, observed string, successful bool)
+
+func pollReplicaStatusUntil(
+	ctx context.Context,
+	ticks <-chan time.Time,
+	observe replicaStatusObserver,
+) (accepted bool, observed string) {
+	var lastSuccessful string
+
 	for {
-		accepted, observed := observeReplicaStatus(ctx, db, satisfied)
+		var successful bool
+		accepted, observed, successful = observe(ctx)
 		if accepted {
-			return
+			return true, ""
+		}
+		if successful {
+			lastSuccessful = observed
 		}
 
 		select {
 		case <-ctx.Done():
-			t.Fatalf("waited %s for %s; last observed: %s", deadline, want, observed)
-		case <-ticker.C:
+			if lastSuccessful != "" {
+				return false, lastSuccessful
+			}
+
+			return false, observed
+		case <-ticks:
 		}
 	}
 }
@@ -356,17 +381,17 @@ func observeReplicaStatus(
 	ctx context.Context,
 	db *sql.DB,
 	satisfied func([]map[string]sql.NullString) bool,
-) (accepted bool, observed string) {
+) (accepted bool, observed string, successful bool) {
 	rows, statusErr := replicaStatusRows(ctx, db)
 	switch {
 	case statusErr != nil:
-		return false, statusErr.Error()
+		return false, statusErr.Error(), false
 	case len(rows) == 0:
-		return false, sqlShowReplicaStatus + " returned no rows"
+		return false, sqlShowReplicaStatus + " returned no rows", true
 	case satisfied(rows):
-		return true, ""
+		return true, "", true
 	default:
-		return false, formatReplicaStatus(rows)
+		return false, formatReplicaStatus(rows), true
 	}
 }
 
@@ -420,6 +445,17 @@ func replicaStatusRows(ctx context.Context, db *sql.DB) ([]map[string]sql.NullSt
 	if columnsErr != nil {
 		return nil, fmt.Errorf("read %s columns: %w", sqlShowReplicaStatus, columnsErr)
 	}
+	present := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		present[column] = struct{}{}
+	}
+	for _, required := range requiredReplicaStatusColumns() {
+		if _, ok := present[required]; !ok {
+			return nil, fmt.Errorf(
+				"%s result missing required column %s", sqlShowReplicaStatus, required,
+			)
+		}
+	}
 
 	values := make([]sql.NullString, len(columns))
 	targets := make([]any, len(columns))
@@ -444,6 +480,17 @@ func replicaStatusRows(ctx context.Context, db *sql.DB) ([]map[string]sql.NullSt
 	}
 
 	return status, nil
+}
+
+func requiredReplicaStatusColumns() []string {
+	return []string{
+		colChannelName,
+		colReplicaIORunning,
+		colReplicaSQLRunning,
+		colSecondsBehindSource,
+		colLastIOError,
+		colLastSQLError,
+	}
 }
 
 // formatReplicaStatus renders the columns that explain a stalled topology.

@@ -171,6 +171,30 @@ func TestReplicaStatusMissingColumn(t *testing.T) {
 	assertOpError(t, err, opReplicaStatus, "", dropped)
 }
 
+func TestDecodeColumnMissingIndex(t *testing.T) {
+	t.Parallel()
+
+	row := rowDecoder{
+		op:      opReplicaStatus,
+		channel: "ch1",
+		index: columnIndex{
+			positions: map[string]int{"Some_Other_Column": 0},
+			width:     1,
+		},
+		values: []any{[]byte("plausible but wrong")},
+	}
+
+	var got string
+	err := decodeColumn(row, colReplicaIORunning, decodeString, &got)
+	if err == nil {
+		t.Fatalf("decodeColumn() = %q, nil; want a missing-column error", got)
+	}
+	if !errors.Is(err, errMissingColumn) {
+		t.Errorf("errors.Is(%v, errMissingColumn) = false, want true", err)
+	}
+	assertOpError(t, err, opReplicaStatus, "ch1", colReplicaIORunning)
+}
+
 func TestReplicaStatusUndecodableSeconds(t *testing.T) {
 	t.Parallel()
 
@@ -273,16 +297,20 @@ func TestReplicaStatusCloseErr(t *testing.T) {
 
 	cause := errors.New("close failed")
 	db := testsupport.OpenScriptedDB(testsupport.ScriptedQuery{
-		Match:    "SHOW REPLICA STATUS",
-		Columns:  replicaStatusColumns(),
-		Rows:     [][]driver.Value{replicaStatusRow("ch1", int64(0), int64(3306))},
-		CloseErr: cause,
+		Match:            "SHOW REPLICA STATUS",
+		Columns:          replicaStatusColumns(),
+		Rows:             [][]driver.Value{replicaStatusRow("ch1", int64(0), int64(3306))},
+		CloseErr:         cause,
+		PendingResultSet: true,
 	})
 	defer db.Close()
 
 	got, err := NewInspector(db).ReplicaStatus(t.Context())
 	if err == nil {
 		t.Fatalf("ReplicaStatus() = %#v, nil; want the scripted close failure", got)
+	}
+	if got != nil {
+		t.Errorf("ReplicaStatus() = %#v, want nil alongside the error", got)
 	}
 	if !errors.Is(err, cause) {
 		t.Errorf("errors.Is(%v, cause) = false, want true", err)
