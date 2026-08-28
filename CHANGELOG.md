@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-28
+
 ### Fixed
 
 - `pkg/replication` now fails with column attribution if a row decoder and its
@@ -771,7 +773,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.8.1...v0.9.0
