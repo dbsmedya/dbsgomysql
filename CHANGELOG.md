@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `pkg/replication` now fails with column attribution if a row decoder and its
+  promised-column list drift instead of silently reading column zero, returns
+  no partial channel snapshot when closing `SHOW REPLICA STATUS` fails, and
+  accepts boolean 0/1 values delivered by a database driver as `uint64` while
+  continuing to reject every other numeric value.
+
 ## [1.1.0] - 2026-08-19
 
 ### Added
