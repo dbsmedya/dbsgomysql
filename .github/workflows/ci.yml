@@ -124,3 +124,7 @@ jobs:
 
       - name: Smoke tests
         run: make test-smoke
+
+      - name: Dump replication topology logs
+        if: failure()
+        run: docker compose -f tests/docker/compose_replication.yaml logs --no-color
