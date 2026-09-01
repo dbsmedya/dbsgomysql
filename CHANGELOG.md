@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `TableSpec` with `WithConstraints()` no longer reports a CHECK constraint
+  that belongs to another table sharing a name with a key on the inspected
+  table, and no longer duplicates a foreign key's key parts when a unique key
+  shares the constraint's name. Constraints sharing a name across kinds now
+  order stably: CHECK before FOREIGN KEY (#71).
+
 ## [1.1.1] - 2026-08-28
 
 ### Fixed
