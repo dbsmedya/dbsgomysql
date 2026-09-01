@@ -359,11 +359,15 @@ func (i *Inspector) captureConstraints(
 	constraints := make([]ConstraintSpec, 0, len(checks)+len(foreignKeys))
 	constraints = append(constraints, checks...)
 	constraints = append(constraints, foreignKeys...)
+	sortConstraints(constraints)
+
+	return constraints, nil
+}
+
+func sortConstraints(constraints []ConstraintSpec) {
 	sort.Slice(constraints, func(a, b int) bool {
 		return constraints[a].Name < constraints[b].Name
 	})
-
-	return constraints, nil
 }
 
 func (i *Inspector) captureCheckConstraints(
