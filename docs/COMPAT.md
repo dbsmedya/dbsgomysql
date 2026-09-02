@@ -580,16 +580,16 @@ is `GrantUnconfirmed` too, because this package deliberately does not read
 `mysql.user` or parse `SHOW GRANTS`, and no more-specific row can prove a
 global-scope question.
 
-The degradation stops there. Restrictions only ever subtract from an existing
-grant, so a privilege with **no** row at any scope is still reported
-`GrantAbsent` on a pinned, role-free session — enabling partial revokes
-instance-wide must not make every negative answer unprovable. The pure state
-table is pinned by
+Under partial revokes, a privilege with no grant row at any scope is still
+reported absent only on a pinned, role-free session that holds a direct
+schema-level SELECT on the mysql schema; a global SELECT does not count while
+partial revokes are enabled. Otherwise it is GrantUnconfirmed. The broad half
+and its narrow counter-pin are both exercised by
+[`TestPartialRevokesPrivilegeResolutionIntegration`](../pkg/validations/validations_integration_test.go).
+The pure state table is pinned by
 [`TestPartialRevokesDegradeEveryAnswerBackedByGlobalRow`](../pkg/validations/grants_test.go)
 and
-[`TestPartialRevokesDoNotHideProvableAbsence`](../pkg/validations/grants_test.go),
-and the live behavior by
-[`TestPartialRevokesPrivilegeResolutionIntegration`](../pkg/validations/validations_integration_test.go).
+[`TestPartialRevokesDoNotHideProvableAbsence`](../pkg/validations/grants_test.go).
 
 **Reference:** documented. MySQL 8.0 Release Notes, 8.0.16 (2019-04-25), Account
 Management Notes (WL #12098, WL #12364, WL #12820), introduces `partial_revokes`
@@ -1250,6 +1250,99 @@ the server contradicts §11.2.3. The supported manuals agree as follows:
 | A foreign-key `CONSTRAINT` symbol must be unique in the database | §15.1.20.5, "FOREIGN KEY Constraints"; includes pre-8.0.16 and NDB history | §15.1.20.5; the old history is absent | §15.1.25.5; same current rule as 8.4 |
 | Constraint names are not duplicates merely because their uppercase forms match | §11.2.3, "Identifier Case Sensitivity" | §11.2.3, identical | §11.2.3, identical |
 | `CHECK_CONSTRAINTS` has no table-name column | §28.3.5, "The INFORMATION_SCHEMA CHECK_CONSTRAINTS Table" | §28.3.5, same columns | §28.3.5, same columns |
+
+## 25. Column grants are stored outside `TABLE_PRIVILEGES` ⚠️
+
+**Affected:** all supported versions.
+
+**Symptom:** a privilege granted only on one column produces a row in
+`COLUMN_PRIVILEGES` and no row in `TABLE_PRIVILEGES`. Reading only the latter
+therefore makes a privilege the account can exercise on part of the table look
+absent for the entire table.
+
+**Handling:** `Grants` reads `COLUMN_PRIVILEGES` as a weakening-only source. A
+matching column row changes an otherwise-absent `Grants.Table` answer to
+`GrantUnconfirmed`; it never proves the table-level privilege and never affects
+`Grants.Schema` or `Grants.Global`. Pinned by
+[`TestColumnGrantDowngradesTableAbsenceIntegration`](../pkg/validations/validations_integration_test.go).
+
+**Reference:** documented, with identical substance across the supported
+manuals:
+
+| Claim | 8.0 | 8.4 | 9.7 |
+|---|---|---|---|
+| `COLUMN_PRIVILEGES` takes its values from `mysql.columns_priv` | §28.3.10, "The INFORMATION_SCHEMA COLUMN_PRIVILEGES Table" | §28.3.10, identical | §28.3.10, identical |
+| Table and column privileges occupy separate grant-table columns | §8.2.3, "Grant Tables", Table 8.9 (`tables_priv.Table_priv` and `columns_priv.Column_priv`) | §8.2.3, identical | §8.2.3, identical |
+
+## 26. A blank-`User` `db` row applies to a named session ⚠️
+
+**Affected:** all supported versions.
+
+**Symptom:** on 8.0.46, 8.4.9, and 9.7.1, a named account with no grant of its
+own can read a schema granted only to `''@'%'`, while `CURRENT_USER()` still
+reports the named account. Anonymous global, table, and column grants do not
+apply to the named account. The database-level result contradicts the manual's
+rule: "A blank User value matches the anonymous user. A nonblank value matches
+literally; there are no wildcards in user names."
+
+**Handling:** when visible, blank-user `SCHEMA_PRIVILEGES` rows are an
+anonymous, weakening-only source. They can change an otherwise-absent schema or
+table answer to `GrantUnconfirmed`, but never to `GrantPresent`. Anonymous rows
+from `USER_PRIVILEGES`, `TABLE_PRIVILEGES`, and `COLUMN_PRIVILEGES` are excluded.
+An exact match to the current anonymous account still has account provenance
+and can prove a positive. The server behavior and the three excluded scopes are
+pinned by
+[`TestAnonymousDbRowAppliesToNamedAccountIntegration`](../pkg/validations/validations_integration_test.go);
+the fact behavior is pinned by
+[`TestAnonymousGrantWeakensAbsenceWhenVisibleIntegration`](../pkg/validations/validations_integration_test.go).
+
+**Reference:** contradicted by the server at database scope; the manuals are
+worded identically:
+
+| Claim | 8.0 | 8.4 | 9.7 |
+|---|---|---|---|
+| Blank `User` means the anonymous user; nonblank `User` matches literally | §8.2.7, "Access Control, Stage 2: Request Verification" | §8.2.7, identical | §8.2.7, identical |
+| `SCHEMA_PRIVILEGES` takes its values from `mysql.db` | §28.3.33 | §28.3.33 | §28.3.39 |
+
+## 27. Privilege-table row visibility follows direct `SELECT` on `mysql` ⚠️
+
+**Affected:** all supported versions.
+
+**Symptom:** a least-privileged account sees only its own grantee in
+`USER_PRIVILEGES` and cannot see privilege rows belonging to other accounts.
+That makes absence unsafe: an anonymous `mysql.db` row can affect the session
+while remaining invisible to the fact.
+
+**Handling:** `GrantAbsent` requires a pinned, role-free session whose account
+holds a direct schema-level `SELECT` on `mysql`, or a direct global `SELECT`
+while partial revokes are disabled. Either is a sufficient condition for seeing
+other accounts' privilege rows. A table-level grant on `mysql.user`, a global
+grant while `mysql` is partially revoked, a role-held grant, or no qualifying
+row does not prove completeness; every otherwise-absent answer is then
+`GrantUnconfirmed`. A role-held `SELECT ON mysql.*` widened visibility live, but
+is deliberately not a proving source because this fact does not prove
+role-derived privileges. Pinned by
+[`TestPrivilegeTableVisibilityIntegration`](../pkg/validations/validations_integration_test.go)
+and
+[`TestBroadVisibilityNegativeControlsIntegration`](../pkg/validations/validations_integration_test.go).
+
+The before/after server pin produced:
+
+| Server | Narrow `USER_PRIVILEGES` grantees | After direct `SELECT ON mysql.*` |
+|---|---:|---:|
+| 8.0.46 | 1 | 6 |
+| 8.4.9 | 1 | 7 |
+| 9.7.1 | 1 | 6 |
+
+**Reference:** not documented. Refman §28.1, "Introduction", gives only the
+general rule that most `INFORMATION_SCHEMA` tables show rows for objects on
+which the user has proper access. The four privilege-table sections describe
+their source tables and say their results are not equivalent to `SHOW GRANTS`,
+but state no rule for when foreign grantees become visible:
+
+| Table sections | 8.0 | 8.4 | 9.7 |
+|---|---|---|---|
+| `COLUMN_PRIVILEGES` / `SCHEMA_PRIVILEGES` / `TABLE_PRIVILEGES` / `USER_PRIVILEGES` | §28.3.10 / §28.3.33 / §28.3.44 / §28.3.47 | §28.3.10 / §28.3.33 / §28.3.43 / §28.3.46 | §28.3.10 / §28.3.39 / §28.3.49 / §28.3.52 |
 
 ---
 

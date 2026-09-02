@@ -3,6 +3,7 @@ package validations
 import (
 	"database/sql/driver"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -28,9 +29,9 @@ func grantsPreamble(currentUser string, roles [][]driver.Value) []queryStep {
 	}
 }
 
-// privilegeSteps returns the three privilege-table steps, with subject's step
-// carrying the caller's matcher and the other two left permissive. Only the
-// subject is under test in any one case, which is what keeps three call sites
+// privilegeSteps returns the four privilege-table steps, with subject's step
+// carrying the caller's matcher and the other three left permissive. Only the
+// subject is under test in any one case, which is what keeps four call sites
 // from hiding behind one assertion.
 func privilegeSteps(subject string, match *queryStep) []queryStep {
 	sites := []struct {
@@ -41,6 +42,10 @@ func privilegeSteps(subject string, match *queryStep) []queryStep {
 		{"SCHEMA_PRIVILEGES", []string{"GRANTEE", "TABLE_SCHEMA", "PRIVILEGE_TYPE"}},
 		{
 			"TABLE_PRIVILEGES",
+			[]string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
+		},
+		{
+			"COLUMN_PRIVILEGES",
 			[]string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
 		},
 	}
@@ -60,7 +65,12 @@ func privilegeSteps(subject string, match *queryStep) []queryStep {
 }
 
 func grantsSites() []string {
-	return []string{"USER_PRIVILEGES", "SCHEMA_PRIVILEGES", "TABLE_PRIVILEGES"}
+	return []string{
+		"USER_PRIVILEGES",
+		"SCHEMA_PRIVILEGES",
+		"TABLE_PRIVILEGES",
+		"COLUMN_PRIVILEGES",
+	}
 }
 
 func roleRows(count int) [][]driver.Value {
@@ -76,9 +86,9 @@ func TestGrantsNarrowsEveryPrivilegeSiteOnDistinctGrantees(t *testing.T) {
 	t.Parallel()
 
 	// One account plus one enabled role is two distinct grantees, so each of
-	// the three statements binds two parameters. Each site is asserted in its
-	// own case: they are three separate call sites, and one shared assertion
-	// would pass while two of them went unwired.
+	// the four statements binds two account/role parameters. Each site is
+	// asserted in its own case: they are four separate call sites, and one
+	// shared assertion would pass while the others went unwired.
 	for _, site := range grantsSites() {
 		t.Run(site, func(t *testing.T) {
 			t.Parallel()
@@ -96,6 +106,52 @@ func TestGrantsNarrowsEveryPrivilegeSiteOnDistinctGrantees(t *testing.T) {
 			}
 			script.assertDone(t)
 		})
+	}
+}
+
+func TestGrantsOnlySchemaPredicateIncludesAnonymousAccounts(t *testing.T) {
+	t.Parallel()
+
+	for _, site := range grantsSites() {
+		t.Run(site, func(t *testing.T) {
+			t.Parallel()
+
+			match := queryStep{contains: site}
+			if site == "SCHEMA_PRIVILEGES" {
+				match.contains = "OR GRANTEE LIKE ?"
+			} else {
+				match.lacks = "GRANTEE LIKE ?"
+			}
+			steps := grantsPreamble("app@%", nil)
+			steps = append(steps, privilegeSteps(site, &match)...)
+			script := &queryScript{steps: steps}
+
+			if _, err := NewInspector(openScriptedDB(t, script), "shop").Grants(
+				t.Context(),
+			); err != nil {
+				t.Fatalf("Grants: %v", err)
+			}
+			script.assertDone(t)
+		})
+	}
+}
+
+func TestAnonymousGranteePredicateBindsPattern(t *testing.T) {
+	t.Parallel()
+
+	query, args := granteePredicateWithAnonymous(
+		"SELECT GRANTEE FROM information_schema.SCHEMA_PRIVILEGES",
+		[]string{"'app'@'%'"},
+	)
+	if !strings.Contains(query, "GRANTEE IN (?)") ||
+		!strings.Contains(query, "OR GRANTEE LIKE ?") {
+		t.Errorf("query = %q, want bound account and anonymous predicates", query)
+	}
+	if strings.Contains(query, "''@%") {
+		t.Errorf("query embeds anonymous pattern instead of binding it: %q", query)
+	}
+	if len(args) != 2 || args[0] != "'app'@'%'" || args[1] != "''@%" {
+		t.Errorf("args = %#v, want account followed by anonymous pattern", args)
 	}
 }
 
@@ -197,6 +253,11 @@ func TestGrantsIgnoresRowsForGranteesThatAreNeitherAccountNorRole(t *testing.T) 
 			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
 			rows:     [][]driver.Value{{"'stranger'@'%'", "shop", "orders", "DELETE"}},
 		},
+		queryStep{
+			contains: "COLUMN_PRIVILEGES",
+			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
+			rows:     [][]driver.Value{{"'stranger'@'%'", "shop", "orders", "SELECT"}},
+		},
 	)
 	script := &queryScript{steps: steps}
 
@@ -214,5 +275,57 @@ func TestGrantsIgnoresRowsForGranteesThatAreNeitherAccountNorRole(t *testing.T) 
 	}
 	if len(fact.table) != 0 {
 		t.Errorf("table = %#v, want empty", fact.table)
+	}
+	if len(fact.column) != 0 {
+		t.Errorf("column = %#v, want empty", fact.column)
+	}
+}
+
+func TestGrantsRecordsAnonymousSchemaRowsOnly(t *testing.T) {
+	t.Parallel()
+
+	steps := grantsPreamble("app@%", nil)
+	steps = append(steps,
+		queryStep{
+			contains: "USER_PRIVILEGES",
+			columns:  []string{"GRANTEE", "PRIVILEGE_TYPE"},
+			rows:     [][]driver.Value{{"''@'%'", "SELECT"}},
+		},
+		queryStep{
+			contains: "SCHEMA_PRIVILEGES",
+			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "PRIVILEGE_TYPE"},
+			rows:     [][]driver.Value{{"''@'%'", "shop", "SELECT"}},
+		},
+		queryStep{
+			contains: "TABLE_PRIVILEGES",
+			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
+			rows:     [][]driver.Value{{"''@'%'", "shop", "orders", "SELECT"}},
+		},
+		queryStep{
+			contains: "COLUMN_PRIVILEGES",
+			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
+			rows:     [][]driver.Value{{"''@'%'", "shop", "orders", "SELECT"}},
+		},
+	)
+	script := &queryScript{steps: steps}
+
+	fact, err := NewInspector(openScriptedDB(t, script), "shop").Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants: %v", err)
+	}
+	script.assertDone(t)
+
+	if got := fact.schema[schemaPrivilegeKey{
+		schema: "shop", privilege: PrivilegeSelect,
+	}]; got != grantSourceAnonymous {
+		t.Errorf("anonymous schema source = %d, want anonymous", got)
+	}
+	if len(fact.global) != 0 || len(fact.table) != 0 || len(fact.column) != 0 {
+		t.Errorf(
+			"anonymous non-schema rows recorded: global=%#v table=%#v column=%#v",
+			fact.global,
+			fact.table,
+			fact.column,
+		)
 	}
 }

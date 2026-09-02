@@ -59,6 +59,9 @@ func TestGrantResolutionByAffinityAndProvenance(t *testing.T) {
 			PrivilegeInsert: grantSourceRole,
 			PrivilegeUpdate: grantSourceAccount | grantSourceRole,
 		},
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+		},
 	}
 
 	tests := []struct {
@@ -122,8 +125,10 @@ func TestGrantResolutionNegativesAndPartialRevokes(t *testing.T) {
 		populated: true,
 		affinity:  affinityPinned,
 		global:    map[Privilege]grantSources{},
-		schema:    map[schemaPrivilegeKey]grantSources{},
-		table:     map[tablePrivilegeKey]grantSources{},
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+		},
+		table: map[tablePrivilegeKey]grantSources{},
 	}
 	if got := roleFreePinned.Table("shop", "orders", PrivilegeDelete); got != GrantAbsent {
 		t.Errorf("pinned role-free negative = %s, want absent", got)
@@ -170,16 +175,17 @@ func TestGrantResolutionNegativesAndPartialRevokes(t *testing.T) {
 func TestPartialRevokesDoNotHideProvableAbsence(t *testing.T) {
 	t.Parallel()
 
-	// Restrictions only ever subtract from an existing global grant, so a
-	// privilege with no row at any scope stays provably absent no matter what
-	// @@global.partial_revokes says.
+	// Under partial revokes, only a direct schema-level SELECT on mysql proves
+	// that another account's hidden rows cannot supply the missing privilege.
 	fact := Grants{
 		populated:      true,
 		affinity:       affinityPinned,
 		partialRevokes: true,
 		global:         map[Privilege]grantSources{},
-		schema:         map[schemaPrivilegeKey]grantSources{},
-		table:          map[tablePrivilegeKey]grantSources{},
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+		},
+		table: map[tablePrivilegeKey]grantSources{},
 	}
 
 	if got := fact.Global(PrivilegeDelete); got != GrantAbsent {
@@ -190,6 +196,12 @@ func TestPartialRevokesDoNotHideProvableAbsence(t *testing.T) {
 	}
 	if got := fact.Table("shop", "orders", PrivilegeDelete); got != GrantAbsent {
 		t.Errorf("table answer with no grant row = %s, want absent", got)
+	}
+
+	narrow := fact
+	narrow.schema = map[schemaPrivilegeKey]grantSources{}
+	if got := narrow.Table("shop", "orders", PrivilegeDelete); got != GrantUnconfirmed {
+		t.Errorf("narrow table answer with no grant row = %s, want unconfirmed", got)
 	}
 }
 
@@ -231,6 +243,7 @@ func TestWildcardSchemaGrantDowngradesAbsenceOnly(t *testing.T) {
 		global:         map[Privilege]grantSources{},
 		schema: map[schemaPrivilegeKey]grantSources{
 			{schema: "shop%", privilege: PrivilegeSelect}: grantSourceAccount,
+			{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
 		},
 		table: map[tablePrivilegeKey]grantSources{},
 	}
@@ -251,13 +264,217 @@ func TestWildcardSchemaGrantDowngradesAbsenceOnly(t *testing.T) {
 	// A pattern never proves an object; only an exact stored key does.
 	exact := fact
 	exact.schema = map[schemaPrivilegeKey]grantSources{
-		{schema: "shop", privilege: PrivilegeSelect}: grantSourceAccount,
+		{schema: "shop", privilege: PrivilegeSelect}:  grantSourceAccount,
+		{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
 	}
 	if got := exact.Schema("shop", PrivilegeSelect); got != GrantPresent {
 		t.Errorf("exact schema grant = %s, want present", got)
 	}
 	if got := exact.Schema("shopping", PrivilegeSelect); got != GrantAbsent {
 		t.Errorf("literal key against a longer name = %s, want absent", got)
+	}
+}
+
+func TestCaseVariantKeyDowngradesAbsenceOnly(t *testing.T) {
+	t.Parallel()
+
+	fact := Grants{
+		populated: true,
+		affinity:  affinityPinned,
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+			{schema: "shop", privilege: PrivilegeSelect}:  grantSourceAccount,
+		},
+		table: map[tablePrivilegeKey]grantSources{
+			{schema: "shop", table: "orders", privilege: PrivilegeDelete}: grantSourceAccount,
+		},
+		column: map[tablePrivilegeKey]grantSources{
+			{schema: "shop", table: "orders", privilege: PrivilegeUpdate}: grantSourceAccount,
+		},
+	}
+
+	if got := fact.Schema("Shop", PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("case-variant schema = %s, want unconfirmed", got)
+	}
+	if got := fact.Table("Shop", "Orders", PrivilegeDelete); got != GrantUnconfirmed {
+		t.Errorf("case-variant table = %s, want unconfirmed", got)
+	}
+	if got := fact.Schema("shop", PrivilegeSelect); got != GrantPresent {
+		t.Errorf("exact schema = %s, want present", got)
+	}
+	if got := fact.Table("shop", "orders", PrivilegeDelete); got != GrantPresent {
+		t.Errorf("exact table = %s, want present", got)
+	}
+	if got := fact.Table("Shop", "Orders", PrivilegeUpdate); got != GrantUnconfirmed {
+		t.Errorf("case-variant column-covered table = %s, want unconfirmed", got)
+	}
+	if got := fact.Schema("shops", PrivilegeSelect); got != GrantAbsent {
+		t.Errorf("distinct schema = %s, want absent", got)
+	}
+}
+
+func TestColumnGrantDowngradesTableAbsenceOnly(t *testing.T) {
+	t.Parallel()
+
+	fact := Grants{
+		populated: true,
+		affinity:  affinityPinned,
+		global:    map[Privilege]grantSources{},
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+		},
+		table: map[tablePrivilegeKey]grantSources{
+			{schema: "shop", table: "orders", privilege: PrivilegeDelete}: grantSourceAccount,
+		},
+		column: map[tablePrivilegeKey]grantSources{
+			{schema: "shop", table: "orders", privilege: PrivilegeSelect}: grantSourceAccount,
+		},
+	}
+
+	if got := fact.Table("shop", "orders", PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("column-covered table = %s, want unconfirmed", got)
+	}
+	if got := fact.Table("shop", "orders", PrivilegeDelete); got != GrantPresent {
+		t.Errorf("present table = %s, want present", got)
+	}
+	if got := fact.Schema("shop", PrivilegeSelect); got != GrantAbsent {
+		t.Errorf("schema from column grant = %s, want absent", got)
+	}
+	if got := fact.Global(PrivilegeSelect); got != GrantAbsent {
+		t.Errorf("global from column grant = %s, want absent", got)
+	}
+	if got := fact.Table("shop", "customers", PrivilegeSelect); got != GrantAbsent {
+		t.Errorf("other table = %s, want absent", got)
+	}
+}
+
+func TestAnonymousSourceOnlyWeakens(t *testing.T) {
+	t.Parallel()
+
+	fact := Grants{
+		populated: true,
+		affinity:  affinityPinned,
+		global:    map[Privilege]grantSources{},
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+			{schema: "shop", privilege: PrivilegeSelect}:  grantSourceAnonymous,
+		},
+		table:  map[tablePrivilegeKey]grantSources{},
+		column: map[tablePrivilegeKey]grantSources{},
+	}
+
+	if got := fact.Schema("shop", PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("anonymous-covered schema = %s, want unconfirmed", got)
+	}
+	if got := fact.Table("shop", "orders", PrivilegeSelect); got != GrantUnconfirmed {
+		t.Errorf("anonymous-covered table = %s, want unconfirmed", got)
+	}
+	if got := fact.Schema("archive", PrivilegeSelect); got != GrantAbsent {
+		t.Errorf("uncovered schema = %s, want absent", got)
+	}
+	if got := fact.Global(PrivilegeSelect); got != GrantAbsent {
+		t.Errorf("global answer = %s, want absent", got)
+	}
+}
+
+func TestBroadVisibilityRequiresDirectMysqlSelect(t *testing.T) {
+	t.Parallel()
+
+	base := Grants{
+		global: map[Privilege]grantSources{},
+		schema: map[schemaPrivilegeKey]grantSources{},
+		table:  map[tablePrivilegeKey]grantSources{},
+	}
+	if base.broadVisibility() {
+		t.Error("no grant row unexpectedly gives broad visibility")
+	}
+
+	schemaDirect := base
+	schemaDirect.schema = map[schemaPrivilegeKey]grantSources{
+		{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+	}
+	if !schemaDirect.broadVisibility() {
+		t.Error("direct schema-level mysql SELECT = narrow, want broad")
+	}
+
+	globalDirect := base
+	globalDirect.global = map[Privilege]grantSources{PrivilegeSelect: grantSourceAccount}
+	if !globalDirect.broadVisibility() {
+		t.Error("direct global SELECT = narrow, want broad")
+	}
+	globalDirect.partialRevokes = true
+	if globalDirect.broadVisibility() {
+		t.Error("global SELECT under partial revokes = broad, want narrow")
+	}
+
+	roleHeld := base
+	roleHeld.schema = map[schemaPrivilegeKey]grantSources{
+		{schema: "mysql", privilege: PrivilegeSelect}: grantSourceRole,
+	}
+	if roleHeld.broadVisibility() {
+		t.Error("role-held schema-level mysql SELECT = broad, want narrow")
+	}
+
+	tableOnly := base
+	tableOnly.table = map[tablePrivilegeKey]grantSources{
+		{schema: "mysql", table: "user", privilege: PrivilegeSelect}: grantSourceAccount,
+	}
+	if tableOnly.broadVisibility() {
+		t.Error("table-level mysql.user SELECT = broad, want narrow")
+	}
+}
+
+func TestAnonymousSessionOwnRowsAreAccountSource(t *testing.T) {
+	t.Parallel()
+
+	fact := Grants{
+		accountGrantee: "''@'%'",
+		roleGrantees:   map[string]struct{}{"''@'rolehost'": {}},
+	}
+	if got := fact.sourceFor("''@'%'"); got != grantSourceAccount {
+		t.Errorf("own anonymous grantee source = %d, want account", got)
+	}
+	if got := fact.sourceFor("''@'rolehost'"); got != grantSourceRole {
+		t.Errorf("anonymous role grantee source = %d, want role", got)
+	}
+	if got := fact.sourceFor("''@'localhost'"); got != grantSourceAnonymous {
+		t.Errorf("other anonymous grantee source = %d, want anonymous", got)
+	}
+}
+
+func TestNarrowVisibilityDowngradesEveryAbsence(t *testing.T) {
+	t.Parallel()
+
+	fact := Grants{
+		populated: true,
+		affinity:  affinityPinned,
+		global:    map[Privilege]grantSources{},
+		schema:    map[schemaPrivilegeKey]grantSources{},
+		table: map[tablePrivilegeKey]grantSources{
+			{schema: "shop", table: "orders", privilege: PrivilegeDelete}: grantSourceAccount,
+		},
+	}
+
+	if got := fact.Table("shop", "orders", PrivilegeDelete); got != GrantPresent {
+		t.Errorf("present table answer = %s, want present", got)
+	}
+	for _, answer := range []struct {
+		name string
+		got  GrantState
+	}{
+		{name: "global", got: fact.Global(PrivilegeDelete)},
+		{name: "schema", got: fact.Schema("shop", PrivilegeCreate)},
+		{name: "table", got: fact.Table("shop", "missing", PrivilegeCreate)},
+	} {
+		if answer.got != GrantUnconfirmed {
+			t.Errorf("narrow %s absence = %s, want unconfirmed", answer.name, answer.got)
+		}
+	}
+
+	fact.schema[schemaPrivilegeKey{schema: "mysql", privilege: PrivilegeSelect}] =
+		grantSourceAccount
+	if got := fact.Table("shop", "missing", PrivilegeCreate); got != GrantAbsent {
+		t.Errorf("broad table absence = %s, want absent", got)
 	}
 }
 
@@ -313,7 +530,9 @@ func TestPrivilegeChecksTotalStateTable(t *testing.T) {
 		global: map[Privilege]grantSources{
 			PrivilegeSelect: grantSourceAccount,
 		},
-		schema: map[schemaPrivilegeKey]grantSources{},
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+		},
 		table: map[tablePrivilegeKey]grantSources{
 			{schema: "shop", table: "orders", privilege: PrivilegeDelete}: grantSourceAccount,
 		},
@@ -389,6 +608,21 @@ func TestGrantsAssemblesProvenanceAndPoolDegradation(t *testing.T) {
 	script.assertDone(t)
 }
 
+func TestGrantsSQLAndQueryCount(t *testing.T) {
+	t.Parallel()
+
+	script := grantsScript()
+	if got, want := len(script.steps), 7; got != want {
+		t.Fatalf("Grants query steps = %d, want %d", got, want)
+	}
+	if _, err := NewInspector(openScriptedDB(t, script), "shop").Grants(
+		t.Context(),
+	); err != nil {
+		t.Fatalf("Grants: %v", err)
+	}
+	script.assertDone(t)
+}
+
 func TestGrantsPinnedRoleFreeNegativeIsAbsent(t *testing.T) {
 	t.Parallel()
 
@@ -397,8 +631,13 @@ func TestGrantsPinnedRoleFreeNegativeIsAbsent(t *testing.T) {
 		{contains: "ENABLED_ROLES", columns: []string{"ROLE_NAME", "ROLE_HOST"}},
 		{contains: "@@global.partial_revokes", columns: []string{"partial_revokes"}, rows: [][]driver.Value{{int64(0)}}},
 		{contains: "USER_PRIVILEGES", columns: []string{"GRANTEE", "PRIVILEGE_TYPE"}},
-		{contains: "SCHEMA_PRIVILEGES", columns: []string{"GRANTEE", "TABLE_SCHEMA", "PRIVILEGE_TYPE"}},
+		{
+			contains: "SCHEMA_PRIVILEGES",
+			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "PRIVILEGE_TYPE"},
+			rows:     [][]driver.Value{{"'app'@'%'", "mysql", "SELECT"}},
+		},
 		{contains: "TABLE_PRIVILEGES", columns: []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"}},
+		{contains: "COLUMN_PRIVILEGES", columns: []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"}},
 	}}
 	db := openScriptedDB(t, script)
 	conn, err := db.Conn(t.Context())
@@ -429,6 +668,30 @@ func TestGrantsQueryErrorIsWrapped(t *testing.T) {
 		contains: "CURRENT_USER()",
 		err:      cause,
 	}}}
+	db := openScriptedDB(t, script)
+	_, err := NewInspector(db, "shop").Grants(t.Context())
+	assertObjectErrorCause(t, err, cause, opGrants, "shop")
+	script.assertDone(t)
+}
+
+func TestGrantsColumnQueryErrorIsWrapped(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("column privileges failed")
+	steps := grantsPreamble("app@%", nil)
+	steps = append(steps,
+		queryStep{contains: "USER_PRIVILEGES", columns: []string{"GRANTEE", "PRIVILEGE_TYPE"}},
+		queryStep{
+			contains: "SCHEMA_PRIVILEGES",
+			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "PRIVILEGE_TYPE"},
+		},
+		queryStep{
+			contains: "TABLE_PRIVILEGES",
+			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
+		},
+		queryStep{contains: "COLUMN_PRIVILEGES", err: cause},
+	)
+	script := &queryScript{steps: steps}
 	db := openScriptedDB(t, script)
 	_, err := NewInspector(db, "shop").Grants(t.Context())
 	assertObjectErrorCause(t, err, cause, opGrants, "shop")
@@ -466,6 +729,10 @@ func grantsScript() *queryScript {
 			contains: "TABLE_PRIVILEGES",
 			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
 			rows:     [][]driver.Value{{"'app'@'%'", "shop", "orders", "DELETE"}},
+		},
+		{
+			contains: "COLUMN_PRIVILEGES",
+			columns:  []string{"GRANTEE", "TABLE_SCHEMA", "TABLE_NAME", "PRIVILEGE_TYPE"},
 		},
 	}}
 }

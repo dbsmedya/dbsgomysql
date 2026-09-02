@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -1227,6 +1228,380 @@ func TestGranteeAndRolePrivilegesIntegration(t *testing.T) {
 	}
 }
 
+func TestColumnGrantDowngradesTableAbsenceIntegration(t *testing.T) {
+	admin, schema := constraintCollisionDatabase(t)
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_column")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON mysql.* TO "+testsupport.GrantAccountSQL(account),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT (email) ON "+sqlutil.QuoteQualified(schema, "cc_users")+
+			" TO "+testsupport.GrantAccountSQL(account),
+	)
+
+	conn := testsupport.MySQLConnAs(t, account)
+	grants, err := validations.NewInspector(conn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants with column SELECT: %v", err)
+	}
+	if got := grants.Table(schema, "cc_users", validations.PrivilegeSelect); got != validations.GrantUnconfirmed {
+		t.Errorf("column-covered table SELECT = %s, want unconfirmed", got)
+	}
+	if got := grants.Table(schema, "cc_contacts", validations.PrivilegeSelect); got != validations.GrantAbsent {
+		t.Errorf("uncovered table SELECT = %s, want absent", got)
+	}
+	if got := grants.Schema(schema, validations.PrivilegeSelect); got != validations.GrantAbsent {
+		t.Errorf("schema SELECT from a column grant = %s, want absent", got)
+	}
+}
+
+func TestCaseVariantGrantDowngradesAbsenceIntegration(t *testing.T) {
+	admin, schema := constraintCollisionDatabase(t)
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_casegrant")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON mysql.* TO "+testsupport.GrantAccountSQL(account),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON "+sqlutil.QuoteQualified(schema, "cc_users")+
+			" TO "+testsupport.GrantAccountSQL(account),
+	)
+
+	conn := testsupport.MySQLConnAs(t, account)
+	grants, err := validations.NewInspector(conn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants with case-variant lookup: %v", err)
+	}
+	if got := grants.Table(
+		strings.ToUpper(schema),
+		"CC_USERS",
+		validations.PrivilegeSelect,
+	); got != validations.GrantUnconfirmed {
+		t.Errorf("case-variant table SELECT = %s, want unconfirmed", got)
+	}
+	if got := grants.Table(schema, "cc_users", validations.PrivilegeSelect); got != validations.GrantPresent {
+		t.Errorf("exact table SELECT = %s, want present", got)
+	}
+}
+
+func TestAnonymousGrantWeakensAbsenceWhenVisibleIntegration(t *testing.T) {
+	admin, schema := validationDatabase(t)
+	anonymous := createAnonymousMySQLAccount(t, admin)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON "+sqlutil.QuoteIdentifier(schema)+".* TO "+
+			testsupport.GrantAccountSQL(anonymous),
+	)
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_anonvisible")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON mysql.* TO "+testsupport.GrantAccountSQL(account),
+	)
+
+	conn := testsupport.MySQLConnAs(t, account)
+	grants, err := validations.NewInspector(conn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants with visible anonymous row: %v", err)
+	}
+	if got := grants.Schema(schema, validations.PrivilegeSelect); got != validations.GrantUnconfirmed {
+		t.Errorf("anonymous-covered schema SELECT = %s, want unconfirmed", got)
+	}
+	if got := grants.Table(schema, "clean_table", validations.PrivilegeSelect); got != validations.GrantUnconfirmed {
+		t.Errorf("anonymous-covered table SELECT = %s, want unconfirmed", got)
+	}
+	if got := grants.Schema(schema+"_other", validations.PrivilegeSelect); got != validations.GrantAbsent {
+		t.Errorf("uncovered schema SELECT = %s, want absent", got)
+	}
+}
+
+func TestNarrowVisibilityDowngradesEveryAbsenceIntegration(t *testing.T) {
+	admin, schema := constraintCollisionDatabase(t)
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_narrow")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON "+sqlutil.QuoteQualified(schema, "cc_users")+
+			" TO "+testsupport.GrantAccountSQL(account),
+	)
+
+	conn := testsupport.MySQLConnAs(t, account)
+	grants, err := validations.NewInspector(conn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants with narrow visibility: %v", err)
+	}
+	if got := grants.Table(schema, "cc_users", validations.PrivilegeSelect); got != validations.GrantPresent {
+		t.Errorf("direct table SELECT = %s, want present", got)
+	}
+	for _, answer := range []struct {
+		name string
+		got  validations.GrantState
+	}{
+		{name: "other table", got: grants.Table(schema, "cc_contacts", validations.PrivilegeSelect)},
+		{name: "schema", got: grants.Schema(schema, validations.PrivilegeSelect)},
+		{name: "other schema", got: grants.Schema(schema+"_other", validations.PrivilegeSelect)},
+		{name: "global", got: grants.Global(validations.PrivilegeSelect)},
+	} {
+		if answer.got != validations.GrantUnconfirmed {
+			t.Errorf("narrow %s answer = %s, want unconfirmed", answer.name, answer.got)
+		}
+	}
+
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON mysql.* TO "+testsupport.GrantAccountSQL(account),
+	)
+	broadConn := testsupport.MySQLConnAs(t, account)
+	broad, err := validations.NewInspector(broadConn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants with broad visibility: %v", err)
+	}
+	for _, answer := range []struct {
+		name string
+		got  validations.GrantState
+	}{
+		{name: "other table", got: broad.Table(schema, "cc_contacts", validations.PrivilegeSelect)},
+		{name: "schema", got: broad.Schema(schema, validations.PrivilegeSelect)},
+		{name: "other schema", got: broad.Schema(schema+"_other", validations.PrivilegeSelect)},
+		{name: "global", got: broad.Global(validations.PrivilegeSelect)},
+	} {
+		if answer.got != validations.GrantAbsent {
+			t.Errorf("broad %s answer = %s, want absent", answer.name, answer.got)
+		}
+	}
+}
+
+func TestBroadVisibilityNegativeControlsIntegration(t *testing.T) {
+	admin, schema := validationDatabase(t)
+
+	tableAccount := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_tablevis")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON mysql.user TO "+testsupport.GrantAccountSQL(tableAccount),
+	)
+	tableConn := testsupport.MySQLConnAs(t, tableAccount)
+	tableGrants, grantsErr := validations.NewInspector(tableConn, schema).Grants(t.Context())
+	if grantsErr != nil {
+		t.Fatalf("Grants with table-level mysql visibility: %v", grantsErr)
+	}
+	if got := tableGrants.Table(
+		schema,
+		"clean_table",
+		validations.PrivilegeDelete,
+	); got != validations.GrantUnconfirmed {
+		t.Errorf("table-level mysql.user visibility = %s, want unconfirmed", got)
+	}
+
+	var original int
+	if err := admin.QueryRowContext(
+		t.Context(),
+		"SELECT @@global.partial_revokes",
+	).Scan(&original); err != nil {
+		t.Fatalf("read original partial_revokes: %v", err)
+	}
+	testsupport.ExecSQL(t, admin, "SET GLOBAL partial_revokes = ON")
+	t.Cleanup(func() {
+		value := "OFF"
+		if original != 0 {
+			value = "ON"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := admin.ExecContext(ctx, "SET GLOBAL partial_revokes = "+value); err != nil {
+			t.Errorf("restore partial_revokes=%s: %v", value, err)
+		}
+	})
+
+	partialAccount := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_partialvis")
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON *.* TO "+testsupport.GrantAccountSQL(partialAccount),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"REVOKE SELECT ON mysql.* FROM "+testsupport.GrantAccountSQL(partialAccount),
+	)
+	partialConn := testsupport.MySQLConnAs(t, partialAccount)
+	partialGrants, partialErr := validations.NewInspector(partialConn, schema).Grants(t.Context())
+	if partialErr != nil {
+		t.Fatalf("Grants with partial-revoked mysql visibility: %v", partialErr)
+	}
+	if got := partialGrants.Table(
+		schema,
+		"clean_table",
+		validations.PrivilegeDelete,
+	); got != validations.GrantUnconfirmed {
+		t.Errorf("partial-revoked global visibility = %s, want unconfirmed", got)
+	}
+}
+
+func TestPrivilegeTableVisibilityIntegration(t *testing.T) {
+	admin, _ := validationDatabase(t)
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_visibility")
+	conn := testsupport.MySQLConnAs(t, account)
+
+	var narrow int
+	if err := conn.QueryRowContext(
+		t.Context(),
+		"SELECT COUNT(DISTINCT GRANTEE) FROM information_schema.USER_PRIVILEGES",
+	).Scan(&narrow); err != nil {
+		t.Fatalf("count narrow USER_PRIVILEGES grantees: %v", err)
+	}
+	if narrow != 1 {
+		t.Fatalf("narrow USER_PRIVILEGES grantees = %d, want 1", narrow)
+	}
+
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON mysql.* TO "+testsupport.GrantAccountSQL(account),
+	)
+	broadConn := testsupport.MySQLConnAs(t, account)
+	var broad int
+	if err := broadConn.QueryRowContext(
+		t.Context(),
+		"SELECT COUNT(DISTINCT GRANTEE) FROM information_schema.USER_PRIVILEGES",
+	).Scan(&broad); err != nil {
+		t.Fatalf("count broad USER_PRIVILEGES grantees: %v", err)
+	}
+	if broad <= 1 {
+		t.Errorf("broad USER_PRIVILEGES grantees = %d, want more than 1", broad)
+	}
+}
+
+func TestAnonymousDbRowAppliesToNamedAccountIntegration(t *testing.T) {
+	admin, schema := validationDatabase(t)
+	controlAdmin, controlSchema := testsupport.MySQLDatabase(t, "dbsgomysql_anon_control")
+	testsupport.ExecSQL(
+		t,
+		controlAdmin,
+		"CREATE TABLE "+sqlutil.QuoteQualified(controlSchema, "control")+" (id INT)",
+	)
+	anonymous := createAnonymousMySQLAccount(t, admin)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON "+sqlutil.QuoteIdentifier(schema)+".* TO "+
+			testsupport.GrantAccountSQL(anonymous),
+	)
+	account := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_anonserver")
+	conn := testsupport.MySQLConnAs(t, account)
+
+	var currentUser string
+	if err := conn.QueryRowContext(t.Context(), "SELECT CURRENT_USER()").Scan(&currentUser); err != nil {
+		t.Fatalf("read CURRENT_USER(): %v", err)
+	}
+	if currentUser != account.User+"@%" {
+		t.Fatalf("CURRENT_USER() = %q, want %q", currentUser, account.User+"@%")
+	}
+	var rows int
+	if err := conn.QueryRowContext(
+		t.Context(),
+		"SELECT COUNT(*) FROM "+sqlutil.QuoteQualified(schema, "clean_table"),
+	).Scan(&rows); err != nil {
+		t.Fatalf("read table covered only by anonymous db row: %v", err)
+	}
+	if err := conn.QueryRowContext(
+		t.Context(),
+		"SELECT COUNT(*) FROM "+sqlutil.QuoteQualified(controlSchema, "control"),
+	).Scan(&rows); err == nil {
+		t.Error("named account read control table without an anonymous grant")
+	}
+
+	// Only the blank-User mysql.db row applies to a named account. The global,
+	// table, and column grant tables use the authenticated account literally.
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"REVOKE SELECT ON "+sqlutil.QuoteIdentifier(schema)+".* FROM "+
+			testsupport.GrantAccountSQL(anonymous),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON "+sqlutil.QuoteQualified(controlSchema, "control")+
+			" TO "+testsupport.GrantAccountSQL(anonymous),
+	)
+	tableAccount := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_anontable")
+	tableConn := testsupport.MySQLConnAs(t, tableAccount)
+	if err := tableConn.QueryRowContext(
+		t.Context(),
+		"SELECT COUNT(*) FROM "+sqlutil.QuoteQualified(controlSchema, "control"),
+	).Scan(&rows); err == nil {
+		t.Error("anonymous table grant applied to a named account")
+	}
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"REVOKE SELECT ON "+sqlutil.QuoteQualified(controlSchema, "control")+
+			" FROM "+testsupport.GrantAccountSQL(anonymous),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT (id) ON "+sqlutil.QuoteQualified(controlSchema, "control")+
+			" TO "+testsupport.GrantAccountSQL(anonymous),
+	)
+	columnAccount := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_anoncolumn")
+	columnConn := testsupport.MySQLConnAs(t, columnAccount)
+	if err := columnConn.QueryRowContext(
+		t.Context(),
+		"SELECT id FROM "+sqlutil.QuoteQualified(controlSchema, "control"),
+	).Scan(&rows); err == nil {
+		t.Error("anonymous column grant applied to a named account")
+	}
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"REVOKE SELECT (id) ON "+sqlutil.QuoteQualified(controlSchema, "control")+
+			" FROM "+testsupport.GrantAccountSQL(anonymous),
+	)
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON *.* TO "+testsupport.GrantAccountSQL(anonymous),
+	)
+	globalAccount := testsupport.CreateMySQLAccount(t, admin, "dbsgomysql_anonglobal")
+	globalConn := testsupport.MySQLConnAs(t, globalAccount)
+	if err := globalConn.QueryRowContext(
+		t.Context(),
+		"SELECT COUNT(*) FROM "+sqlutil.QuoteQualified(controlSchema, "control"),
+	).Scan(&rows); err == nil {
+		t.Error("anonymous global grant applied to a named account")
+	}
+}
+
+func createAnonymousMySQLAccount(t *testing.T, admin *sql.DB) testsupport.MySQLAccount {
+	t.Helper()
+
+	account := testsupport.MySQLAccount{Host: "%"}
+	testsupport.ExecSQL(t, admin, "CREATE USER "+testsupport.GrantAccountSQL(account))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if _, err := admin.ExecContext(
+			ctx,
+			"DROP USER IF EXISTS "+testsupport.GrantAccountSQL(account),
+		); err != nil {
+			t.Errorf("drop anonymous account: %v", err)
+		}
+	})
+
+	return account
+}
+
 // TestRoleHeldProcessCompletesFKVisibilityIntegration is the deliberate
 // counterpart to TestGranteeAndRolePrivilegesIntegration, and the two must be
 // read together.
@@ -1411,14 +1786,36 @@ func TestPartialRevokesPrivilegeResolutionIntegration(t *testing.T) {
 	); got != validations.GrantUnconfirmed {
 		t.Errorf("global SELECT under partial revokes = %s, want unconfirmed", got)
 	}
-	// DELETE was never granted at any scope, so partial revokes leave nothing
-	// for a restriction to have removed and the negative stays provable.
+	// Under partial revokes, this global-SELECT-only account cannot prove that
+	// it sees another account's schema rows, so an anonymous grant cannot be
+	// ruled out even for a privilege with no visible row at any scope.
 	if got := grants.Table(
 		schema,
 		"fk_parent",
 		validations.PrivilegeDelete,
+	); got != validations.GrantUnconfirmed {
+		t.Errorf("never-granted DELETE under partial revokes = %s, want unconfirmed", got)
+	}
+
+	// A direct schema-level SELECT on mysql is the sufficient condition under
+	// partial revokes. Reconnect so the fact and the protected work share the
+	// post-GRANT session state.
+	testsupport.ExecSQL(
+		t,
+		admin,
+		"GRANT SELECT ON mysql.* TO "+testsupport.GrantAccountSQL(account),
+	)
+	broadConn := testsupport.MySQLConnAs(t, account)
+	broad, err := validations.NewInspector(broadConn, schema).Grants(t.Context())
+	if err != nil {
+		t.Fatalf("Grants with direct mysql visibility under partial revokes: %v", err)
+	}
+	if got := broad.Table(
+		schema,
+		"fk_parent",
+		validations.PrivilegeDelete,
 	); got != validations.GrantAbsent {
-		t.Errorf("never-granted DELETE under partial revokes = %s, want absent", got)
+		t.Errorf("visible never-granted DELETE under partial revokes = %s, want absent", got)
 	}
 
 	assertDirectGrantSurvivesPartialRevokes(t, admin, schema)

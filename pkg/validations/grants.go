@@ -11,6 +11,7 @@ import (
 
 const (
 	grantStatePresentName = "present"
+	mysqlSchemaName       = "mysql"
 	privilegeCreateName   = "CREATE"
 	privilegeSelectName   = "SELECT"
 )
@@ -28,6 +29,7 @@ type grantSources uint8
 const (
 	grantSourceAccount grantSources = 1 << iota
 	grantSourceRole
+	grantSourceAnonymous
 )
 
 type schemaPrivilegeKey struct {
@@ -52,7 +54,8 @@ const (
 	GrantUnknown GrantState = iota
 	// GrantPresent means a qualifying grant is established for this session.
 	GrantPresent
-	// GrantAbsent means a pinned, role-free session has no qualifying grant.
+	// GrantAbsent means a pinned, role-free session that can see other accounts'
+	// privilege rows has no qualifying grant.
 	GrantAbsent
 	// GrantUnconfirmed means session, role, partial-revoke, or wildcard-grant
 	// uncertainty prevents either a present or absent conclusion.
@@ -168,10 +171,21 @@ type PrivilegeFact struct {
 // resolved. While partial revokes are enabled, a global privilege row proves
 // nothing on its own: schema and table answers stay unconfirmed until a direct
 // schema or table grant proves the object, and the global answer stays
-// unconfirmed because this package does not read the restriction list. A
-// privilege with no grant row at any scope is still reported absent. A wildcard
-// schema grant matching the requested schema downgrades an otherwise-absent
-// schema or table answer to unconfirmed, and never proves one.
+// unconfirmed because this package does not read the restriction list. Under
+// partial revokes, a privilege with no grant row at any scope is still reported
+// absent only on a pinned, role-free session that holds a direct schema-level
+// SELECT on the mysql schema; a global SELECT does not count while partial
+// revokes are enabled. Otherwise it is GrantUnconfirmed.
+//
+// A wildcard schema grant matching the requested schema, a column grant on the
+// requested table, or a stored schema or table name that matches the request
+// only case-insensitively downgrades an otherwise-absent answer to unconfirmed
+// and never proves one. The server also applies a blank-user mysql.db row to a
+// named session. When the account can see other grantees, those anonymous
+// schema rows are a weakening-only source. The account's own direct SELECT on
+// the mysql schema establishes that visibility: either a schema-level grant,
+// or a global grant while partial revokes are disabled. Without that sufficient
+// condition every otherwise-absent answer is unconfirmed.
 //
 // Declining to consult SHOW GRANTS is a deliberate choice rather than an
 // oversight, and the unconfirmed role answers above should be read as "not
@@ -198,11 +212,15 @@ type Grants struct {
 	global         map[Privilege]grantSources
 	schema         map[schemaPrivilegeKey]grantSources
 	table          map[tablePrivilegeKey]grantSources
+	column         map[tablePrivilegeKey]grantSources
 }
 
 // Grants assembles privileges for CURRENT_USER() and the session's structured
-// ENABLED_ROLES identities from the global, schema, and table privilege
-// metadata tables. It also records @@global.partial_revokes.
+// ENABLED_ROLES identities from the global, schema, table, and column privilege
+// metadata tables. Schema metadata also includes visible anonymous grantees so
+// their database-level grants can weaken negative answers. It records
+// @@global.partial_revokes and derives whether the account's own direct SELECT
+// can prove visibility of other accounts' privilege rows.
 //
 // The several statements are not an atomic snapshot. Callers that use SET ROLE
 // must bind the Inspector to the same *sql.Conn or *sql.Tx that will perform the
@@ -219,6 +237,7 @@ func (i *Inspector) Grants(ctx context.Context) (Grants, error) {
 		global:       make(map[Privilege]grantSources),
 		schema:       make(map[schemaPrivilegeKey]grantSources),
 		table:        make(map[tablePrivilegeKey]grantSources),
+		column:       make(map[tablePrivilegeKey]grantSources),
 	}
 
 	var currentUser string
@@ -262,6 +281,9 @@ func (i *Inspector) Grants(ctx context.Context) (Grants, error) {
 		return Grants{}, newObjectError(opGrants, i.schema, "", err)
 	}
 	if err := i.readTableGrants(ctx, &fact, grantees); err != nil {
+		return Grants{}, newObjectError(opGrants, i.schema, "", err)
+	}
+	if err := i.readColumnGrants(ctx, &fact, grantees); err != nil {
 		return Grants{}, newObjectError(opGrants, i.schema, "", err)
 	}
 
@@ -336,7 +358,7 @@ func (i *Inspector) readGlobalGrants(
 		// as absent, but only skipping keeps that true by construction rather
 		// than by a guard somewhere else.
 		source := fact.sourceFor(grantee)
-		if source == 0 {
+		if source == 0 || source == grantSourceAnonymous {
 			continue
 		}
 		fact.global[privilege] |= source
@@ -353,7 +375,7 @@ func (i *Inspector) readSchemaGrants(
 	fact *Grants,
 	grantees []string,
 ) error {
-	query, args := granteePredicate(`
+	query, args := granteePredicateWithAnonymous(`
 		SELECT GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE
 		FROM information_schema.SCHEMA_PRIVILEGES`, grantees)
 	rows, err := i.q.QueryContext(ctx, query, args...)
@@ -409,7 +431,7 @@ func (i *Inspector) readTableGrants(
 			continue
 		}
 		source := fact.sourceFor(grantee)
-		if source == 0 {
+		if source == 0 || source == grantSourceAnonymous {
 			continue
 		}
 		key := tablePrivilegeKey{
@@ -424,16 +446,59 @@ func (i *Inspector) readTableGrants(
 	return nil
 }
 
-func (g Grants) sourceFor(grantee string) grantSources {
-	var source grantSources
-	if grantee == g.accountGrantee {
-		source |= grantSourceAccount
+func (i *Inspector) readColumnGrants(
+	ctx context.Context,
+	fact *Grants,
+	grantees []string,
+) error {
+	query, args := granteePredicate(`
+		SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE
+		FROM information_schema.COLUMN_PRIVILEGES`, grantees)
+	rows, err := i.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("query COLUMN_PRIVILEGES: %w", err)
 	}
-	if _, ok := g.roleGrantees[grantee]; ok {
-		source |= grantSourceRole
+	defer rows.Close()
+
+	for rows.Next() {
+		var grantee, schema, table, privilegeName string
+		if err := rows.Scan(&grantee, &schema, &table, &privilegeName); err != nil {
+			return fmt.Errorf("scan COLUMN_PRIVILEGES: %w", err)
+		}
+		privilege, ok := privilegeFromString(privilegeName)
+		if !ok {
+			continue
+		}
+		source := fact.sourceFor(grantee)
+		// Only anonymous mysql.db rows apply to a named session. Live checks on
+		// every narrower or wider scope are recorded in docs/COMPAT.md.
+		if source == 0 || source == grantSourceAnonymous {
+			continue
+		}
+		key := tablePrivilegeKey{
+			schema: schema, table: table, privilege: privilege,
+		}
+		fact.column[key] |= source
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate COLUMN_PRIVILEGES: %w", err)
 	}
 
-	return source
+	return nil
+}
+
+func (g Grants) sourceFor(grantee string) grantSources {
+	if grantee == g.accountGrantee {
+		return grantSourceAccount
+	}
+	if _, ok := g.roleGrantees[grantee]; ok {
+		return grantSourceRole
+	}
+	if strings.HasPrefix(grantee, "''@'") {
+		return grantSourceAnonymous
+	}
+
+	return 0
 }
 
 // Global reports whether priv is established at global scope.
@@ -453,7 +518,9 @@ func (g Grants) Schema(schema string, priv Privilege) GrantState {
 	}
 	state := g.resolve(priv, specific, g.global[priv])
 
-	return g.downgradeForSchemaPattern(state, schema, priv)
+	state = g.downgradeForSchemaPattern(state, schema, priv)
+
+	return g.downgradeForSchemaCaseVariant(state, schema, priv)
 }
 
 // Table reports whether priv is established for schema.table through a table,
@@ -466,8 +533,10 @@ func (g Grants) Table(schema, table string, priv Privilege) GrantState {
 		g.schema[schemaPrivilegeKey{schema: schema, privilege: priv}],
 	}
 	state := g.resolve(priv, specific, g.global[priv])
+	state = g.downgradeForSchemaPattern(state, schema, priv)
+	state = g.downgradeForColumnGrant(state, schema, table, priv)
 
-	return g.downgradeForSchemaPattern(state, schema, priv)
+	return g.downgradeForTableCaseVariant(state, schema, table, priv)
 }
 
 func (g Grants) resolve(
@@ -505,11 +574,25 @@ func (g Grants) resolve(
 	}
 	if unconfirmed ||
 		len(g.roleGrantees) > 0 ||
-		g.affinity != affinityPinned {
+		g.affinity != affinityPinned ||
+		!g.broadVisibility() {
 		return GrantUnconfirmed
 	}
 
 	return GrantAbsent
+}
+
+func (g Grants) broadVisibility() bool {
+	// Live checks on 8.0.46, 8.4.9, and 9.7.1 establish this sufficient
+	// condition; table-level, role-held, and partial-revoked global grants are
+	// deliberately excluded. See docs/COMPAT.md entry 27.
+	if g.schema[schemaPrivilegeKey{
+		schema: mysqlSchemaName, privilege: PrivilegeSelect,
+	}]&grantSourceAccount != 0 {
+		return true
+	}
+
+	return !g.partialRevokes && g.global[PrivilegeSelect]&grantSourceAccount != 0
 }
 
 // downgradeForSchemaPattern turns a provable absence into uncertainty when a
@@ -536,6 +619,70 @@ func (g Grants) downgradeForSchemaPattern(
 	return state
 }
 
+func (g Grants) downgradeForColumnGrant(
+	state GrantState,
+	schema, table string,
+	priv Privilege,
+) GrantState {
+	if state != GrantAbsent {
+		return state
+	}
+	if g.column[tablePrivilegeKey{
+		schema: schema, table: table, privilege: priv,
+	}] != 0 {
+		return GrantUnconfirmed
+	}
+
+	return state
+}
+
+func (g Grants) downgradeForSchemaCaseVariant(
+	state GrantState,
+	schema string,
+	priv Privilege,
+) GrantState {
+	if state != GrantAbsent {
+		return state
+	}
+	for key, sources := range g.schema {
+		if key.privilege == priv && sources != 0 && key.schema != schema &&
+			strings.EqualFold(key.schema, schema) {
+			return GrantUnconfirmed
+		}
+	}
+
+	return state
+}
+
+func (g Grants) downgradeForTableCaseVariant(
+	state GrantState,
+	schema, table string,
+	priv Privilege,
+) GrantState {
+	if state != GrantAbsent {
+		return state
+	}
+	for key, sources := range g.schema {
+		if key.privilege == priv && sources != 0 && key.schema != schema &&
+			strings.EqualFold(key.schema, schema) {
+			return GrantUnconfirmed
+		}
+	}
+	for _, grants := range []map[tablePrivilegeKey]grantSources{g.table, g.column} {
+		for key, sources := range grants {
+			if key.privilege != priv || sources == 0 ||
+				(key.schema == schema && key.table == table) {
+				continue
+			}
+			if strings.EqualFold(key.schema, schema) && strings.EqualFold(key.table, table) {
+				return GrantUnconfirmed
+			}
+		}
+	}
+
+	return state
+}
+
 func (g Grants) stateForSources(sources grantSources) GrantState {
 	if sources&grantSourceAccount != 0 {
 		switch g.affinity {
@@ -546,6 +693,9 @@ func (g Grants) stateForSources(sources grantSources) GrantState {
 		}
 	}
 	if sources&grantSourceRole != 0 {
+		return GrantUnconfirmed
+	}
+	if sources&grantSourceAnonymous != 0 {
 		return GrantUnconfirmed
 	}
 
@@ -590,6 +740,23 @@ func granteePredicate(query string, grantees []string) (narrowed string, args []
 
 	return query + `
 		WHERE GRANTEE IN (` + sqlPlaceholders(len(params)) + `)`, stringsToAny(params)
+}
+
+func granteePredicateWithAnonymous(
+	query string,
+	grantees []string,
+) (narrowed string, args []any) {
+	params, ok := narrowNames(grantees, 1)
+	if !ok {
+		return query, nil
+	}
+
+	args = stringsToAny(params)
+	args = append(args, "''@%")
+
+	return query + `
+		WHERE GRANTEE IN (` + sqlPlaceholders(len(params)) + `)
+			OR GRANTEE LIKE ?`, args
 }
 
 func stringsToAny(values []string) []any {
