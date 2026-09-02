@@ -6,7 +6,7 @@
       "schema": "{{target_schema}}",
       "table": "fk_parent",
       "privilege": 4,
-      "state": 2
+      "state": 3
     }
   }
 ]
