@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-02
+
 ### Fixed
 
 - `TableSpec` with `WithConstraints()` no longer reports a CHECK constraint
@@ -801,7 +803,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/dbsmedya/dbsgomysql/compare/v0.9.0...v1.0.0
