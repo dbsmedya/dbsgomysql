@@ -116,13 +116,30 @@ presence or absence safely. Important uncertainty sources include:
 - privileges that depend on an enabled role;
 - nested role closure, which the library does not resolve;
 - partial revokes stored outside the ordinary privilege tables;
-- schema grants represented by wildcard patterns.
+- schema grants represented by wildcard patterns;
+- a column-level grant on the table, which weakens the table answer and proves
+  nothing at schema scope;
+- a stored grant whose schema or table name matches the request only
+  case-insensitively;
+- a grant held by an anonymous account, which the server applies at database
+  scope to named sessions and which is observable only when this account can
+  see other grantees.
+
+`GrantAbsent` requires the account's own direct `SELECT` on the `mysql` schema:
+schema-level, or global while partial revokes are disabled. Only that condition
+proves the fact can see an anonymous-account database grant; every otherwise-
+absent answer is `GrantUnconfirmed` without it.
+
+`CURRENT_USER()` returns the account as one undelimited `user@host` string.
+`Grants` splits at the last `@`, so an `@` in the user is preserved, but an
+account whose host part contains `@` cannot be represented unambiguously and
+may not match its privilege rows.
 
 After `SET ROLE`, use the exact `*sql.Conn` or `*sql.Tx` on which the role was
 enabled. Even on a pinned session, role-dependent answers can remain
 unconfirmed because nested role closure is outside the implementation. See
 [the privilege guide](validations.md#privileges-and-session-affinity) and
-[COMPAT.md](COMPAT.md), entries 4, 11, and 12.
+[COMPAT.md](COMPAT.md), entries 4, 11, 12, and 25-27.
 
 `Grants` is a method-based fact and has no useful direct JSON representation.
 Consumers that need a serialized record should store the individual requested

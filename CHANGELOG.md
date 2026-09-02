@@ -17,6 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table, and no longer duplicates a foreign key's key parts when a unique key
   shares the constraint's name. Constraints sharing a name across kinds now
   order stably: CHECK before FOREIGN KEY (#71).
+- `Grants.Table` no longer reports `GrantAbsent` when the account holds a
+  column-level grant on the table; the fact now reads
+  `information_schema.COLUMN_PRIVILEGES` and answers `GrantUnconfirmed`.
+  `Grants.Schema` and `Grants.Table` also answer `GrantUnconfirmed` instead of
+  `GrantAbsent` when a stored grant matches the requested name only
+  case-insensitively, and when an anonymous-account database grant covers the
+  requested scope. When the account cannot see other accounts' privilege rows,
+  every otherwise-absent answer is now `GrantUnconfirmed`; `GrantAbsent`
+  therefore requires the account's own direct `SELECT` on the `mysql` schema,
+  schema-level or global with partial revokes off (#72).
+
+### Changed
+
+- Under partial revokes, a privilege with no grant row at any scope is now
+  `GrantUnconfirmed` unless the account holds a direct schema-level `SELECT`
+  on the `mysql` schema; `docs/COMPAT.md` entry 11 and the privilege guide no
+  longer promise `GrantAbsent` for a global-`SELECT`-only account (#72).
+- `docs/LIMITATIONS.md` records the new visibility requirement for
+  `GrantAbsent` and the one privilege identity this fact cannot split: an
+  account whose host part contains `@`.
 
 ## [1.1.1] - 2026-08-28
 

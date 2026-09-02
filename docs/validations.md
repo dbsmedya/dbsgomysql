@@ -259,14 +259,26 @@ role makes an otherwise-negative answer unconfirmed.
 While `@@global.partial_revokes` is enabled, a global grant alone proves
 nothing: schema and table answers are unconfirmed until a direct matching
 schema or table grant proves that object, and `Global` is unconfirmed as well,
-because the restriction list is not something this library reads. A privilege
-with no grant row at any scope is still reported absent — enabling partial
-revokes does not make every negative unprovable.
+because the restriction list is not something this library reads. Under
+partial revokes, a privilege with no grant row at any scope is still reported
+absent only on a pinned, role-free session that holds a direct schema-level
+SELECT on the mysql schema; a global SELECT does not count while partial
+revokes are enabled. Otherwise it is GrantUnconfirmed.
 
 A schema grant may also be stored as a wildcard pattern, such as `shop%` or
 `my_db`. Where an exact lookup finds nothing and a stored pattern matches the
 requested schema, the answer is unconfirmed rather than absent. A pattern never
-proves a privilege. See [COMPAT.md](COMPAT.md) entries 11 and 12.
+proves a privilege. The same weakening rule applies when a column grant covers
+the requested table, when a stored schema or table name matches the request
+only case-insensitively, and when a visible anonymous-account database grant
+covers the requested scope. A column grant proves nothing at schema scope, and
+none of these sources can produce `GrantPresent`.
+
+Because MySQL applies an anonymous database grant that a named account may be
+unable to see, `GrantAbsent` requires the account's own direct `SELECT` on the
+`mysql` schema: schema-level, or global while partial revokes are disabled.
+Every otherwise-negative answer is `GrantUnconfirmed` without that sufficient
+visibility condition. See [COMPAT.md](COMPAT.md) entries 11, 12, and 25-27.
 
 ## Table specifications and diffs
 
