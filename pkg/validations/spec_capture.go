@@ -343,7 +343,9 @@ func (i *Inspector) captureIndexes(ctx context.Context, ref TableRef) ([]IndexSp
 // unique keys are indexes and are captured by captureIndexes instead, so no
 // object is reported twice and no difference is reported twice.
 //
-// Results are ordered by name so DiffSpecs output is deterministic.
+// Results are ordered by name, then kind, so two constraints sharing a name
+// (legal because each constraint type has its own namespace) have a fixed
+// order and DiffSpecs output is deterministic.
 func (i *Inspector) captureConstraints(
 	ctx context.Context, ref TableRef,
 ) ([]ConstraintSpec, error) {
@@ -359,11 +361,19 @@ func (i *Inspector) captureConstraints(
 	constraints := make([]ConstraintSpec, 0, len(checks)+len(foreignKeys))
 	constraints = append(constraints, checks...)
 	constraints = append(constraints, foreignKeys...)
-	sort.Slice(constraints, func(a, b int) bool {
-		return constraints[a].Name < constraints[b].Name
-	})
+	sortConstraints(constraints)
 
 	return constraints, nil
+}
+
+func sortConstraints(constraints []ConstraintSpec) {
+	sort.SliceStable(constraints, func(a, b int) bool {
+		if constraints[a].Name != constraints[b].Name {
+			return constraints[a].Name < constraints[b].Name
+		}
+
+		return constraints[a].Kind < constraints[b].Kind
+	})
 }
 
 func (i *Inspector) captureCheckConstraints(
@@ -378,6 +388,7 @@ func (i *Inspector) captureCheckConstraints(
 		  ON tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
 		 AND tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
 		WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?
+		  AND tc.CONSTRAINT_TYPE = 'CHECK'
 		ORDER BY cc.CONSTRAINT_NAME`
 
 	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
@@ -427,6 +438,7 @@ func (i *Inspector) captureForeignKeyConstraints(
 		 AND kcu.TABLE_NAME = rc.TABLE_NAME
 		WHERE rc.CONSTRAINT_SCHEMA = ? AND rc.TABLE_NAME = ?
 		  AND kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ?
+		  AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
 		ORDER BY rc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION`
 
 	rows, err := i.q.QueryContext(
@@ -467,6 +479,10 @@ func (i *Inspector) captureForeignKeyConstraints(
 			continue
 		}
 
+		// MySQL compares foreign-key names case-insensitively and enforces
+		// schema-wide uniqueness, so one key's rows stay contiguous under the
+		// query's name-first ordering. See docs/COMPAT.md entry 24 and
+		// TestForeignKeyNamesAreCaseInsensitiveIntegration.
 		if len(constraints) == 0 || constraints[len(constraints)-1].Name != name {
 			constraints = append(constraints, ConstraintSpec{
 				Name:       name,

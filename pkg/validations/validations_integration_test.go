@@ -19,7 +19,10 @@ import (
 	"github.com/dbsmedya/dbsgomysql/pkg/validations"
 )
 
-const fixturePath = "../../tests/fixtures/phase1b.sql"
+const (
+	fixturePath                    = "../../tests/fixtures/phase1b.sql"
+	constraintCollisionFixturePath = "../../tests/fixtures/constraint_collisions.sql"
+)
 
 func TestInspectorSmoke(t *testing.T) {
 	db, schema := validationDatabase(t)
@@ -1983,6 +1986,123 @@ func TestTableSpecCompatEnforcementIntegration(t *testing.T) {
 	}
 }
 
+func TestTableSpecConstraintNameCollisionsIntegration(t *testing.T) {
+	db, schema := constraintCollisionDatabase(t)
+	inspector := validations.NewInspector(db, schema)
+
+	users, err := inspector.TableSpec(
+		t.Context(), validations.Ref(schema, "cc_users"), validations.WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec(cc_users): %v", err)
+	}
+	if len(users.Constraints) != 0 {
+		t.Errorf("cc_users constraints = %#v, want none", users.Constraints)
+	}
+
+	contacts, err := inspector.TableSpec(
+		t.Context(), validations.Ref(schema, "cc_contacts"), validations.WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec(cc_contacts): %v", err)
+	}
+	if len(contacts.Constraints) != 1 {
+		t.Fatalf("cc_contacts constraints = %#v, want one CHECK", contacts.Constraints)
+	}
+	contactCheck := contacts.Constraints[0]
+	if contactCheck.Name != "email" || contactCheck.Kind != validations.ConstraintCheck ||
+		!contactCheck.Enforced || contactCheck.CheckClause == "" {
+		t.Errorf("cc_contacts CHECK = %#v, want enforced email CHECK with its clause", contactCheck)
+	}
+
+	child, err := inspector.TableSpec(
+		t.Context(), validations.Ref(schema, "cc_child"), validations.WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec(cc_child): %v", err)
+	}
+	wantOrder := []struct {
+		name string
+		kind validations.ConstraintKind
+	}{
+		{name: "fk_ab", kind: validations.ConstraintForeignKey},
+		{name: "k", kind: validations.ConstraintCheck},
+		{name: "k", kind: validations.ConstraintForeignKey},
+	}
+	if len(child.Constraints) != len(wantOrder) {
+		t.Fatalf("cc_child constraints = %#v, want three constraints", child.Constraints)
+	}
+	for index, want := range wantOrder {
+		got := child.Constraints[index]
+		if got.Name != want.name || got.Kind != want.kind {
+			t.Errorf("cc_child constraint %d = %s/%s, want %s/%s",
+				index, got.Name, got.Kind, want.name, want.kind)
+		}
+	}
+
+	fkAB := child.Constraints[0]
+	if !slices.Equal(fkAB.Columns, []string{"a", "b"}) ||
+		!slices.Equal(fkAB.RefColumns, []string{"a", "b"}) ||
+		fkAB.RefSchema != schema || fkAB.RefTable != "cc_parent" {
+		t.Errorf("fk_ab = %#v, want composite reference to cc_parent(a,b)", fkAB)
+	}
+	kCheck := child.Constraints[1]
+	if !kCheck.Enforced || kCheck.CheckClause == "" {
+		t.Errorf("k CHECK = %#v, want enforced CHECK with its clause", kCheck)
+	}
+	kFK := child.Constraints[2]
+	if !slices.Equal(kFK.Columns, []string{"pid"}) ||
+		!slices.Equal(kFK.RefColumns, []string{"id"}) ||
+		kFK.RefSchema != schema || kFK.RefTable != "cc_parent" {
+		t.Errorf("k FOREIGN KEY = %#v, want one-part reference to cc_parent(id)", kFK)
+	}
+}
+
+func TestForeignKeyNamesAreCaseInsensitiveIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_fk_name_case")
+	parent := sqlutil.QuoteQualified(schema, "parent")
+	testsupport.ExecSQL(t, db, "CREATE TABLE "+parent+" (id INT PRIMARY KEY)")
+
+	_, err := db.ExecContext(t.Context(),
+		"CREATE TABLE "+sqlutil.QuoteQualified(schema, "same_table")+" ("+
+			"id INT PRIMARY KEY, parent_a INT, parent_b INT, "+
+			"CONSTRAINT Fk1 FOREIGN KEY (parent_a) REFERENCES "+parent+" (id), "+
+			"CONSTRAINT fk1 FOREIGN KEY (parent_b) REFERENCES "+parent+" (id))")
+	assertMySQLErrorNumber(t, err, 1061, "case-variant foreign keys on one table")
+
+	testsupport.ExecSQL(t, db,
+		"CREATE TABLE "+sqlutil.QuoteQualified(schema, "first_child")+" ("+
+			"id INT PRIMARY KEY, parent_id INT, "+
+			"CONSTRAINT Fk1 FOREIGN KEY (parent_id) REFERENCES "+parent+" (id))")
+	_, err = db.ExecContext(t.Context(),
+		"CREATE TABLE "+sqlutil.QuoteQualified(schema, "second_child")+" ("+
+			"id INT PRIMARY KEY, parent_id INT, "+
+			"CONSTRAINT fk1 FOREIGN KEY (parent_id) REFERENCES "+parent+" (id))")
+	assertMySQLErrorNumber(t, err, 1826, "case-variant foreign keys across tables")
+
+	testsupport.ExecSQL(t, db,
+		"CREATE TABLE "+sqlutil.QuoteQualified(schema, "distinct_names")+" ("+
+			"id INT PRIMARY KEY, parent_a INT, parent_b INT, "+
+			"CONSTRAINT fk_distinct_1 FOREIGN KEY (parent_a) REFERENCES "+parent+" (id), "+
+			"CONSTRAINT fk_distinct_2 FOREIGN KEY (parent_b) REFERENCES "+parent+" (id))")
+}
+
+func assertMySQLErrorNumber(t *testing.T, err error, want uint16, operation string) {
+	t.Helper()
+
+	if err == nil {
+		t.Errorf("%s succeeded, want MySQL error %d", operation, want)
+
+		return
+	}
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) {
+		t.Errorf("%s returned %v, want MySQL error %d", operation, err, want)
+
+		return
+	}
+	if mysqlErr.Number != want {
+		t.Errorf("%s returned MySQL error %d, want %d", operation, mysqlErr.Number, want)
+	}
+}
+
 func TestTableSpecRejectsAViewIntegration(t *testing.T) {
 	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_spec_view")
 
@@ -2068,6 +2188,15 @@ func validationDatabase(t *testing.T) (db *sql.DB, schema string) {
 
 	db, schema = testsupport.MySQLDatabase(t, "dbsgomysql_validations")
 	testsupport.LoadSQLFixture(t, db, schema, fixturePath)
+
+	return db, schema
+}
+
+func constraintCollisionDatabase(t *testing.T) (db *sql.DB, schema string) {
+	t.Helper()
+
+	db, schema = testsupport.MySQLDatabase(t, "dbsgomysql_constraint_collisions")
+	testsupport.LoadSQLFixture(t, db, schema, constraintCollisionFixturePath)
 
 	return db, schema
 }

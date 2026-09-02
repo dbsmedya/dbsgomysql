@@ -1211,6 +1211,46 @@ error 1193, symbol `ER_UNKNOWN_SYSTEM_VARIABLE`, SQLSTATE HY000. Refman 8.4
 "enabled by default"); Refman 8.0 and 9.7 server system variable
 descriptions for `read_only` and `super_read_only`.
 
+## 24. Constraint types have separate namespaces; foreign-key names compare case-insensitively ✅
+
+**Affected:** all supported versions.
+
+**Symptom:** `information_schema.TABLE_CONSTRAINTS` represents primary keys,
+unique keys, foreign keys, and CHECK constraints through one name column, but
+MySQL permits different constraint types to share a name. In addition,
+`CHECK_CONSTRAINTS` has no table-name column. Joining either table on a name
+without distinguishing its type can therefore attach another constraint's row:
+a CHECK can acquire another table's clause, and a foreign key can acquire a
+unique key's nonreferencing key parts.
+
+Foreign-key names add a second server rule. The manual's §11.2.3,
+"Identifier Case Sensitivity", lists constraint names among identifiers whose
+uppercase forms do not make them duplicates. On MySQL 8.0.46, 8.4.9, and
+9.7.1, however, `Fk1` and `fk1` cannot coexist: one table rejects the pair with
+error 1061, and two tables in one schema reject it with error 1826. This entry
+does not claim the same behavior for CHECK names; that case was not tested.
+
+**Handling:** CHECK capture restricts `TABLE_CONSTRAINTS` to `CHECK` rows, and
+foreign-key capture discards `KEY_COLUMN_USAGE` rows whose referenced table is
+NULL. Captured constraints sort on `(name, kind)`, so legal same-named
+constraints have a deterministic order. Foreign-key row grouping relies on
+the server-enforced, case-insensitive schema-wide name uniqueness pinned by
+[`TestForeignKeyNamesAreCaseInsensitiveIntegration`](../pkg/validations/validations_integration_test.go).
+The cross-type joins and order are pinned by
+[`TestTableSpecConstraintNameCollisionsIntegration`](../pkg/validations/validations_integration_test.go),
+and unit tests pin both SQL predicates and the comparator independently.
+
+**Reference:** documented except for the foreign-key case comparison, where
+the server contradicts §11.2.3. The supported manuals agree as follows:
+
+| Claim | 8.0 | 8.4 | 9.7 |
+|---|---|---|---|
+| Each constraint type has its own namespace per schema | §15.1.20, "Indexes, Foreign Keys, and CHECK Constraints" | §15.1.20, same wording | §15.1.25, same wording |
+| CHECK names are case-sensitive but not accent-sensitive | §15.1.20.6, "CHECK Constraints" | §15.1.20.6, same wording | §15.1.25.6, same wording |
+| A foreign-key `CONSTRAINT` symbol must be unique in the database | §15.1.20.5, "FOREIGN KEY Constraints"; includes pre-8.0.16 and NDB history | §15.1.20.5; the old history is absent | §15.1.25.5; same current rule as 8.4 |
+| Constraint names are not duplicates merely because their uppercase forms match | §11.2.3, "Identifier Case Sensitivity" | §11.2.3, identical | §11.2.3, identical |
+| `CHECK_CONSTRAINTS` has no table-name column | §28.3.5, "The INFORMATION_SCHEMA CHECK_CONSTRAINTS Table" | §28.3.5, same columns | §28.3.5, same columns |
+
 ---
 
 ## Adding an entry

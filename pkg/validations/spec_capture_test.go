@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
@@ -417,6 +418,168 @@ func TestTableSpecForeignKeyQueryPinsBothSidesToTheResolvedTable(t *testing.T) {
 	if len(spec.Constraints) != 1 || spec.Constraints[0].Name != "fk_category" {
 		t.Errorf("constraints = %#v, want the row from the fully pinned query", spec.Constraints)
 	}
+}
+
+func TestTableSpecCheckQueryFiltersConstraintType(t *testing.T) {
+	t.Parallel()
+
+	var queries []string
+	db := testsupport.OpenScriptedDBWithLog(
+		&queries,
+		tableRowScript("shop", "items"),
+		emptyCheckConstraintScript(),
+		emptyForeignKeyConstraintScript(),
+	)
+
+	_, err := NewInspector(db, "shop").TableSpec(
+		t.Context(), Ref("shop", "items"), WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+	if !queryLogContains(queries, "tc.CONSTRAINT_TYPE = 'CHECK'") {
+		t.Errorf("CHECK query does not filter TABLE_CONSTRAINTS to CHECK rows: %q", queries)
+	}
+}
+
+func TestTableSpecForeignKeyQueryExcludesNonReferencingRows(t *testing.T) {
+	t.Parallel()
+
+	var queries []string
+	db := testsupport.OpenScriptedDBWithLog(
+		&queries,
+		tableRowScript("shop", "items"),
+		emptyCheckConstraintScript(),
+		emptyForeignKeyConstraintScript(),
+	)
+
+	_, err := NewInspector(db, "shop").TableSpec(
+		t.Context(), Ref("shop", "items"), WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+	if !queryLogContains(queries, "kcu.REFERENCED_TABLE_NAME IS NOT NULL") {
+		t.Errorf("foreign-key query does not exclude nonreferencing key rows: %q", queries)
+	}
+}
+
+func TestSortConstraintsOrdersByNameThenKind(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		constraints []ConstraintSpec
+	}{
+		{
+			name: "foreign key first",
+			constraints: []ConstraintSpec{
+				{Name: "k", Kind: ConstraintForeignKey},
+				{Name: "k", Kind: ConstraintCheck},
+				{Name: "a", Kind: ConstraintCheck},
+			},
+		},
+		{
+			name: "check first",
+			constraints: []ConstraintSpec{
+				{Name: "k", Kind: ConstraintCheck},
+				{Name: "k", Kind: ConstraintForeignKey},
+				{Name: "a", Kind: ConstraintCheck},
+			},
+		},
+	}
+	want := []ConstraintSpec{
+		{Name: "a", Kind: ConstraintCheck},
+		{Name: "k", Kind: ConstraintCheck},
+		{Name: "k", Kind: ConstraintForeignKey},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			sortConstraints(test.constraints)
+			for index := range want {
+				if test.constraints[index].Name != want[index].Name ||
+					test.constraints[index].Kind != want[index].Kind {
+					t.Fatalf("constraints = %#v, want %#v", test.constraints, want)
+				}
+			}
+		})
+	}
+}
+
+func TestTableSpecCapturesSameNamedCheckAndForeignKey(t *testing.T) {
+	t.Parallel()
+
+	db := testsupport.OpenScriptedDB(
+		tableRowScript("shop", "items"),
+		testsupport.ScriptedQuery{
+			Match: checkConstraintQueryMarker,
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "CHECK_CLAUSE",
+				"ENFORCED",
+			},
+			Rows: [][]driver.Value{{"shop", "items", "k", "(`parent_id` >= 0)", "YES"}},
+		},
+		testsupport.ScriptedQuery{
+			Match: foreignKeyQueryMarker,
+			Columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME",
+				"UPDATE_RULE", "DELETE_RULE", "COLUMN_NAME",
+				"REFERENCED_TABLE_SCHEMA", "REFERENCED_TABLE_NAME",
+				"REFERENCED_COLUMN_NAME",
+			},
+			Rows: [][]driver.Value{{
+				"shop", "items", "k", "RESTRICT", "CASCADE", "parent_id",
+				"shop", "parents", "id",
+			}},
+		},
+	)
+
+	spec, err := NewInspector(db, "shop").TableSpec(
+		t.Context(), Ref("shop", "items"), WithConstraints())
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+	if len(spec.Constraints) != 2 {
+		t.Fatalf("constraints = %#v, want same-named CHECK and FOREIGN KEY", spec.Constraints)
+	}
+	if spec.Constraints[0].Name != "k" || spec.Constraints[0].Kind != ConstraintCheck ||
+		spec.Constraints[1].Name != "k" ||
+		spec.Constraints[1].Kind != ConstraintForeignKey {
+		t.Errorf("constraints = %#v, want k/CHECK then k/FOREIGN KEY", spec.Constraints)
+	}
+}
+
+func emptyCheckConstraintScript() testsupport.ScriptedQuery {
+	return testsupport.ScriptedQuery{
+		Match: checkConstraintQueryMarker,
+		Columns: []string{
+			"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "CHECK_CLAUSE",
+			"ENFORCED",
+		},
+	}
+}
+
+func emptyForeignKeyConstraintScript() testsupport.ScriptedQuery {
+	return testsupport.ScriptedQuery{
+		Match: foreignKeyQueryMarker,
+		Columns: []string{
+			"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME",
+			"UPDATE_RULE", "DELETE_RULE", "COLUMN_NAME",
+			"REFERENCED_TABLE_SCHEMA", "REFERENCED_TABLE_NAME",
+			"REFERENCED_COLUMN_NAME",
+		},
+	}
+}
+
+func queryLogContains(queries []string, fragment string) bool {
+	for _, query := range queries {
+		if strings.Contains(query, fragment) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func TestTableSpecDiscardsConstraintsOfACaseVariantTable(t *testing.T) {
