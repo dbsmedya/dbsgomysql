@@ -16,6 +16,15 @@ func TestNormalizeColumnType(t *testing.T) {
 			explanation: "a column created before 8.0.19 must compare equal to one created after",
 		},
 		{
+			name: "year display width stripped", columnType: "year(4)", want: "year",
+			explanation: "8.0.19 dropped the YEAR display width under the same data-dictionary " +
+				"retention rule as integers, so an in-place-upgraded year(4) must compare " +
+				"equal to a fresh year",
+		},
+		{
+			name: "YEAR uppercase folded for matching", columnType: "YEAR(4)", want: "YEAR",
+		},
+		{
 			name:       "bigint width stripped, unsigned preserved",
 			columnType: "bigint(20) unsigned", want: "bigint unsigned",
 			explanation: "unsigned changes the value range and is a real difference",

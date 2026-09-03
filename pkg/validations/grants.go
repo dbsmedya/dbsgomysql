@@ -177,15 +177,16 @@ type PrivilegeFact struct {
 // SELECT on the mysql schema; a global SELECT does not count while partial
 // revokes are enabled. Otherwise it is GrantUnconfirmed.
 //
-// A wildcard schema grant matching the requested schema, a column grant on the
-// requested table, or a stored schema or table name that matches the request
-// only case-insensitively downgrades an otherwise-absent answer to unconfirmed
-// and never proves one. The server also applies a blank-user mysql.db row to a
-// named session. When the account can see other grantees, those anonymous
-// schema rows are a weakening-only source. The account's own direct SELECT on
-// the mysql schema establishes that visibility: either a schema-level grant,
-// or a global grant while partial revokes are disabled. Without that sufficient
-// condition every otherwise-absent answer is unconfirmed.
+// A wildcard schema grant matching the requested schema while partial revokes
+// are disabled, a column grant on the requested table, or a stored schema or
+// table name that matches the request only case-insensitively downgrades an
+// otherwise-absent answer to unconfirmed and never proves one. The server also
+// applies a blank-user mysql.db row to a named session. When the account can see
+// other grantees, those anonymous schema rows are a weakening-only source. The
+// account's own direct SELECT on the mysql schema establishes that visibility:
+// either a schema-level grant, or a global grant while partial revokes are
+// disabled. Without that sufficient condition every otherwise-absent answer is
+// unconfirmed.
 //
 // Declining to consult SHOW GRANTS is a deliberate choice rather than an
 // oversight, and the unconfirmed role answers above should be read as "not
@@ -605,6 +606,13 @@ func (g Grants) downgradeForSchemaPattern(
 	priv Privilege,
 ) GrantState {
 	if state != GrantAbsent {
+		return state
+	}
+	// While partial revokes are enabled the server reads _ and % in stored
+	// schema names literally, so a stored name covers only its exact spelling
+	// and cannot weaken an absent answer. See docs/COMPAT.md entry 12, pinned
+	// by TestPartialRevokesDoNotHideProvableAbsence.
+	if g.partialRevokes {
 		return state
 	}
 	for key, sources := range g.schema {

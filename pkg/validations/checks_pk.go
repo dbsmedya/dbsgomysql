@@ -40,7 +40,8 @@ type PKInfo struct {
 // PrimaryKeys returns one primary-key fact per requested object that exists in
 // the Inspector's schema. Results preserve requested order. Columns use primary
 // key order rather than table ordinal order; absent keys carry PKNone. Missing
-// or invisible objects are absent.
+// or invisible objects are absent. So are views: a view has no primary key to
+// report, so it is filtered out rather than returned as PKNone.
 //
 // PrimaryKeys is safe for concurrent use when the Inspector's Querier is safe
 // for concurrent use and tables is not mutated concurrently.
@@ -61,6 +62,10 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 	// statement preserves PrimaryKeys' absence result for both cases and repairs
 	// the supplementary one.
 	if representable(i.schema) {
+		// Views are filtered out: a view has no primary key, and reporting PKNone
+		// for one would make CheckPKExists flag it. TableSpec refuses views for
+		// the same reason; here absence is the documented answer for an object
+		// the fact does not describe.
 		query := `
 			SELECT
 				t.TABLE_NAME,
@@ -77,8 +82,9 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 			 AND c.TABLE_NAME = s.TABLE_NAME
 			 AND c.COLUMN_NAME = s.COLUMN_NAME
 			WHERE t.TABLE_SCHEMA = ?
+			  AND t.TABLE_TYPE = ?
 			ORDER BY t.TABLE_NAME, s.SEQ_IN_INDEX`
-		args := []any{i.schema}
+		args := []any{i.schema, tableTypeBase}
 		if requested, requestedArgs, ok := requestedObjects(i.schema, tables); ok {
 			query = `
 			SELECT
@@ -98,8 +104,10 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 			  ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
 			 AND c.TABLE_NAME = s.TABLE_NAME
 			 AND c.COLUMN_NAME = s.COLUMN_NAME
+			WHERE t.TABLE_TYPE = ?
 			ORDER BY t.TABLE_NAME, s.SEQ_IN_INDEX`
 			args = requestedArgs
+			args = append(args, tableTypeBase)
 		}
 
 		rows, err := i.q.QueryContext(ctx, query, args...)

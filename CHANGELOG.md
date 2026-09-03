@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Grants.Schema` and `Grants.Table` no longer downgrade a provable
+  `GrantAbsent` to `GrantUnconfirmed` because a stored schema grant contains
+  `_` or `%` while `@@global.partial_revokes` is enabled; the server reads
+  those characters literally in that mode and so does the fact (#73).
+- `ColumnSpec.NormalizedType` now strips the legacy display width from `YEAR`
+  as it does from integer types, so `year(4)` on an in-place-upgraded server
+  compares equal to `year` (#75).
+- `PrimaryKeys` no longer returns a `PKNone` fact for a view, so
+  `CheckPKExists` no longer reports `PK_EXISTS` for one; a requested view is
+  absent from the result, matching `TableSpec`'s refusal of views (#76).
+- `Triggers` now orders each table's triggers in Go — by firing order and
+  then by exact byte-order name, the comparator `CheckTriggersPresent` already
+  used — so a fact and its finding no longer disagree for names differing in
+  case, and the returned order no longer depends on the server's sort; and
+  `CheckTriggersPresent` given `TriggerEventUnknown` or an undeclared event
+  now returns one finding carrying the event instead of `nil` (#78).
+
 ## [1.1.2] - 2026-09-02
 
 ### Fixed

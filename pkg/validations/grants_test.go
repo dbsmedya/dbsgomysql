@@ -203,6 +203,30 @@ func TestPartialRevokesDoNotHideProvableAbsence(t *testing.T) {
 	if got := narrow.Table("shop", "orders", PrivilegeDelete); got != GrantUnconfirmed {
 		t.Errorf("narrow table answer with no grant row = %s, want unconfirmed", got)
 	}
+
+	// A stored schema name that reads as a LIKE pattern is literal while
+	// partial revokes are enabled, so it cannot weaken an absent answer (#73).
+	patterned := fact
+	patterned.schema = map[schemaPrivilegeKey]grantSources{
+		{schema: "mysql", privilege: PrivilegeSelect}: grantSourceAccount,
+		{schema: "my_db", privilege: PrivilegeDelete}: grantSourceAccount,
+	}
+	if got := patterned.Schema("my1db", PrivilegeDelete); got != GrantAbsent {
+		t.Errorf("literal-name schema answer under partial revokes = %s, want absent", got)
+	}
+	if got := patterned.Table("my1db", "orders", PrivilegeDelete); got != GrantAbsent {
+		t.Errorf("literal-name table answer under partial revokes = %s, want absent", got)
+	}
+	if got := patterned.Schema("my_db", PrivilegeDelete); got != GrantPresent {
+		t.Errorf("exact stored name under partial revokes = %s, want present", got)
+	}
+
+	// The same row is a pattern again the moment partial revokes are off.
+	wildcard := patterned
+	wildcard.partialRevokes = false
+	if got := wildcard.Schema("my1db", PrivilegeDelete); got != GrantUnconfirmed {
+		t.Errorf("pattern-covered schema without partial revokes = %s, want unconfirmed", got)
+	}
 }
 
 func TestPartialRevokesDegradeEveryAnswerBackedByGlobalRow(t *testing.T) {

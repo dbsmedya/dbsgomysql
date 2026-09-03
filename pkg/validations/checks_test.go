@@ -1,10 +1,13 @@
 package validations
 
 import (
+	"database/sql/driver"
 	"encoding/json"
 	"reflect"
 	"slices"
 	"testing"
+
+	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
 )
 
 func TestCheckPrimaryKeys(t *testing.T) {
@@ -280,6 +283,69 @@ func TestCheckTriggersPresent(t *testing.T) {
 
 	if got := CheckTriggersPresent(facts, TriggerUpdate); got != nil {
 		t.Errorf("CheckTriggersPresent(..., UPDATE) = %#v, want nil", got)
+	}
+}
+
+func TestTriggersSortNamesInByteOrder(t *testing.T) {
+	t.Parallel()
+
+	// Rows arrive in the server's order: ORDER BY TRIGGER_NAME collates
+	// case-insensitively, so a_trg precedes B_trg (docs/COMPAT.md entry 2).
+	db := testsupport.OpenScriptedDB(testsupport.ScriptedQuery{
+		Match:   "information_schema.TRIGGERS AS tr",
+		Columns: []string{"EVENT_OBJECT_TABLE", "TRIGGER_NAME", "EVENT_MANIPULATION", "ACTION_TIMING"},
+		Rows: [][]driver.Value{
+			{"orders", "a_trg", "DELETE", "BEFORE"},
+			{"orders", "B_trg", "DELETE", "BEFORE"},
+			{"orders", "c_trg", "DELETE", "AFTER"},
+		},
+	})
+	defer db.Close()
+
+	got, err := NewInspector(db, "shop").Triggers(t.Context(), []string{"orders"}, TriggerDelete)
+	if err != nil {
+		t.Fatalf("Triggers: %v", err)
+	}
+	names := make([]string, 0, len(got))
+	for _, trigger := range got {
+		names = append(names, trigger.Name)
+	}
+	if want := []string{"B_trg", "a_trg", "c_trg"}; !slices.Equal(names, want) {
+		t.Errorf("Triggers() names = %v, want %v (byte order within each timing)", names, want)
+	}
+
+	findings := CheckTriggersPresent(got, TriggerDelete)
+	if len(findings) != 1 {
+		t.Fatalf("CheckTriggersPresent() returned %d findings, want 1", len(findings))
+	}
+	payload, ok := findings[0].Facts.([]TriggerInfo)
+	if !ok || !reflect.DeepEqual(payload, got) {
+		t.Errorf("finding payload = %#v, want the fact slice %#v; fact and check must agree by construction",
+			findings[0].Facts, got)
+	}
+}
+
+func TestCheckTriggersPresentReportsInvalidEvent(t *testing.T) {
+	t.Parallel()
+
+	facts := []TriggerInfo{{Table: "orders", Name: "t", Event: "DELETE", Timing: "BEFORE"}}
+	for _, event := range []TriggerEvent{TriggerEventUnknown, TriggerEvent(99)} {
+		for _, input := range [][]TriggerInfo{nil, facts} {
+			got := CheckTriggersPresent(input, event)
+			if len(got) != 1 {
+				t.Fatalf("CheckTriggersPresent(%d facts, %s) returned %d findings, want 1: "+
+					"a nil result would read as passed", len(input), event, len(got))
+			}
+			if got[0].Check != IDTriggersPresent {
+				t.Errorf("finding Check = %q, want %q", got[0].Check, IDTriggersPresent)
+			}
+			if got[0].Tables != nil {
+				t.Errorf("finding Tables = %v, want nil: no table was inspected", got[0].Tables)
+			}
+			if got[0].Facts != event {
+				t.Errorf("finding Facts = %#v, want the rejected event %s", got[0].Facts, event)
+			}
+		}
 	}
 }
 

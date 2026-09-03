@@ -547,12 +547,13 @@ func TestTriggersIntegration(t *testing.T) {
 	}
 }
 
-// TestTriggerTimingEnumOrderIntegration pins docs/COMPAT.md entry 10: the
-// BEFORE-ahead-of-AFTER order that Inspector.Triggers reports comes from
-// information_schema.TRIGGERS.ACTION_TIMING being ENUM('BEFORE','AFTER') and
-// MySQL sorting an ENUM by declaration index. If a server ever exposed that
-// column as text, ORDER BY would invert the pair and this test fails rather
-// than the ordering silently regressing.
+// TestTriggerTimingEnumOrderIntegration pins the server observation recorded
+// in docs/COMPAT.md entry 10: information_schema.TRIGGERS.ACTION_TIMING is
+// still ENUM('BEFORE','AFTER') and the server's own ORDER BY yields firing
+// order. Inspector.Triggers no longer depends on it — sortTriggers makes the
+// returned order in Go — so this test guards the record, not the result: a
+// server exposing the column as text would leave the fact's order unchanged
+// but is a change the entry must know about.
 func TestTriggerTimingEnumOrderIntegration(t *testing.T) {
 	db, schema := validationDatabase(t)
 
@@ -603,6 +604,98 @@ func TestTriggerTimingEnumOrderIntegration(t *testing.T) {
 	}
 }
 
+// TestTriggerNameOrderIsByteOrderIntegration pins the name half of the
+// trigger order: the server's ORDER BY TRIGGER_NAME is case-insensitive
+// (docs/COMPAT.md entry 2), so the byte order Inspector.Triggers documents is
+// made in Go, and CheckTriggersPresent reproduces it by the same comparator.
+func TestTriggerNameOrderIsByteOrderIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_trigger_order")
+	table := sqlutil.QuoteQualified(schema, "name_order_trigger")
+	testsupport.ExecSQL(t, db, "CREATE TABLE "+table+" (id INT PRIMARY KEY)")
+	for _, name := range []string{"a_trg", "B_trg"} {
+		testsupport.ExecSQL(t, db,
+			"CREATE TRIGGER "+sqlutil.QuoteQualified(schema, name)+
+				" BEFORE DELETE ON "+table+" FOR EACH ROW SET @dbsgomysql_order = OLD.id")
+	}
+
+	// The server's own order, independent of the library: this is what would
+	// have leaked into the fact, and the assertion that makes the Go sort
+	// load-bearing.
+	const ordered = `
+		SELECT TRIGGER_NAME
+		FROM information_schema.TRIGGERS
+		WHERE EVENT_OBJECT_SCHEMA = ? AND EVENT_OBJECT_TABLE = 'name_order_trigger'
+		ORDER BY TRIGGER_NAME`
+	rows, err := db.QueryContext(t.Context(), ordered, schema)
+	if err != nil {
+		t.Fatalf("order triggers by name: %v", err)
+	}
+	defer rows.Close()
+	var serverOrder []string
+	for rows.Next() {
+		var name string
+		if scanErr := rows.Scan(&name); scanErr != nil {
+			t.Fatalf("scan trigger name: %v", scanErr)
+		}
+		serverOrder = append(serverOrder, name)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		t.Fatalf("iterate trigger names: %v", rowsErr)
+	}
+	if want := []string{"a_trg", "B_trg"}; !slices.Equal(serverOrder, want) {
+		t.Errorf("server ORDER BY TRIGGER_NAME = %v, want %v (utf8mb3_general_ci)", serverOrder, want)
+	}
+
+	got, err := validations.NewInspector(db, schema).Triggers(
+		t.Context(), []string{"name_order_trigger"}, validations.TriggerDelete,
+	)
+	if err != nil {
+		t.Fatalf("Triggers: %v", err)
+	}
+	names := make([]string, 0, len(got))
+	for _, trigger := range got {
+		names = append(names, trigger.Name)
+	}
+	if want := []string{"B_trg", "a_trg"}; !slices.Equal(names, want) {
+		t.Errorf("Triggers() names = %v, want %v (byte order)", names, want)
+	}
+
+	findings := validations.CheckTriggersPresent(got, validations.TriggerDelete)
+	if len(findings) != 1 {
+		t.Fatalf("CheckTriggersPresent() returned %d findings, want 1", len(findings))
+	}
+	if payload, ok := findings[0].Facts.([]validations.TriggerInfo); !ok || !reflect.DeepEqual(payload, got) {
+		t.Errorf("finding payload = %#v, want the fact slice %#v", findings[0].Facts, got)
+	}
+}
+
+// TestYearDisplayWidthIsBareOnFreshServerIntegration pins the server fact
+// behind docs/COMPAT.md entry 1's YEAR clause: a column declared YEAR(4) on a
+// current server reports COLUMN_TYPE "year", so the legacy year(4) form can
+// come only from a data dictionary written before 8.0.19 and is pinned
+// synthetically by TestNormalizeColumnType.
+func TestYearDisplayWidthIsBareOnFreshServerIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_year_width")
+	testsupport.ExecSQL(t, db,
+		"CREATE TABLE "+sqlutil.QuoteQualified(schema, "year_width")+" (id INT PRIMARY KEY, y YEAR(4))")
+
+	spec, err := validations.NewInspector(db, schema).TableSpec(
+		t.Context(), validations.Ref(schema, "year_width"),
+	)
+	if err != nil {
+		t.Fatalf("TableSpec: %v", err)
+	}
+	if len(spec.Columns) != 2 || spec.Columns[1].Name != "y" {
+		t.Fatalf("TableSpec columns = %#v, want id then y", spec.Columns)
+	}
+	if got := spec.Columns[1].Type; got != "year" {
+		t.Errorf("fresh YEAR(4) column reports COLUMN_TYPE %q, want %q (8.0.19 dropped the width)", got, "year")
+	}
+	if got := spec.Columns[1].NormalizedType; got != "year" {
+		t.Errorf("NormalizedType = %q, want %q", got, "year")
+	}
+}
+
 func TestStorageEngineIntegration(t *testing.T) {
 	db, schema := validationDatabase(t)
 
@@ -638,6 +731,20 @@ func TestViewsIntegration(t *testing.T) {
 	}
 	if findings := validations.CheckStorageEngine(got, "InnoDB"); findings != nil {
 		t.Errorf("CheckStorageEngine(view) = %#v, want nil", findings)
+	}
+
+	pks, err := validations.NewInspector(db, schema).PrimaryKeys(
+		t.Context(), []string{"report_view", "no_pk"},
+	)
+	if err != nil {
+		t.Fatalf("PrimaryKeys: %v", err)
+	}
+	if len(pks) != 1 || pks[0].Table != "no_pk" {
+		t.Fatalf("PrimaryKeys(view, no_pk) = %#v, want only no_pk: a view has no primary key to report", pks)
+	}
+	findings := validations.CheckPKExists(pks)
+	if len(findings) != 1 || !reflect.DeepEqual(findings[0].Tables, []string{"no_pk"}) {
+		t.Errorf("CheckPKExists(view, no_pk) = %#v, want one finding for no_pk only", findings)
 	}
 }
 

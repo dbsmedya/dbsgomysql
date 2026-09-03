@@ -5,11 +5,11 @@ import (
 	"strings"
 )
 
-// normalizeColumnType removes the deprecated integer display width from an
-// information_schema.COLUMNS.COLUMN_TYPE value, so a column created before
-// MySQL 8.0.19 compares equal to the same column created after it. Display
-// width is stored per column, so an instance upgraded in place from an earlier
-// release keeps reporting the old form until the table is rebuilt.
+// normalizeColumnType removes the deprecated display width from an integer or
+// YEAR information_schema.COLUMNS.COLUMN_TYPE value, so a column created
+// before MySQL 8.0.19 compares equal to the same column created after it.
+// Display width is stored per column, so an instance upgraded in place from an
+// earlier release keeps reporting the old form until the table is rebuilt.
 //
 // MySQL's own two exceptions are mirrored here, because on a current server
 // both still appear in COLUMN_TYPE and neither is formatting noise:
@@ -72,12 +72,14 @@ func containsZerofill(attributes string) bool {
 	return false
 }
 
-// hasDisplayWidth reports whether an integer type carries the legacy display
-// width MySQL stopped emitting in 8.0.19. It is a switch rather than a
-// package-level set because library rules forbid global mutable state.
+// hasDisplayWidth reports whether a type carries the legacy display width
+// MySQL stopped emitting in 8.0.19: the integer types and YEAR (WL #13528 and
+// WL #13537, same release, same data-dictionary retention rule). It is a
+// switch rather than a package-level set because library rules forbid global
+// mutable state.
 func hasDisplayWidth(base string) bool {
 	switch base {
-	case dataTypeBigint, dataTypeInt, "integer", "mediumint", "smallint", dataTypeTinyint:
+	case dataTypeBigint, dataTypeInt, "integer", "mediumint", "smallint", dataTypeTinyint, "year":
 		return true
 	default:
 		return false
