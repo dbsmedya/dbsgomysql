@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   case, and the returned order no longer depends on the server's sort; and
   `CheckTriggersPresent` given `TriggerEventUnknown` or an undeclared event
   now returns one finding carrying the event instead of `nil` (#78).
+- `pkg/replication` decoders now accept a boolean delivered by a database
+  driver as `bool` and an integer delivered as an integral `float64`, the
+  remaining representations `database/sql/driver.Value` permits; a fractional,
+  NaN, or infinite float is rejected as an unrecognized value (#79).
+- `Inspector.BinaryLogStatus` no longer issues the `SHOW MASTER STATUS`
+  fallback when the first statement failed because the context was cancelled
+  or its deadline passed, and an error carrying both statements' causes now
+  separates them with `; ` instead of a newline (#80).
 
 ## [1.1.2] - 2026-09-02
 

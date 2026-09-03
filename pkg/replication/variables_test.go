@@ -19,6 +19,8 @@ func TestBinaryLogEnabled(t *testing.T) {
 	}{
 		{name: "enabled as int64", value: int64(1), want: true},
 		{name: "disabled as int64", value: int64(0), want: false},
+		{name: "enabled as bool", value: true, want: true},
+		{name: "disabled as bool", value: false, want: false},
 		{name: "enabled as text", value: []byte("ON"), want: true},
 		{name: "disabled as text", value: []byte("OFF"), want: false},
 	}

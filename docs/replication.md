@@ -364,6 +364,12 @@ if errors.As(err, &opErr) {
 statement's name differs across the supported range. When both fail, the
 returned error carries **both** causes, each named by the statement that
 produced it, and `errors.Is` and `errors.As` reach either one.
+The rendered message separates the two with `; ` rather than a newline, each
+cause's own text kept as the driver produced it. A primary failure caused by
+the context — cancellation or an expired deadline — is returned alone; the
+fallback is not attempted, since it could not answer either. On MySQL 8.0 every
+successful call is two round trips, because the primary spelling fails with a
+parse error there ([COMPAT.md](COMPAT.md) entry 20).
 
 The library never panics and never logs.
 

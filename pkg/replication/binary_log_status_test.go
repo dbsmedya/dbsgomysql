@@ -1,9 +1,11 @@
 package replication
 
 import (
+	"context"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -125,6 +127,74 @@ func TestBinaryLogStatusFallback(t *testing.T) {
 		}
 	})
 
+	contextFailures := []struct {
+		name     string
+		sentinel error
+	}{
+		{name: "canceled", sentinel: context.Canceled},
+		{name: "deadline exceeded", sentinel: context.DeadlineExceeded},
+	}
+	for _, failure := range contextFailures {
+		t.Run("primary failed by context "+failure.name+" skips the fallback", func(t *testing.T) {
+			t.Parallel()
+
+			// Wrapped, never bare: a driver reports the context failure inside
+			// its own error, and database/sql hands the driver's value back
+			// unchanged, so only errors.Is can recognize it. A bare sentinel
+			// here would also satisfy a mistaken == check.
+			primary := fmt.Errorf("driver: %w", failure.sentinel)
+			var log []string
+			db := testsupport.OpenScriptedDBWithLog(&log,
+				testsupport.ScriptedQuery{Match: "SHOW BINARY LOG STATUS", Err: primary},
+				testsupport.ScriptedQuery{
+					Match:   "SHOW MASTER STATUS",
+					Columns: binaryLogStatusColumns(),
+					Rows:    [][]driver.Value{binaryLogStatusRow()},
+				},
+			)
+			defer db.Close()
+
+			got, err := NewInspector(db).BinaryLogStatus(t.Context())
+			if err == nil {
+				t.Fatalf("BinaryLogStatus() = %#v, nil; want the primary's context failure", got)
+			}
+			if !errors.Is(err, failure.sentinel) {
+				t.Errorf("errors.Is(%v, %v) = false, want true", err, failure.sentinel)
+			}
+			// Exactly one statement: the fallback cannot answer a question the
+			// context already refused.
+			if len(log) != 1 || log[0] != "SHOW BINARY LOG STATUS" {
+				t.Errorf("issued %q, want exactly [SHOW BINARY LOG STATUS]", log)
+			}
+			if strings.Contains(err.Error(), "SHOW MASTER STATUS") {
+				t.Errorf("error %q names the statement that was never issued", err)
+			}
+			assertOpError(t, err, opBinaryLogStatus, "", "")
+		})
+	}
+
+	t.Run("canceled context issues no statement", func(t *testing.T) {
+		t.Parallel()
+
+		var log []string
+		db := testsupport.OpenScriptedDBWithLog(&log, testsupport.ScriptedQuery{
+			Match:   "SHOW BINARY LOG STATUS",
+			Columns: binaryLogStatusColumns(),
+			Rows:    [][]driver.Value{binaryLogStatusRow()},
+		})
+		defer db.Close()
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := NewInspector(db).BinaryLogStatus(ctx)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("BinaryLogStatus() error = %v, want context.Canceled", err)
+		}
+		if len(log) != 0 {
+			t.Errorf("issued %q on a canceled context, want none", log)
+		}
+	})
+
 	t.Run("both fail", func(t *testing.T) {
 		t.Parallel()
 
@@ -180,6 +250,18 @@ func TestBinaryLogStatusFallback(t *testing.T) {
 			if !strings.Contains(message, statement) {
 				t.Errorf("error message %q does not name %q", message, statement)
 			}
+		}
+
+		// Both causes, each named, joined by the separator this package adds —
+		// never the newline errors.Join inserts. Neither fixture cause carries a
+		// newline of its own, which is what makes the second check meaningful.
+		const wantMessage = "replication: binary_log_status: " +
+			"SHOW BINARY LOG STATUS: primary refused; SHOW MASTER STATUS: fallback refused"
+		if message != wantMessage {
+			t.Errorf("error message = %q, want %q", message, wantMessage)
+		}
+		if strings.Contains(message, "\n") {
+			t.Errorf("error message %q spans more than one line", message)
 		}
 	})
 }

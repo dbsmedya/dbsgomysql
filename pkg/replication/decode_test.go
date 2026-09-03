@@ -121,6 +121,25 @@ func TestDecodeProvenance(t *testing.T) {
 			input:           true,
 			wantErrContains: "bool",
 		},
+		{
+			name: "int64 from integral float64", decode: decodeInt64Any,
+			input: float64(12), want: int64(12),
+		},
+		{
+			name: "int64 from negative integral float64", decode: decodeInt64Any,
+			input: float64(-3), want: int64(-3),
+		},
+		{
+			name: "int64 from fractional float64", decode: decodeInt64Any, input: float64(1.5),
+			wantErrIs: errUnrecognizedValue, wantErrContains: "1.5",
+		},
+		{name: "int64 from NaN", decode: decodeInt64Any, input: math.NaN(), wantErrIs: errUnrecognizedValue},
+		{name: "int64 from +Inf", decode: decodeInt64Any, input: math.Inf(1), wantErrIs: errUnrecognizedValue},
+		{name: "int64 from -Inf", decode: decodeInt64Any, input: math.Inf(-1), wantErrIs: errUnrecognizedValue},
+		{
+			name: "int64 from float64 above MaxInt64", decode: decodeInt64Any, input: float64(1 << 63),
+			wantErrIs: errValueOutOfRange,
+		},
 
 		// decodeInt.
 		{
@@ -207,8 +226,43 @@ func TestDecodeProvenance(t *testing.T) {
 			input:     nil,
 			wantErrIs: errUnexpectedNULL,
 		},
+		{
+			name: "uint64 from integral float64", decode: decodeUint64Any,
+			input: float64(3306), want: uint64(3306),
+		},
+		{
+			name: "uint64 from negative float64", decode: decodeUint64Any, input: float64(-1),
+			wantErrIs: errValueOutOfRange,
+		},
+		{
+			name: "uint64 from fractional float64", decode: decodeUint64Any, input: float64(0.5),
+			wantErrIs: errUnrecognizedValue,
+		},
+		{name: "uint64 from NaN", decode: decodeUint64Any, input: math.NaN(), wantErrIs: errUnrecognizedValue},
+		{name: "uint64 from +Inf", decode: decodeUint64Any, input: math.Inf(1), wantErrIs: errUnrecognizedValue},
+		{name: "uint64 from -Inf", decode: decodeUint64Any, input: math.Inf(-1), wantErrIs: errUnrecognizedValue},
+		{
+			name: "uint64 from float64 at 2^64", decode: decodeUint64Any, input: float64(1 << 64),
+			wantErrIs: errValueOutOfRange,
+		},
+		{
+			name: "uint16 from integral float64", decode: decodeUint16Any,
+			input: float64(3306), want: uint16(3306),
+		},
 
 		// decodeBool.
+		{
+			name:   "bool from bool true",
+			decode: decodeBoolAny,
+			input:  true,
+			want:   true,
+		},
+		{
+			name:   "bool from bool false",
+			decode: decodeBoolAny,
+			input:  false,
+			want:   false,
+		},
 		{
 			name:   "bool from int64 one",
 			decode: decodeBoolAny,
@@ -326,10 +380,10 @@ func TestDecodeProvenance(t *testing.T) {
 			wantErrContains: "malformed",
 		},
 		{
-			name:            "null seconds from surprise type",
-			decode:          decodeNullSecondsAny,
-			input:           float64(3),
-			wantErrContains: "float64",
+			name:   "null seconds from integral float64",
+			decode: decodeNullSecondsAny,
+			input:  float64(3),
+			want:   sql.NullInt64{Int64: 3, Valid: true},
 		},
 	}
 

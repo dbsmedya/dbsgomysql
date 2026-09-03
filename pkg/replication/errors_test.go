@@ -44,6 +44,25 @@ func TestOpErrorFormat(t *testing.T) {
 			},
 			want: `replication: replica_status channel "ch1" column Seconds_Behind_Source: boom`,
 		},
+		{
+			name: "joined cause separated with semicolons",
+			err: &OpError{
+				Op: opBinaryLogStatus,
+				Err: errors.Join(
+					fmt.Errorf("SHOW BINARY LOG STATUS: %w", cause),
+					fmt.Errorf("SHOW MASTER STATUS: %w", errors.New("parse error")),
+				),
+			},
+			want: "replication: binary_log_status: SHOW BINARY LOG STATUS: boom; " +
+				"SHOW MASTER STATUS: parse error",
+		},
+		{
+			// Control: passes on main and pins that the rendering change keeps
+			// a consumer-built OpError with no cause from panicking.
+			name: "nil cause renders as before",
+			err:  &OpError{Op: opBinaryLogStatus},
+			want: "replication: binary_log_status: <nil>",
+		},
 	}
 
 	for _, testCase := range cases {
@@ -81,5 +100,15 @@ func TestOpErrorUnwrap(t *testing.T) {
 	}
 	if got.Unwrap() == nil {
 		t.Error("OpError.Unwrap() = nil; OpError.Err must remain reachable")
+	}
+
+	a := errors.New("first cause")
+	b := errors.New("second cause")
+	joined := &OpError{Op: opBinaryLogStatus, Err: errors.Join(a, b)}
+	if !errors.Is(joined, a) {
+		t.Errorf("errors.Is(%v, first cause) = false, want true", joined)
+	}
+	if !errors.Is(joined, b) {
+		t.Errorf("errors.Is(%v, second cause) = false, want true", joined)
 	}
 }
