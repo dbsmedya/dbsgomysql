@@ -244,6 +244,12 @@ func TestDiffSpecsDisplayWidthIsNotADifference(t *testing.T) {
 		t.Errorf("int(11) against int produced %d diffs, want 0; comparison uses "+
 			"NormalizedType so an upgraded server compares equal: %+v", len(diffs), diffs)
 	}
+
+	specA = specWithColumns(column("id", 1, "int(11)"), column("y", 2, "year(4)"))
+	specB = specWithColumns(column("id", 1, "int"), column("y", 2, "year"))
+	if diffs := DiffSpecs(specA, specB); len(diffs) != 0 {
+		t.Errorf("year(4) against year produced %d diffs, want 0: %+v", len(diffs), diffs)
+	}
 }
 
 func TestDiffSpecsBooleanIsNotAPlainTinyint(t *testing.T) {

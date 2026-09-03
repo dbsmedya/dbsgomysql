@@ -1,6 +1,13 @@
 package validations
 
-import "testing"
+import (
+	"database/sql/driver"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
+)
 
 func TestPKKindZeroValueIsUnknown(t *testing.T) {
 	t.Parallel()
@@ -48,5 +55,45 @@ func TestPKKindStringsAreDistinct(t *testing.T) {
 			t.Errorf("PKKind(%d) and PKKind(%d) both render as %q", other, kind, got)
 		}
 		seen[got] = kind
+	}
+}
+
+func TestPrimaryKeysQueryRestrictsToBaseTables(t *testing.T) {
+	t.Parallel()
+
+	manyTables := make([]string, 0, maxPointLookupTables+1)
+	for index := range maxPointLookupTables + 1 {
+		manyTables = append(manyTables, fmt.Sprintf("t_%d", index))
+	}
+	cases := []struct {
+		name   string
+		tables []string
+	}{
+		{name: "requested-object shape", tables: []string{"orders"}},
+		{name: "schema-scan shape above the point-lookup bound", tables: manyTables},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			var log []string
+			db := testsupport.OpenScriptedDBWithLog(&log, testsupport.ScriptedQuery{
+				Match:   "information_schema.TABLES AS t",
+				Columns: []string{"TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "COLUMN_TYPE"},
+				Rows:    [][]driver.Value{{"orders", "id", "int", "int"}},
+			})
+			defer db.Close()
+
+			if _, err := NewInspector(db, "shop").PrimaryKeys(t.Context(), testCase.tables); err != nil {
+				t.Fatalf("PrimaryKeys: %v", err)
+			}
+			if len(log) != 1 {
+				t.Fatalf("issued %d statements, want 1", len(log))
+			}
+			if !strings.Contains(log[0], "t.TABLE_TYPE = ?") {
+				t.Errorf("PrimaryKeys statement does not restrict TABLE_TYPE:\n%s", log[0])
+			}
+		})
 	}
 }

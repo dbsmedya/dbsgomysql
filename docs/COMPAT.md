@@ -106,7 +106,7 @@ Four principles govern every entry here. They are deliberately conservative:
 
 ---
 
-## 1. Integer display widths dropped ✅
+## 1. Integer and YEAR display widths dropped ✅
 
 **Affected:** display widths were **deprecated in 8.0.17** but kept appearing in
 output until **8.0.19**, which stopped showing them for integer types. All
@@ -132,10 +132,15 @@ second documented exception, and the width is genuinely semantic there, because
 retrieved values are zero-padded to it: `int(5) zerofill` yields `00042` where
 `int(10) zerofill` yields `0000000042`. Trailing attributes such as `unsigned`
 are preserved because they change the value range.
+The same applies to `YEAR`: `year(4)` is normalized to `year`, with no
+carve-out, because YEAR has none.
 
 A fresh current server cannot reproduce `int(11)`, so legacy-form
 normalization is pinned synthetically by
 [`TestNormalizeColumnType`](../pkg/validations/spec_normalize_test.go). The
+server fact that keeps the YEAR case unit-pinned is
+[`TestYearDisplayWidthIsBareOnFreshServerIntegration`](../pkg/validations/validations_integration_test.go):
+a freshly declared `YEAR(4)` reports raw `COLUMN_TYPE` as `year`. The
 matrix pins that new integers are bare, `tinyint(1)` survives, both zerofill
 widths survive and diff as a `ColumnTypeMismatch`, and decimal precision is
 untouched in
@@ -149,7 +154,12 @@ not make the bare declaration compare unequal to an explicit `INT(10)`.
 Notes, 8.0.17 (2019-07-22), Deprecation and Removal Notes (WL #13127) deprecates
 the attribute; 8.0.19 (2020-01-13), Deprecation and Removal Notes (WL #13528,
 Bug #30556657) is where output stops showing it, and states both exceptions and
-the data-dictionary retention rule quoted above. All three manuals still read
+the data-dictionary retention rule quoted above. The same 8.0.19 Deprecation
+and Removal Notes entry for YEAR (WL #13537) drops the width from `YEAR(4)`
+under the identical data-dictionary retention rule, and states that the
+exception does not apply to upgrades from 5.7. Refman 8.0, 8.4, and 9.7
+§13.2.4, "The YEAR Type", all still call `YEAR(4)` deprecated and describe it
+as equivalent to `YEAR`. All three manuals still read
 "you should expect support … to be removed in a future version of MySQL", so the
 attribute is deprecated but **not removed as of 9.7** — this entry does not
 become moot when the 8.0 line is dropped.
@@ -535,15 +545,21 @@ expression, which would change nothing on a real server while implying the
 original was broken. The same trap applies to `EVENT_MANIPULATION`, declared
 `ENUM('INSERT','UPDATE','DELETE')`.
 
-**Handling:** `Inspector.Triggers` orders by `ACTION_TIMING` in SQL and relies
-on the ENUM index deliberately; the reliance is called out at the query. The
-pure check `CheckTriggersPresent` cannot depend on it — it sorts facts already
-in memory, with no server involved — so it reproduces the same order in Go
-through `triggerTimingOrder`. The two agree by construction rather than by
-luck, and
+**Handling:** `Inspector.Triggers` still issues `ORDER BY ACTION_TIMING,
+TRIGGER_NAME`, which fixes the row order the scan sees, but the order the fact
+returns is made in Go: `sortTriggers` orders each table's triggers by
+`triggerTimingOrder` and then by name compared as bytes, and
+`CheckTriggersPresent` uses the same comparator, so the two agree by
+construction whether or not the server's sort does. The ENUM order is therefore
+a pinned server observation rather than something the result depends on.
 [`TestTriggerTimingEnumOrderIntegration`](../pkg/validations/validations_integration_test.go)
-pins both halves: that the column is still an `ENUM` with `BEFORE` declared
-first, and that the fact method returns BEFORE-timed triggers first.
+pins the observation — the column is still an `ENUM` with `BEFORE` declared
+first, and the server's own `ORDER BY` returns BEFORE-timed rows first — so a
+server that exposed the column as text is noticed even though the fact's order
+would not move. The name half has the same shape for the same reason:
+`TRIGGER_NAME` collates case-insensitively (entry 2), and
+[`TestTriggerNameOrderIsByteOrderIntegration`](../pkg/validations/validations_integration_test.go)
+pins the server's case-insensitive order beside the fact's byte order.
 [`TestTriggersIntegration`](../pkg/validations/validations_integration_test.go)
 additionally asserts the `Timing` values themselves rather than only the
 resulting name order.
@@ -626,7 +642,10 @@ never yields `GrantPresent`: choosing which of several matching `mysql.db` rows
 MySQL applies is not modeled here. Matching is case-exact, like every other
 identifier comparison in the package. Pinned by
 [`TestWildcardSchemaGrantDowngradesAbsenceOnly`](../pkg/validations/grants_test.go)
-and [`TestLikePatternMatches`](../pkg/validations/grants_test.go).
+and [`TestLikePatternMatches`](../pkg/validations/grants_test.go). While
+`partial_revokes` is enabled the fact does not consult stored keys as patterns
+at all, because the server does not either; that half is pinned by
+[`TestPartialRevokesDoNotHideProvableAbsence`](../pkg/validations/grants_test.go).
 
 **Reference:** documented. Refman §8.2.12, "Privilege Restriction Using Partial
 Revokes", states the interaction this entry turns on: "enabling

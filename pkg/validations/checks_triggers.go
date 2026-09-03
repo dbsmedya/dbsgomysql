@@ -22,8 +22,10 @@ type TriggerInfo struct {
 
 // Triggers returns triggers for event on requested tables. Results preserve
 // requested table order and sort each table's triggers by firing order —
-// BEFORE ahead of AFTER — and then by exact name. Missing or invisible tables
-// are absent.
+// BEFORE ahead of AFTER — and then by exact name, compared as bytes. Both
+// halves of the order are made in Go; the server's own name order is
+// case-insensitive and its timing order is a pinned observation the fact does
+// not depend on. Missing or invisible tables are absent.
 //
 // Triggers is safe for concurrent use when the Inspector's Querier is safe for
 // concurrent use and tables is not mutated concurrently.
@@ -54,11 +56,14 @@ func (i *Inspector) Triggers(
 	// statement preserves Triggers' absence result for both cases and repairs the
 	// supplementary one.
 	if representable(i.schema) {
-		// ORDER BY ACTION_TIMING sorts BEFORE ahead of AFTER because the column
-		// is ENUM('BEFORE','AFTER') and MySQL orders ENUM values by declaration
-		// index, not by their text — a plain string sort would invert the pair.
-		// Do not "fix" this into a lexical ordering; see docs/COMPAT.md entry 10,
-		// pinned by TestTriggerTimingEnumOrderIntegration.
+		// ORDER BY fixes the row order the scan sees; it does not decide the
+		// order the fact returns, which sortTriggers makes in Go for every
+		// table (timing via triggerTimingOrder, then name as bytes) so that the
+		// fact and CheckTriggersPresent agree by construction. The server's own
+		// ACTION_TIMING sort — BEFORE ahead of AFTER, because the column is
+		// ENUM('BEFORE','AFTER') and MySQL orders an ENUM by declaration index —
+		// is a pinned server observation, not a dependency: docs/COMPAT.md
+		// entry 10, TestTriggerTimingEnumOrderIntegration.
 		query := `
 			SELECT EVENT_OBJECT_TABLE, TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING
 			FROM information_schema.TRIGGERS AS tr
@@ -101,6 +106,9 @@ func (i *Inspector) Triggers(
 			return nil, newObjectError(opTriggers, i.schema, "", fmt.Errorf("iterate metadata: %w", err))
 		}
 	}
+	for _, triggers := range byTable {
+		sortTriggers(triggers)
+	}
 
 	found := make([]TriggerInfo, 0)
 	for _, table := range tables {
@@ -114,12 +122,26 @@ func (i *Inspector) Triggers(
 //
 // Trigger logic is invisible to the caller and can produce effects outside the
 // operation's model and verification. The payload is sorted by timing and then
-// trigger name. CheckTriggersPresent is safe for concurrent use when trg is not
-// mutated concurrently.
+// trigger name. An event that names no event — TriggerEventUnknown or an
+// undeclared value — yields one finding carrying the event as Facts and no
+// Tables, because a nil result would read as passed. CheckTriggersPresent is
+// safe for concurrent use when trg is not mutated concurrently.
 func CheckTriggersPresent(trg []TriggerInfo, event TriggerEvent) []Finding {
 	serverEvent, ok := event.mysqlValue()
 	if !ok {
-		return nil
+		// An event that names nothing cannot be answered, and a nil result
+		// would read as "no triggers found" — the one outcome doc.go defines
+		// as passed. The fact method rejects the same argument with
+		// ErrInvalidTriggerEvent; a check has no error return, so it reports
+		// the malformed question as a finding carrying the argument.
+		return []Finding{{
+			Check: IDTriggersPresent,
+			Message: findingMessage(
+				IDTriggersPresent,
+				"trigger presence is unconfirmed because the requested event names no event",
+			),
+			Facts: event,
+		}}
 	}
 
 	tableOrder := make([]string, 0)
@@ -137,14 +159,7 @@ func CheckTriggersPresent(trg []TriggerInfo, event TriggerEvent) []Finding {
 	var findings []Finding
 	for _, table := range tableOrder {
 		triggers := byTable[table]
-		sort.Slice(triggers, func(left, right int) bool {
-			if triggers[left].Timing != triggers[right].Timing {
-				return triggerTimingOrder(triggers[left].Timing) <
-					triggerTimingOrder(triggers[right].Timing)
-			}
-
-			return triggers[left].Name < triggers[right].Name
-		})
+		sortTriggers(triggers)
 		findings = append(findings, Finding{
 			Check: IDTriggersPresent,
 			Message: findingMessage(
@@ -157,6 +172,22 @@ func CheckTriggersPresent(trg []TriggerInfo, event TriggerEvent) []Finding {
 	}
 
 	return findings
+}
+
+// sortTriggers orders one table's triggers by firing order and then by exact
+// name, compared as bytes. The fact method and CheckTriggersPresent both use
+// it, so the two agree by construction: the server's ORDER BY TRIGGER_NAME
+// collates case-insensitively (docs/COMPAT.md entry 2) and would put a_trg
+// ahead of B_trg, which the fact's "exact name" promise does not.
+func sortTriggers(triggers []TriggerInfo) {
+	sort.Slice(triggers, func(left, right int) bool {
+		if triggers[left].Timing != triggers[right].Timing {
+			return triggerTimingOrder(triggers[left].Timing) <
+				triggerTimingOrder(triggers[right].Timing)
+		}
+
+		return triggers[left].Name < triggers[right].Name
+	})
 }
 
 func triggerTimingOrder(timing string) uint8 {

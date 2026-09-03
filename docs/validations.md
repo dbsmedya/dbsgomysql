@@ -77,9 +77,10 @@ grants, err := insp.Grants(ctx)
 
 Each fact returns a slice in requested table order. Missing or invisible
 objects are absent rather than errors; compare `tableFacts` with `tables` using
-`CheckTablesExist` when absence is the question. `PKInfo.Columns` retains exact
-case and primary-key order, and a single-column key reports its `DataType`,
-`IsInteger`, and `Unsigned` facts.
+`CheckTablesExist` when absence is the question. `PrimaryKeys` answers only for
+base tables; a requested view is absent from its result, so it never reaches
+`CheckPKExists`. `PKInfo.Columns` retains exact case and primary-key order, and
+a single-column key reports its `DataType`, `IsInteger`, and `Unsigned` facts.
 
 Names come back in the server's exact case, and the library compares names in
 Go rather than relying on SQL predicates. `information_schema` name collations
@@ -266,13 +267,15 @@ SELECT on the mysql schema; a global SELECT does not count while partial
 revokes are enabled. Otherwise it is GrantUnconfirmed.
 
 A schema grant may also be stored as a wildcard pattern, such as `shop%` or
-`my_db`. Where an exact lookup finds nothing and a stored pattern matches the
-requested schema, the answer is unconfirmed rather than absent. A pattern never
-proves a privilege. The same weakening rule applies when a column grant covers
-the requested table, when a stored schema or table name matches the request
-only case-insensitively, and when a visible anonymous-account database grant
-covers the requested scope. A column grant proves nothing at schema scope, and
-none of these sources can produce `GrantPresent`.
+`my_db`, while partial revokes are disabled; once they are enabled the server
+reads the stored name literally and so does the fact. Where an exact lookup
+finds nothing and a stored pattern matches the requested schema, the answer is
+unconfirmed rather than absent. A pattern never proves a privilege. The same
+weakening rule applies when a column grant covers the requested table, when a
+stored schema or table name matches the request only case-insensitively, and
+when a visible anonymous-account database grant covers the requested scope. A
+column grant proves nothing at schema scope, and none of these sources can
+produce `GrantPresent`.
 
 Because MySQL applies an anonymous database grant that a named account may be
 unable to see, `GrantAbsent` requires the account's own direct `SELECT` on the
