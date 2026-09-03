@@ -36,8 +36,8 @@ func decodeString(value any) (string, error) {
 	}
 }
 
-// decodeInt64 reads a signed integer column in whichever representation the
-// driver chose for it.
+// decodeInt64 reads a signed integer column delivered as int64, uint64, an
+// integral float64, or decimal text in string or []byte form.
 func decodeInt64(value any) (int64, error) {
 	switch typed := value.(type) {
 	case int64:
@@ -48,6 +48,8 @@ func decodeInt64(value any) (int64, error) {
 		}
 
 		return int64(typed), nil
+	case float64:
+		return float64ToInt64(typed)
 	case []byte:
 		return parseInt64(string(typed))
 	case string:
@@ -77,8 +79,9 @@ func decodeInt(value any) (int, error) {
 	return narrowed, nil
 }
 
-// decodeUint64 reads an unsigned integer column. A negative value is a range
-// failure, not a wraparound.
+// decodeUint64 reads an unsigned integer column delivered as uint64, int64, an
+// integral float64, or decimal text in string or []byte form. A negative value
+// is a range failure, not a wraparound.
 func decodeUint64(value any) (uint64, error) {
 	switch typed := value.(type) {
 	case uint64:
@@ -89,6 +92,8 @@ func decodeUint64(value any) (uint64, error) {
 		}
 
 		return uint64(typed), nil
+	case float64:
+		return float64ToUint64(typed)
 	case []byte:
 		return parseUint64(string(typed))
 	case string:
@@ -128,11 +133,15 @@ func decodeUint16(value any) (uint16, error) {
 	return uint16(decoded), nil
 }
 
-// decodeBool reads a boolean column or system variable. Text is matched
-// exactly and never case-folded: the server's own spellings are the whole
-// accepted set, so an unfamiliar spelling is reported rather than guessed.
+// decodeBool reads a boolean column or system variable delivered as bool,
+// numeric 0 or 1 in int64 or uint64 form, or text in string or []byte form.
+// Text is matched exactly and never case-folded: the server's own spellings
+// are the whole accepted set, so an unfamiliar spelling is reported rather
+// than guessed.
 func decodeBool(value any) (bool, error) {
 	switch typed := value.(type) {
+	case bool:
+		return typed, nil
 	case int64:
 		switch typed {
 		case 0:
@@ -160,6 +169,37 @@ func decodeBool(value any) (bool, error) {
 	default:
 		return false, unexpectedTypeError(value)
 	}
+}
+
+// float64ToInt64 accepts a driver float that holds an integer. A fractional,
+// NaN, or infinite value is a value the column is not documented to carry,
+// not a type the decoder cannot read; an integral value outside int64 is a
+// range failure. Comparison against 2^63 is exact in float64, which is why the
+// upper bound is written as an exclusive test against that power of two
+// rather than as math.MaxInt64, which float64 rounds up to 2^63.
+func float64ToInt64(value float64) (int64, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) {
+		return 0, fmt.Errorf("%w: %v is not an integer", errUnrecognizedValue, value)
+	}
+	if value < -(1<<63) || value >= 1<<63 {
+		return 0, fmt.Errorf("%w: %v exceeds int64", errValueOutOfRange, value)
+	}
+
+	return int64(value), nil
+}
+
+func float64ToUint64(value float64) (uint64, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) {
+		return 0, fmt.Errorf("%w: %v is not an integer", errUnrecognizedValue, value)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%w: %v is negative", errValueOutOfRange, value)
+	}
+	if value >= 1<<64 {
+		return 0, fmt.Errorf("%w: %v exceeds uint64", errValueOutOfRange, value)
+	}
+
+	return uint64(value), nil
 }
 
 // decodeNullSeconds reads the one promised column that may be NULL,

@@ -3,6 +3,7 @@ package replication
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrNilQuerier means an Inspector was constructed without a connection.
@@ -36,7 +37,11 @@ type OpError struct {
 // Error returns the operation, its channel and column attribution, and the
 // cause. The channel name is quoted so that a server spelling containing
 // spaces stays readable; an unattributed channel or column is omitted rather
-// than rendered empty.
+// than rendered empty. A cause that joins several errors — when both
+// BinaryLogStatus statements fail — renders its members separated by "; " in
+// place of the newline errors.Join inserts, so the separator this package adds
+// never splits a log line; each member's own text is rendered as is. A nil
+// cause renders as <nil>. Unwrap still returns the joined value.
 //
 // Error is safe for concurrent use provided the OpError is not mutated.
 func (e *OpError) Error() string {
@@ -48,7 +53,31 @@ func (e *OpError) Error() string {
 		attribution += " column " + e.Column
 	}
 
-	return fmt.Sprintf("replication: %s%s: %v", e.Op, attribution, e.Err)
+	return "replication: " + e.Op + attribution + ": " + causeText(e.Err)
+}
+
+// causeText renders a joined cause with "; " between its members and any
+// other cause as is. A nil cause renders as fmt's <nil>: OpError is exported
+// with exported fields, so a consumer-built value may carry none.
+func causeText(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return err.Error()
+	}
+	parts := make([]string, 0, 2)
+	for _, member := range joined.Unwrap() {
+		if member != nil {
+			parts = append(parts, member.Error())
+		}
+	}
+	if len(parts) == 0 {
+		return err.Error()
+	}
+
+	return strings.Join(parts, "; ")
 }
 
 // Unwrap returns the underlying cause.

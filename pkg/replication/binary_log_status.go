@@ -54,6 +54,11 @@ type BinaryLogStatus struct {
 // disabled. A nil status with a nil error therefore means "no binary log",
 // never "the question could not be answered".
 //
+// On MySQL 8.0 every successful call issues both statements — the primary
+// spelling fails with a parse error there — so the fact costs two round trips
+// on that line by design (docs/COMPAT.md entry 20). A primary failure caused by
+// the context is not retried through the fallback.
+//
 // The returned pointer is owned by the caller and built fresh per call.
 //
 // BinaryLogStatus is safe for concurrent use when the Inspector's Querier is.
@@ -65,6 +70,19 @@ func (i *Inspector) BinaryLogStatus(ctx context.Context) (*BinaryLogStatus, erro
 	rows, errPrimary := i.q.QueryContext(ctx, sqlBinaryLogStatusPrimary)
 	if errPrimary == nil {
 		return parseBinaryLogStatus(rows)
+	}
+
+	// A context failure is not a version signal. The fallback exists to
+	// accommodate 8.0, where the primary spelling does not exist; it cannot
+	// answer a question the context has already refused, and on 8.4 and
+	// later it would add a guaranteed parse error to the cause. Any other
+	// primary failure keeps the fallback, because a stdlib-only library does
+	// not classify driver errors and cannot tell which server it is talking to.
+	if ctx.Err() != nil ||
+		errors.Is(errPrimary, context.Canceled) ||
+		errors.Is(errPrimary, context.DeadlineExceeded) {
+		return nil, newOpError(opBinaryLogStatus, "", "",
+			fmt.Errorf("SHOW BINARY LOG STATUS: %w", errPrimary))
 	}
 
 	// The fallback is this package's entire accommodation of the EOL 8.0 line,
