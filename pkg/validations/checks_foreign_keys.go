@@ -1,7 +1,5 @@
 package validations
 
-import "sort"
-
 // CheckFKIndexed reports facts whose ordered child columns are not a leftmost
 // prefix of an index.
 //
@@ -34,9 +32,11 @@ func CheckFKIndexed(fks []ForeignKey) []Finding {
 //
 // The result must come from ForeignKeys with IncomingTo(tables...) on an
 // Inspector bound to schema. Supplying caller-authored, truncated, or
-// differently selected facts invalidates the conclusion. Findings follow
-// requested parent-table order, with ties sorted by exact child schema, child
-// table, and constraint name. An empty target is vacuously closed.
+// differently selected facts invalidates the conclusion. Findings are emitted
+// once per external key, in the order the result carries them; for the
+// documented input that is requested parent-table order, duplicates included,
+// with ties sorted by exact child schema, child table, and constraint name. An
+// empty target is vacuously closed.
 // CheckFKClosure is safe for concurrent use when its arguments are not mutated
 // concurrently.
 func CheckFKClosure(
@@ -53,7 +53,13 @@ func CheckFKClosure(
 		targets[table] = struct{}{}
 	}
 
-	externalByParent := make(map[string][]ForeignKey)
+	// One finding per external key, in the order the result carries them.
+	// ForeignKeys with IncomingTo(tables...) already returns keys in requested
+	// parent-table order, duplicates included, with ties sorted by exact child
+	// schema, child table, and constraint name; re-grouping here would either
+	// multiply findings for a duplicated target (the defect in #74) or collapse
+	// the duplicate positions the fact preserves.
+	var findings []Finding
 	for index := range result.Keys {
 		key := &result.Keys[index]
 		if key.ParentSchema != schema {
@@ -66,31 +72,11 @@ func CheckFKClosure(
 		if key.ChildSchema == schema && childInSet {
 			continue
 		}
-		externalByParent[key.ParentTable] = append(externalByParent[key.ParentTable], *key)
-	}
-	for _, external := range externalByParent {
-		sort.Slice(external, func(left, right int) bool {
-			if external[left].ChildSchema != external[right].ChildSchema {
-				return external[left].ChildSchema < external[right].ChildSchema
-			}
-			if external[left].ChildTable != external[right].ChildTable {
-				return external[left].ChildTable < external[right].ChildTable
-			}
-
-			return external[left].ConstraintName < external[right].ConstraintName
-		})
-	}
-
-	var findings []Finding
-	for _, target := range tables {
-		external := externalByParent[target]
-		for index := range external {
-			findings = append(findings, foreignKeyFinding(
-				IDFKClosure,
-				"foreign key points into the target set from an external child",
-				&external[index],
-			))
-		}
+		findings = append(findings, foreignKeyFinding(
+			IDFKClosure,
+			"foreign key points into the target set from an external child",
+			key,
+		))
 	}
 
 	if result.Visibility != VisibilityComplete {
