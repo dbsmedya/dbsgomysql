@@ -237,7 +237,9 @@ func BenchmarkGrantLookup(b *testing.B) {
 		grants := Grants{
 			affinity:  affinityPinned,
 			populated: true,
-			schema:    make(map[schemaPrivilegeKey]grantSources, size),
+			schema: map[schemaPrivilegeKey]grantSources{
+				{schema: mysqlSchemaName, privilege: PrivilegeSelect}: grantSourceAccount,
+			},
 		}
 		for index := range size {
 			grants.schema[schemaPrivilegeKey{
@@ -250,6 +252,35 @@ func BenchmarkGrantLookup(b *testing.B) {
 				state = grants.Schema("target", PrivilegeSelect)
 			}
 			runtime.KeepAlive(state)
+		})
+	}
+}
+
+func BenchmarkCheckTablePrivileges(b *testing.B) {
+	for _, size := range benchmarkSizes {
+		grants := Grants{
+			affinity:  affinityPinned,
+			populated: true,
+			global:    map[Privilege]grantSources{},
+			schema: map[schemaPrivilegeKey]grantSources{
+				{schema: mysqlSchemaName, privilege: PrivilegeSelect}: grantSourceAccount,
+			},
+			table:  map[tablePrivilegeKey]grantSources{},
+			column: map[tablePrivilegeKey]grantSources{},
+		}
+		for index := range size {
+			grants.schema[schemaPrivilegeKey{
+				schema: fmt.Sprintf("other_%d", index), privilege: PrivilegeSelect,
+			}] = grantSourceAccount
+		}
+		tables := benchmarkNames("table", size)
+		b.Run(fmt.Sprintf("all_absent/N=%d", size), func(b *testing.B) {
+			b.ReportAllocs()
+			var findings []Finding
+			for range b.N {
+				findings = CheckTablePrivileges(grants, "target", tables, PrivilegeSelect)
+			}
+			runtime.KeepAlive(findings)
 		})
 	}
 }
