@@ -322,7 +322,7 @@ findings = append(findings, replication.CheckGTIDModeOn(gtid)...)
 type Finding struct {
     Check    string   // stable ID, e.g. "REPLICATION_CHANNELS_RUNNING"
     Message  string   // human-readable, including the rationale
-    Channels []string // server spellings; empty for server-scoped checks
+    Channels []string // server spellings; nil (JSON null) for server-scoped checks
     Facts    any      // typed payload — never parse the message
 }
 ```
@@ -330,7 +330,8 @@ type Finding struct {
 Branch on `Check` and read `Facts`. Message text is for humans and is not part
 of the compatibility contract. `Channels` is this package's analog of
 `validations.Finding.Tables`, and the default channel appears in it as the
-empty string.
+empty string. A server-scoped finding carries `Channels` nil, which encodes as
+`null`, not `[]`.
 
 `Facts` carries the whole fact that produced the finding — for the two
 channel-scoped checks, that channel's complete `ChannelStatus`, last errors

@@ -170,6 +170,12 @@ func quoteAccount(user, host string) string {
 	return quoteSQLString(user) + "@" + quoteSQLString(host)
 }
 
+// quoteSQLString renders value as a MySQL string literal for the default
+// sql_mode the compose files run, where backslash is the escape character
+// and a quote is doubled. NO_BACKSLASH_ESCAPES is not supported by this
+// harness: under it the backslash doubling below would be wrong.
 func quoteSQLString(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	escaped := strings.ReplaceAll(value, `\`, `\\`)
+
+	return "'" + strings.ReplaceAll(escaped, "'", "''") + "'"
 }

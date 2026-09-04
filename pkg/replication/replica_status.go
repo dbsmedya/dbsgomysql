@@ -12,8 +12,8 @@ import (
 const sqlReplicaStatus = "SHOW REPLICA STATUS"
 
 // Promised columns of SHOW REPLICA STATUS. Columns the server reports beyond
-// these are ignored, so a future server version, or one started with
-// --show-replica-auth-info, does not break the fact.
+// these are ignored, so a future server version that adds one does not break
+// the fact.
 const (
 	colChannelName         = "Channel_Name"
 	colReplicaIORunning    = "Replica_IO_Running"

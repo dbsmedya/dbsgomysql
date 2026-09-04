@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CheckFKClosure` no longer multiplies `FK_CLOSURE` findings when the
   requested table list contains a duplicate; it emits one finding per external
   key in the order the `ForeignKeys` result carries them (#74).
+- The `v1.1.0` entry for `Inspector.ReplicaStatus` attributed the `User` and
+  `Password` columns to `--show-replica-auth-info`; that option affects
+  `SHOW REPLICAS`, not `SHOW REPLICA STATUS`. The entry is corrected, and
+  `Inspector.RegisteredReplicas` now has a test pinning that those columns
+  are ignored (#81).
+- `Finding.Channels` in `pkg/replication` is documented as nil, encoded as
+  JSON `null`, for server-scoped checks; the JSON contract test now pins a
+  shape the checks emit (#81).
 
 ### Changed
 
@@ -46,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the child table unqualified and carries the child schema in `Facts`
   as `ForeignKey.ChildSchema`, and that the finding for incomplete visibility
   lists the requested targets with the `MetadataVisibility` in `Facts` (#74).
+
+### Added
+
+- Tests pinning `ReplicaParallelWorkers` on MySQL 8.0 and 8.4 against the
+  server's own value, and `internal/testsupport` hardening: the scripted
+  driver rejects a row whose width differs from its column list, and the
+  account helper escapes backslashes in generated literals (#81, #82).
 
 ## [1.1.2] - 2026-09-02
 
@@ -111,9 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pkg/replication` replica channel status fact: `Inspector.ReplicaStatus`
   reports one `ChannelStatus` per replication channel, in the order the server
   returned them, and an empty slice when the server is not a replica. Columns
-  are read by name, so a column the server adds — including the `User` and
-  `Password` columns `--show-replica-auth-info` adds — is ignored rather than
-  misread, while a missing promised column fails the fact and names itself.
+  are read by name, so a column a future server version adds is ignored rather
+  than misread, while a missing promised column fails the fact and names itself.
   `SecondsBehindSource` is invalid if and only if the server sent SQL `NULL`;
   any other undecodable value is an error naming the channel and column that
   caused it.

@@ -75,6 +75,11 @@ func MySQLDatabase(t *testing.T, prefix string) (db *sql.DB, schema string) {
 
 // LoadSQLFixture executes a semicolon-delimited SQL fixture. The literal
 // {{schema}} is replaced by the safely quoted schema identifier.
+//
+// Statements are split on every ";", so a fixture must not contain one inside
+// a string literal, a comment, or a routine body; the fixtures under
+// tests/fixtures/ contain none. A literal-aware splitter is deliberately
+// absent until a fixture needs one.
 func LoadSQLFixture(t *testing.T, db *sql.DB, schema, path string) {
 	t.Helper()
 
