@@ -89,8 +89,9 @@ Record `SELECT VERSION()` when a matrix runs: moving image tags are not
 evidence of an exact server release. On 2026-08-10 they resolved to Percona
 Server 8.0.46-37, 8.4.10-10, and 9.7.1-1; the complete integration and E2E
 suites passed on all three. On 2026-08-19 all twelve servers of both Percona
-matrices reported those same three releases, and the complete suites passed
-again on every version — the `pkg/replication` source-replica layers included.
+matrices reported Percona Server 8.0.46-37, 8.4.10-10, and 9.7.1-1, and the
+complete integration and E2E suites, including the `pkg/replication`
+source-replica layers, passed on every version.
 Percona is a supported distribution, but this local matrix is not currently
 part of the GitHub Actions gate. See [LIMITATIONS.md](LIMITATIONS.md) for the
 complete distribution-support scope.

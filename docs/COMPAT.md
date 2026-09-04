@@ -14,7 +14,7 @@ Most entries here describe behavior MySQL exhibits *identically* on every
 supported version — no behavior the current library exercises differs between
 them. That is a measured claim, not an assumption: the complete integration
 and E2E matrix, run as described in [testing.md](testing.md), last verified it
-on MySQL 8.0.46, 8.4.11, and 9.7.2 (2026-08-10, workflow run 31437959134),
+on MySQL 8.0.46, 8.4.11, and 9.7.2 (2026-09-04, workflow run 33861085153),
 and each entry below names the test that pins it. Where a behavior genuinely
 differs between supported versions, its entry's **Affected** line says so.
 
@@ -145,7 +145,7 @@ matrix pins that new integers are bare, `tinyint(1)` survives, both zerofill
 widths survive and diff as a `ColumnTypeMismatch`, and decimal precision is
 untouched in
 [`TestTableSpecCompatPinsIntegration`](../pkg/validations/validations_integration_test.go),
-verified on 8.0.46, 8.4.9, and 9.7.1. `INT ZEROFILL` declared without a width
+verified by the matrix run named in the introduction. `INT ZEROFILL` declared without a width
 reports `int(10) unsigned zerofill` on all three, so preserving the width does
 not make the bare declaration compare unequal to an explicit `INT(10)`.
 
@@ -693,7 +693,8 @@ pattern. Keep the downgrade.
 
 ## 13. PRIMARY KEY constraint names are discarded ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** MySQL stores every primary key under the fixed name `PRIMARY`.
 Writing `CONSTRAINT pk_orders PRIMARY KEY (id)` does not preserve `pk_orders`,
@@ -719,7 +720,8 @@ up to MySQL 8.0.15, and automatically generates a constraint name thereafter."
 
 ## 14. Expression defaults are rewritten and marked only in `EXTRA` ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** a declaration such as `DEFAULT (CURRENT_DATE)` is exposed through
 `COLUMN_DEFAULT` as `curdate()`. That value alone is indistinguishable from a
@@ -752,7 +754,8 @@ it has never seen.
 
 ## 15. `CHECK_CLAUSE` is server-normalized ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** `information_schema.CHECK_CONSTRAINTS.CHECK_CLAUSE` is not the
 source text. MySQL backticks identifiers and rewrites keyword case; for
@@ -778,7 +781,8 @@ normalize, and no constraint either.
 
 ## 16. Foreign keys create a supporting index named after the constraint 👁
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** when no suitable child index exists, MySQL creates one and names
 it after the foreign-key constraint. The index is visible in
@@ -812,7 +816,8 @@ by the `INNODB_FOREIGN` example in §17.15.
 
 ## 17. A `NOT ENFORCED` CHECK is recorded but never evaluated ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** `CHECK (a > 0) NOT ENFORCED` remains present in metadata with the
 same clause as an enforced check, but `TABLE_CONSTRAINTS.ENFORCED` is `NO` and
@@ -841,7 +846,8 @@ metadata.
 
 ## 18. A functional index part reports `COLUMN_NAME` as NULL ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** two symptoms from one cause. `information_schema.STATISTICS`
 describes an index as key *parts*, and a functional part — `INDEX ((amount *
@@ -912,7 +918,8 @@ no version branch is warranted.
 
 ## 19. `INNODB_FOREIGN_COLS.POS` counts from 1, not 0 ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** the manual says this column is 0-based. The server returns 1-based
 values. For a two-column foreign key, `POS` is `1` and `2` on every version
@@ -979,7 +986,7 @@ ORDER BY ID, POS;
 DROP DATABASE pos_probe;
 ```
 
-Byte-identical output on 8.0.46, 8.4.9, and 9.7.1:
+Byte-identical output on the matrix run named in the introduction:
 
 ```
 +---------------+--------------+-----+
@@ -1177,9 +1184,9 @@ SHOW REPLICAS;
 +-----------+----------------+------+-----------+--------------------------------------+
 ```
 
-Identical in shape on **8.0.46, 8.4.9, and 9.7.1** (2026-08-19): the same
-header spelling on all three, and the replica that reports nothing listed on
-all three with an empty `Host` and `Port` 3306. Only the hostname and the
+Identical in shape on the matrix run named in the introduction: the same header
+spelling on all three, and the replica that reports nothing listed on all three
+with an empty `Host` and `Port` 3306. Only the hostname and the
 UUIDs differ between them.
 
 **Handling:** the fact promises the spellings the server actually sends,
