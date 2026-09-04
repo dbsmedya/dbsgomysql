@@ -154,9 +154,11 @@ successful primary query.
 If that statement fails for any reason, the library tries the standard
 `KEY_COLUMN_USAGE JOIN REFERENTIAL_CONSTRAINTS` source. Its rows are filtered by
 the account's object visibility, so fallback success is always
-`VisibilityUnconfirmed`. The successful result also carries the wrapped
-primary failure in `PrimaryError` and classifies its source stage in
-`DowngradeReason`:
+`VisibilityUnconfirmed`. It then reads `information_schema.STATISTICS` for each
+child table to decide `Indexed`; if that read fails, or an index's
+`SEQ_IN_INDEX` is not dense, the whole fallback fails and the result carries
+both causes. The successful result also carries the wrapped primary failure in
+`PrimaryError` and classifies its source stage in `DowngradeReason`:
 
 - `ForeignKeyDowngradePrimaryQueryError` means the primary query returned an
   error before rows were available. It does not necessarily mean missing
@@ -333,6 +335,11 @@ comparison is allowed to claim:
   CHECK enforcement and referential rules.
 - `WithComment()` declares comments in scope. It costs no query because the
   table row already contains the comment.
+
+Indexes retain the server's case-insensitive `INDEX_NAME` order, while
+constraints are ordered in Go by exact-byte name and then kind. `DiffSpecs` is
+unaffected by that difference because it matches both sections by name rather
+than position.
 
 `TableSpec.Captured` records those choices. If only one side captured an
 optional section, `DiffSpecs` emits `IndexUnconfirmed`,

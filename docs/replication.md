@@ -137,7 +137,7 @@ rather than normalizing it away.
 ## `RegisteredReplicas` is a registration history, not a topology
 
 An empty slice does **not** mean this server has no replicas, and a returned
-row does **not** mean that replica is connected right now. Four limits apply,
+row does **not** mean that replica is connected right now. These limits apply,
 none of them errors:
 
 - A replica that has never connected leaves no row. The source cannot tell
@@ -185,10 +185,12 @@ limits:
   broken, for as long as `replica_net_timeout`;
 - it can oscillate between `0` and a large value while the receiver queues an
   old-timestamped event;
-- under a multithreaded applier it is based on the applier's position and may
-  not reflect the most recently committed transaction;
 - `SHOW REPLICA STATUS` is nonblocking, so a snapshot taken during a
   `STOP REPLICA` may not be the latest state.
+
+A multithreaded applier's low-water-mark position is a property of
+`Exec_source_log_pos`, which this check does not read (refman §19.5.1.34,
+"Replication and Transaction Inconsistencies").
 
 Reading all three checks from a **single** snapshot removes any gap between
 "configured?", "running?", and "lagging?" — they cannot disagree about the

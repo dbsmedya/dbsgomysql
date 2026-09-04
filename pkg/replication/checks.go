@@ -116,11 +116,12 @@ func CheckReplicationChannelsRunning(channels []ChannelStatus) []Finding {
 // The check bounds Seconds_Behind_Source, the server's own reported estimate,
 // and nothing stronger. The manuals document that estimate's limits: it can
 // read 0 across a broken connection the receiver has not yet noticed, it can
-// oscillate while the receiver queues an old-timestamped event, under a
-// multithreaded applier it is based on the applier's position and may not
-// reflect the most recently committed transaction, and SHOW REPLICA STATUS is
-// nonblocking, so a snapshot taken during STOP REPLICA may not be the latest
-// state. Reading one snapshot removes the gap between this check and
+// oscillate while the receiver queues an old-timestamped event, and SHOW
+// REPLICA STATUS is nonblocking, so a snapshot taken during STOP REPLICA may
+// not be the latest state. A multithreaded applier's low-water-mark position is
+// a property of Exec_source_log_pos, which this check does not read (refman
+// §19.5.1.34, "Replication and Transaction Inconsistencies"). Reading one
+// snapshot removes the gap between this check and
 // CheckReplicationChannelsRunning; it does not prove freshness or actual lag.
 //
 // CheckSecondsBehindSourceWithin is safe for concurrent use when channels is

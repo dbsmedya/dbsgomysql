@@ -60,17 +60,19 @@ type RegisteredReplica struct {
 // # This list is never proof of absence
 //
 // An empty slice does not mean no replicas exist, and a non-empty one is not a
-// list of currently connected replicas. Three limits apply, none of them
-// errors (docs/COMPAT.md entry 22):
+// list of currently connected replicas. These limits apply, none of them errors
+// (docs/COMPAT.md entry 22):
 //
 //   - A replica that has never connected leaves no row. The source cannot
 //     distinguish "no replica exists" from "one exists and has not reached me
 //     yet", so the list is a registration history rather than a topology.
 //   - The rows cover replicas that are or have been connected, so an entry may
 //     be stale — the replica may have disconnected long ago.
-//   - Host and Port are self-reported by each replica; the source does not
-//     verify them, and Host may be empty for a replica that registered without
-//     report_host.
+//   - Host is self-reported by each replica; the source does not verify it, and
+//     it may be empty for a replica that registered without report_host.
+//   - Port is self-reported and unverified. An unset report_port normally yields
+//     the replica's actual listening port; zero means only that the server
+//     returned zero.
 //
 // Callers must therefore never read an empty result as "this server has no
 // replicas", nor a returned row as "this replica is connected now". The fact

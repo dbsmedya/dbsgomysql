@@ -229,9 +229,9 @@ type ConstraintSpec struct {
 	// CheckClause is CHECK_CONSTRAINTS.CHECK_CLAUSE as the server normalized
 	// it; see docs/COMPAT.md entry 15. Populated for ConstraintCheck.
 	CheckClause string `json:"check_clause,omitempty"`
-	// Enforced reports TABLE_CONSTRAINTS.ENFORCED. A CHECK declared NOT
-	// ENFORCED is recorded but never evaluated, so the clause says what would
-	// be checked and this says whether anything checks it.
+	// Enforced reports TABLE_CONSTRAINTS.ENFORCED for a CHECK constraint. A
+	// foreign key is always enforced and is recorded as true without reading
+	// the column.
 	Enforced bool `json:"enforced"`
 	// Columns are the child columns in key order. Populated for
 	// ConstraintForeignKey.
@@ -277,9 +277,12 @@ type TableSpec struct {
 	Comment string `json:"comment,omitempty"`
 	// Columns are always populated, in ORDINAL_POSITION order.
 	Columns []ColumnSpec `json:"columns"`
-	// Indexes is populated only under WithIndexes, ordered by name.
+	// Indexes is populated only under WithIndexes, ordered as the server orders
+	// INDEX_NAME, whose collation is case-insensitive on the tested matrix
+	// (docs/COMPAT.md entry 2).
 	Indexes []IndexSpec `json:"indexes,omitempty"`
-	// Constraints is populated only under WithConstraints, ordered by name.
+	// Constraints is populated only under WithConstraints, ordered in Go by
+	// (name, kind), name compared as bytes (docs/COMPAT.md entry 24).
 	Constraints []ConstraintSpec `json:"constraints,omitempty"`
 	// Captured records which optional sections were requested.
 	Captured SpecSections `json:"captured"`

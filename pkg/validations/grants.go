@@ -14,6 +14,12 @@ const (
 	mysqlSchemaName       = "mysql"
 	privilegeCreateName   = "CREATE"
 	privilegeSelectName   = "SELECT"
+	// Spelled here rather than borrowed from the trigger-event constants: the
+	// two vocabularies coincide today, but a rename on the trigger side must not
+	// change which PRIVILEGE_TYPE rows this fact recognizes.
+	privilegeInsertName = "INSERT"
+	privilegeUpdateName = "UPDATE"
+	privilegeDeleteName = "DELETE"
 )
 
 type querierAffinity uint8
@@ -111,11 +117,11 @@ func (p Privilege) String() string {
 	case PrivilegeSelect:
 		return privilegeSelectName
 	case PrivilegeInsert:
-		return triggerEventInsert
+		return privilegeInsertName
 	case PrivilegeUpdate:
-		return triggerEventUpdate
+		return privilegeUpdateName
 	case PrivilegeDelete:
-		return triggerEventDelete
+		return privilegeDeleteName
 	case PrivilegeCreate:
 		return privilegeCreateName
 	default:
@@ -131,11 +137,11 @@ func privilegeFromString(value string) (Privilege, bool) {
 	switch value {
 	case privilegeSelectName:
 		return PrivilegeSelect, true
-	case triggerEventInsert:
+	case privilegeInsertName:
 		return PrivilegeInsert, true
-	case triggerEventUpdate:
+	case privilegeUpdateName:
 		return PrivilegeUpdate, true
-	case triggerEventDelete:
+	case privilegeDeleteName:
 		return PrivilegeDelete, true
 	case privilegeCreateName:
 		return PrivilegeCreate, true
@@ -190,13 +196,14 @@ type PrivilegeFact struct {
 //
 // Declining to consult SHOW GRANTS is a deliberate choice rather than an
 // oversight, and the unconfirmed role answers above should be read as "not
-// proven by this fact", not as "unprovable by any means". SHOW GRANTS merges
-// the session's currently active roles and, for the current user, needs no
-// SELECT privilege on the mysql schema, so it can show a role-derived privilege
-// to be effective where the privilege tables cannot. It is declined because it
-// answers a different question: it returns version-sensitive text about the
-// roles active on one session, where this fact reports relational rows about
-// the account. See docs/COMPAT.md entry 4.
+// proven by this fact", not as "unprovable by any means". SHOW GRANTS ... USING
+// role can expand the privileges of the named roles — without USING it lists
+// granted roles rather than their privileges — and, for the current user,
+// needs no SELECT privilege on the mysql schema, so it can show a role-derived
+// privilege to be effective where the privilege tables cannot. It is declined
+// because it answers a different question: it returns version-sensitive text
+// about the roles active on one session, where this fact reports relational
+// rows about the account. See docs/COMPAT.md entry 4.
 //
 // Grants deliberately has no general JSON representation. Its state is
 // private, so encoding it with encoding/json produces an empty object.
