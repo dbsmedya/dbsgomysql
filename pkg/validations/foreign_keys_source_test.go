@@ -135,6 +135,60 @@ func TestForeignKeysFallbackIsUnconfirmedAndMatchesIndexes(t *testing.T) {
 	script.assertDone(t)
 }
 
+func TestForeignKeysFallbackBuildsCandidatesPerChildTable(t *testing.T) {
+	t.Parallel()
+
+	primaryErr := errors.New("PROCESS denied")
+	script := &queryScript{steps: []queryStep{
+		{contains: "INNODB_FOREIGN AS f", err: primaryErr},
+		{
+			contains: "KEY_COLUMN_USAGE AS kcu",
+			columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "COLUMN_NAME",
+				"REFERENCED_TABLE_SCHEMA", "REFERENCED_TABLE_NAME",
+				"REFERENCED_COLUMN_NAME", "DELETE_RULE", "UPDATE_RULE",
+				"ORDINAL_POSITION",
+			},
+			rows: [][]driver.Value{
+				{"shop", "items", "fk_items_orders", "tenant_id", "shop", "orders", "tenant_id", "RESTRICT", "NO ACTION", int64(1)},
+				{"shop", "items", "fk_items_orders", "order_id", "shop", "orders", "id", "RESTRICT", "NO ACTION", int64(2)},
+				{"shop", "items", "fk_items_orders_2", "order_id", "shop", "orders", "id", "RESTRICT", "NO ACTION", int64(1)},
+				{"shop", "lines", "fk_lines_orders", "tenant_id", "shop", "orders", "tenant_id", "RESTRICT", "NO ACTION", int64(1)},
+				{"shop", "lines", "fk_lines_orders", "order_id", "shop", "orders", "id", "RESTRICT", "NO ACTION", int64(2)},
+			},
+		},
+		{
+			contains: "information_schema.STATISTICS",
+			columns: []string{
+				"TABLE_SCHEMA", "TABLE_NAME", "INDEX_NAME", "COLUMN_NAME", "SEQ_IN_INDEX",
+			},
+			rows: [][]driver.Value{
+				{"shop", "items", "idx_fk", "tenant_id", int64(1)},
+				{"shop", "items", "idx_fk", "order_id", int64(2)},
+			},
+		},
+	}}
+	db := openScriptedDB(t, script)
+
+	result, err := NewInspector(db, "shop").ForeignKeys(t.Context(), IncomingTo("orders"))
+	if err != nil {
+		t.Fatalf("ForeignKeys fallback: %v", err)
+	}
+	got := make(map[string]bool, len(result.Keys))
+	for _, key := range result.Keys {
+		got[key.ConstraintName] = key.Indexed
+	}
+	want := map[string]bool{
+		"fk_items_orders":   true,
+		"fk_items_orders_2": false,
+		"fk_lines_orders":   false,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Indexed by constraint = %v, want %v", got, want)
+	}
+	script.assertDone(t)
+}
+
 func assertPrimaryQueryDowngrade(
 	t *testing.T,
 	result ForeignKeyResult,

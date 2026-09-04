@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `CheckTablePrivileges` scans stored schema grants once per call instead of
+  once per requested table when deciding whether a wildcard or case-variant
+  schema grant weakens an absent answer, and the foreign-key fallback builds
+  each child table's candidate index list once. No answer changes (#83).
+
 ## [1.1.3] - 2026-09-04
 
 ### Fixed

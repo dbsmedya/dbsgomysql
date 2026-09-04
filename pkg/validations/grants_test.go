@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -606,6 +608,69 @@ func TestPrivilegeChecksTotalStateTable(t *testing.T) {
 			t.Errorf("schema finding %d state = %s, want %s", index, fact.State, wantStates[index])
 		}
 	}
+}
+
+func TestCheckTablePrivilegesScansSchemaOnce(t *testing.T) {
+	t.Parallel()
+
+	const schemaRows = 16
+	tables := []string{"orders", "items", "audit", "missing"}
+	assertStates := func(t *testing.T, got []Finding, want GrantState) {
+		t.Helper()
+		if len(got) != len(tables) {
+			t.Fatalf("findings = %d, want %d: %#v", len(got), len(tables), got)
+		}
+		for index, finding := range got {
+			fact, ok := finding.Facts.(PrivilegeFact)
+			if !ok {
+				t.Fatalf("finding %d Facts has type %T, want PrivilegeFact", index, finding.Facts)
+			}
+			if fact.State != want {
+				t.Errorf("finding %d state = %s, want %s", index, fact.State, want)
+			}
+		}
+	}
+
+	patterned := Grants{
+		populated: true,
+		affinity:  affinityPinned,
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: mysqlSchemaName, privilege: PrivilegeSelect}: grantSourceAccount,
+		},
+	}
+	for index := 1; index <= schemaRows; index++ {
+		patterned.schema[schemaPrivilegeKey{
+			schema: "targ" + strings.Repeat("%", index), privilege: PrivilegeSelect,
+		}] = grantSourceAccount
+	}
+	assertStates(
+		t,
+		CheckTablePrivileges(patterned, "target", tables, PrivilegeSelect),
+		GrantUnconfirmed,
+	)
+	assertStates(
+		t,
+		CheckTablePrivileges(patterned, "different", tables, PrivilegeSelect),
+		GrantAbsent,
+	)
+
+	exact := Grants{
+		populated: true,
+		affinity:  affinityPinned,
+		schema: map[schemaPrivilegeKey]grantSources{
+			{schema: mysqlSchemaName, privilege: PrivilegeSelect}: grantSourceAccount,
+		},
+	}
+	for index := range schemaRows {
+		exact.schema[schemaPrivilegeKey{
+			schema: fmt.Sprintf("other%d", index), privilege: PrivilegeSelect,
+		}] = grantSourceAccount
+	}
+	assertStates(
+		t,
+		CheckTablePrivileges(exact, "target", tables, PrivilegeSelect),
+		GrantAbsent,
+	)
 }
 
 func TestGrantsAssemblesProvenanceAndPoolDegradation(t *testing.T) {
