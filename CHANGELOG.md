@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SpecDiff.AIsExpression` and `SpecDiff.BIsExpression` (JSON
   `a_is_expression`, `b_is_expression`, omitted when false) qualify expression
   defaults on `ColumnDefaultMismatch` (#77).
+- `docs/COMPAT.md` entry 28: column and index names are case-insensitive
+  within a table on every supported version, pinned by
+  `TestColumnAndIndexNameCaseUniquenessIntegration`.
 
 ### Changed
 

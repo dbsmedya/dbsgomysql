@@ -348,11 +348,30 @@ look. If neither side opted in, the section is outside the comparison and is
 silent. This makes an empty diff list trustworthy: every in-scope question was
 asked on both sides.
 
-Columns match by exact name, not position. A reordering therefore produces
+`ConstraintKindUnconfirmed` is the one `Unconfirmed` kind that does not mean
+one-sided capture: a constraint matched by name has an unset kind on both
+sides, so nothing could be compared. It carries `SideBoth`, the constraint
+name in `Index`, and empty `A`/`B`. Capture always sets the kind; only
+caller-built specs reach it. One unknown kind opposite a known kind still
+reports `ConstraintKindMismatch`.
+
+Columns match by name, not position, and column and index names fold ASCII
+case ([COMPAT](COMPAT.md) entry 28). A pair differing only by ASCII case is
+reported once as `ColumnNameCaseMismatch` or `IndexNameCaseMismatch`, carrying
+both spellings, then compared attribute by attribute. Every diff of the pair
+names side A's spelling; `b`-only columns are listed last in folded-name order,
+with exact-byte order breaking ties. Non-ASCII bytes must match exactly.
+Caller-built names that collide under folding on either side use exact
+matching for that key on both sides. Constraint names and their column lists
+continue to compare exactly.
+
+A reordering therefore produces
 `ColumnOrderMismatch` instead of comparing unrelated columns and cascading
 spurious type differences. Integer display widths are normalized for
 comparison while the raw server values remain available in the diff. Index
-parts preserve prefix length, direction, and functional expression.
+parts preserve prefix length, direction, and functional expression. A column
+part's name folds like a column name; expression, prefix length, and direction
+compare exactly.
 
 Only base tables are supported. A view returns
 `ErrUnsupportedTableType` rather than a partial spec:
@@ -379,17 +398,33 @@ side `Side` names is absence; an empty value on the other side is
 when empty: `side` is always present, so absence on A
 (`{"kind":11,"side":1,"column":"c"}`) never collides with absence on B
 (`{"kind":11,"side":2,"column":"c"}`), and no sentinel text is introduced
-that a real default value could collide with. Two columns that both lack a
+that a real default value could collide with. Expression defaults (COMPAT
+entry 14) are marked by `a_is_expression`/`b_is_expression`, omitted when
+false, never by decorating the text: `a` and `b` carry raw default text.
+The flags are false for absent defaults and for every other diff kind.
+Two columns that both lack a
 default compare equal regardless of `DefaultIsExpression`: the flag qualifies
 the default's text, so with no text on either side there is nothing for it to
 distinguish, and no diff is emitted.
+
+The text in `a` and `b` is contract: raw `COLUMN_TYPE` for
+`ColumnTypeMismatch`, `true`/`false` for boolean kinds,
+`ENFORCED`/`NOT ENFORCED` for `CheckEnforcementMismatch`, decimal ordinals,
+enum string forms, DDL-style key parts, comma-joined column lists,
+`schema.table(columns)` references, and `ON UPDATE`/`ON DELETE` rule text.
+Only the default rendering changes in v1.2.0. A new qualifier arrives as a
+typed field, never as a mark added to existing text, so consumers may parse
+these strings.
 
 `AllSpecDiffKinds()` returns every nonzero `SpecDiffKind` `DiffSpecs` may emit,
 in declaration order, so a consumer can prove a policy switch over `SpecDiff.Kind`
 is exhaustive at review time instead of discovering a new kind through a
 fail-closed `default` at run time. `SpecDiffUnknown` is excluded: it is the zero
 value, `DiffSpecs` never emits it, and it is exactly what a fail-closed `default`
-arm should keep rejecting.
+arm should keep rejecting. The three kinds added in v1.2.0 are declared last,
+so every earlier kind keeps its integer value. Exhaustive policy switches
+need cases for `ColumnNameCaseMismatch`, `IndexNameCaseMismatch`, and
+`ConstraintKindUnconfirmed`.
 
 `SpecDiffKind.String()` renders a kind as a lowercase word, e.g.
 `column_visibility_mismatch`, so a log line or error message names the kind
