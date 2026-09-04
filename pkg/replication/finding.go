@@ -13,8 +13,8 @@ type Finding struct {
 	Message string `json:"message"`
 	// Channels names the affected replication channels using the spelling
 	// supplied by the server, where the empty name is the default channel. It
-	// is empty for server-scoped checks, which concern no channel in
-	// particular.
+	// is nil for server-scoped checks, which concern no channel in particular,
+	// and encodes as JSON null.
 	Channels []string `json:"channels"`
 	// Facts is the typed payload that caused the finding.
 	Facts any `json:"facts"`

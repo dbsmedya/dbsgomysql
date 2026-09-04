@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -20,7 +21,8 @@ type ScriptedQuery struct {
 	Err error
 	// Columns names the result columns.
 	Columns []string
-	// Rows holds the values, one slice per row, aligned with Columns.
+	// Rows holds the values, one slice per row, aligned with Columns; a
+	// misaligned row fails the query at that row.
 	Rows [][]driver.Value
 	// RowsErr, when non-nil, is returned by the driver's Next once the scripted
 	// rows are consumed, in place of io.EOF. It expresses an iteration failure
@@ -156,7 +158,15 @@ func (r *scriptedRows) Next(dest []driver.Value) error {
 
 		return io.EOF
 	}
-	copy(dest, r.rows[r.next])
+	row := r.rows[r.next]
+	if len(row) != len(r.columns) {
+		// database/sql reuses dest across rows, so a short row would leave the
+		// previous row's trailing values in place and a long row would be
+		// silently truncated; the Rows doc promises alignment, so hold it.
+		return fmt.Errorf("testsupport: scripted row %d has %d values, want %d columns",
+			r.next, len(row), len(r.columns))
+	}
+	copy(dest, row)
 	r.next++
 
 	return nil

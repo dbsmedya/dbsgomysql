@@ -466,15 +466,22 @@ func TestCompat23ReplicationConfigIntegration(t *testing.T) {
 		t.Error("silent replica ReadOnly = false, want true")
 	}
 
-	if version == mysqlVersion97 {
+	var configured int // Config.ReplicaParallelWorkers is an int
+	if err := topology.Replica.QueryRowContext(
+		t.Context(), "SELECT @@GLOBAL.replica_parallel_workers",
+	).Scan(&configured); err != nil {
+		t.Fatalf("read replica_parallel_workers on the MySQL %s replica: %v", version, err)
+	}
+	if replica.ReplicaParallelWorkers != configured {
+		t.Errorf(
+			"ReplicaParallelWorkers = %d on MySQL %s, want the server's %d",
+			replica.ReplicaParallelWorkers, version, configured,
+		)
+	}
+	if version == mysqlVersion97 && replica.ReplicaParallelWorkers < 1 {
 		// 9.x prunings left replica_parallel_workers in place with a
 		// non-zero default; zero is reachable only on 8.x.
-		if replica.ReplicaParallelWorkers < 1 {
-			t.Errorf(
-				"replica_parallel_workers = %d on MySQL %s, want at least 1",
-				replica.ReplicaParallelWorkers,
-				version,
-			)
-		}
+		t.Errorf("replica_parallel_workers = %d on MySQL %s, want at least 1",
+			replica.ReplicaParallelWorkers, version)
 	}
 }

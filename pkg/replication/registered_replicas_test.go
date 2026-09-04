@@ -93,6 +93,46 @@ func TestRegisteredReplicas(t *testing.T) {
 	}
 }
 
+func TestRegisteredReplicasIgnoresUnknownColumn(t *testing.T) {
+	t.Parallel()
+
+	// A source started with --show-replica-auth-info adds User and Password
+	// to SHOW REPLICAS, listed between Host and Port (refman 8.0, 8.4, and
+	// 9.7: "Replication Source Options and Variables" for the option; "SHOW
+	// REPLICAS Statement" for the columns, which appear "only if the source
+	// server is started with the --show-replica-auth-info option"). The
+	// extras sit between promised columns, so only a by-name reader decodes
+	// Port from the Port column. Spellings follow the live servers, as in
+	// registeredReplicasColumns.
+	db := scriptRegisteredReplicas(t,
+		[]string{"Server_Id", "Host", "User", "Password", "Port", "Source_Id", "Replica_UUID"},
+		[][]driver.Value{{
+			int64(2),
+			[]byte("replica1.example.com"),
+			[]byte("repl"),
+			[]byte("secret"),
+			int64(3306),
+			int64(1),
+			[]byte("3E11FA47-71CA-11E1-9E33-C80AA9429562"),
+		}},
+	)
+
+	got, err := NewInspector(db).RegisteredReplicas(t.Context())
+	if err != nil {
+		t.Fatalf("RegisteredReplicas() returned error %v, want nil", err)
+	}
+	want := RegisteredReplica{
+		ServerID:    2,
+		Host:        "replica1.example.com",
+		Port:        3306,
+		SourceID:    1,
+		ReplicaUUID: "3E11FA47-71CA-11E1-9E33-C80AA9429562",
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("RegisteredReplicas() = %#v, want [%#v]", got, want)
+	}
+}
+
 func TestRegisteredReplicasEmpty(t *testing.T) {
 	t.Parallel()
 

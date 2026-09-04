@@ -3,6 +3,7 @@ package replication
 import (
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -432,38 +433,61 @@ func TestJobLoopRecipeComposition(t *testing.T) {
 func TestFindingJSONContract(t *testing.T) {
 	t.Parallel()
 
-	finding := Finding{
-		Check:    IDGTIDModeOn,
-		Message:  "GTID mode is OFF. Consumers need ON.",
-		Channels: []string{"ch1"},
-		Facts:    GTIDStatus{Mode: gtidModeOffValue, Executed: "uuid:1-5", Purged: ""},
-	}
+	t.Run("channel-scoped finding", func(t *testing.T) {
+		t.Parallel()
 
-	const want = `{"check":"GTID_MODE_ON","message":"GTID mode is OFF. Consumers need ON.",` +
-		`"channels":["ch1"],"facts":{"mode":"OFF","executed":"uuid:1-5","purged":""}}`
+		stopped := ChannelStatus{ChannelName: "ch1", IORunning: "Yes", SQLRunning: "No"}
+		findings := CheckReplicationChannelsRunning([]ChannelStatus{stopped})
+		if len(findings) != 1 {
+			t.Fatalf("CheckReplicationChannelsRunning() returned %d findings, want 1", len(findings))
+		}
+		encoded, err := json.Marshal(findings[0])
+		if err != nil {
+			t.Fatalf("json.Marshal returned error %v, want nil", err)
+		}
+		if !strings.Contains(string(encoded), `"channels":["ch1"]`) {
+			t.Errorf("json.Marshal = %s, want a channels array naming ch1", encoded)
+		}
+	})
 
-	encoded, err := json.Marshal(finding)
-	if err != nil {
-		t.Fatalf("json.Marshal returned error %v, want nil", err)
-	}
-	if string(encoded) != want {
-		t.Fatalf("json.Marshal = %s, want %s", encoded, want)
-	}
+	t.Run("server-scoped finding encodes channels as null", func(t *testing.T) {
+		t.Parallel()
 
-	var decoded Finding
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatalf("json.Unmarshal returned error %v, want nil", err)
-	}
-	if decoded.Check != finding.Check {
-		t.Errorf("round-tripped Check = %q, want %q", decoded.Check, finding.Check)
-	}
-	if decoded.Message != finding.Message {
-		t.Errorf("round-tripped Message = %q, want %q", decoded.Message, finding.Message)
-	}
-	if len(decoded.Channels) != 1 || decoded.Channels[0] != "ch1" {
-		t.Errorf("round-tripped Channels = %q, want [ch1]", decoded.Channels)
-	}
-	if decoded.Facts == nil {
-		t.Error("round-tripped Facts = nil, want the decoded payload")
-	}
+		findings := CheckGTIDModeOn(GTIDStatus{Mode: gtidModeOffValue, Executed: "uuid:1-5", Purged: ""})
+		if len(findings) != 1 {
+			t.Fatalf("CheckGTIDModeOn() returned %d findings, want 1", len(findings))
+		}
+		encoded, err := json.Marshal(findings[0])
+		if err != nil {
+			t.Fatalf("json.Marshal returned error %v, want nil", err)
+		}
+		// The wire shape consumers see today: a nil slice is null, not [].
+		// Changing it would change bytes a consumer may compare.
+		want := `{"check":"GTID_MODE_ON","message":` + strconv.Quote(findings[0].Message) +
+			`,"channels":null,"facts":{"mode":"OFF","executed":"uuid:1-5","purged":""}}`
+		if string(encoded) != want {
+			t.Errorf("json.Marshal = %s, want %s", encoded, want)
+		}
+
+		var decoded Finding
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatalf("json.Unmarshal returned error %v, want nil", err)
+		}
+		if decoded.Channels != nil {
+			t.Errorf("round-tripped Channels = %#v, want nil", decoded.Channels)
+		}
+	})
+
+	t.Run("unconfigured server encodes nil facts as null", func(t *testing.T) {
+		t.Parallel()
+
+		findings := CheckReplicationConfigured(nil)
+		encoded, err := json.Marshal(findings[0])
+		if err != nil {
+			t.Fatalf("json.Marshal returned error %v, want nil", err)
+		}
+		if !strings.Contains(string(encoded), `"facts":null`) {
+			t.Errorf("json.Marshal = %s, want facts null for a nil snapshot", encoded)
+		}
+	})
 }

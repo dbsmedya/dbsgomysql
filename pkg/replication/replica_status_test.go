@@ -249,12 +249,16 @@ func TestReplicaStatusUndecodableChannelName(t *testing.T) {
 func TestReplicaStatusIgnoresUnknownColumn(t *testing.T) {
 	t.Parallel()
 
-	// User and Password appear under --show-replica-auth-info; future server
-	// versions may add more. Unknown columns are ignored, never an error.
+	// A future server version may add columns to SHOW REPLICA STATUS; the
+	// fact ignores columns it did not promise. The extras are appended, so
+	// this case pins tolerance only; the by-name proof, with extras between
+	// promised columns, is TestRegisteredReplicasIgnoresUnknownColumn. (The
+	// User/Password pair belongs to SHOW REPLICAS under
+	// --show-replica-auth-info and is pinned there.)
 	db := scriptReplicaStatus(t,
-		replicaStatusColumns("User", "Password"),
+		replicaStatusColumns("Future_Column_A", "Future_Column_B"),
 		[][]driver.Value{
-			replicaStatusRow("ch1", int64(1), int64(3306), []byte("repl"), []byte("secret")),
+			replicaStatusRow("ch1", int64(1), int64(3306), []byte("x"), []byte("y")),
 		},
 	)
 
