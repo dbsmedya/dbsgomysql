@@ -385,6 +385,13 @@ func TestDiffSpecsExpressionDefaultDiffersFromLiteral(t *testing.T) {
 			"text produced %+v, want one ColumnDefaultMismatch; only DEFAULT_GENERATED "+
 			"distinguishes them", literal, diffs)
 	}
+	want := SpecDiff{
+		Kind: ColumnDefaultMismatch, Side: SideBoth, Column: "d",
+		A: literal, B: expression, BIsExpression: true,
+	}
+	if diffs[0] != want {
+		t.Errorf("default diff = %+v, want %+v", diffs[0], want)
+	}
 }
 
 func TestDiffSpecsDefaultAbsenceNamesTheSideThatLacksIt(t *testing.T) {
@@ -507,7 +514,7 @@ func TestDiffSpecsColumnOutputOrderIsDeterministic(t *testing.T) {
 	)
 	specB := specWithColumns(
 		column("zeta", 1, "varchar(1)"), column("alpha", 2, "varchar(1)"),
-		column("zz_only_b", 3, "int"), column("aa_only_b", 4, "int"),
+		column("Zz_only_b", 3, "int"), column("aa_only_b", 4, "int"),
 	)
 
 	first := DiffSpecs(specA, specB)
@@ -525,7 +532,7 @@ func TestDiffSpecsColumnOutputOrderIsDeterministic(t *testing.T) {
 		}
 	}
 	// a's ordinal order first, then b-only columns sorted by name.
-	want := []string{"zeta", "alpha", "only_a", "aa_only_b", "zz_only_b"}
+	want := []string{"zeta", "alpha", "only_a", "aa_only_b", "Zz_only_b"}
 	if len(columnsInOrder) != len(want) {
 		t.Fatalf("column diffs = %v, want %v", columnsInOrder, want)
 	}
@@ -533,6 +540,203 @@ func TestDiffSpecsColumnOutputOrderIsDeterministic(t *testing.T) {
 		if columnsInOrder[i] != want[i] {
 			t.Fatalf("column diffs = %v, want %v", columnsInOrder, want)
 		}
+	}
+}
+
+func TestDiffSpecsFoldsColumnNameCase(t *testing.T) {
+	t.Parallel()
+	a := specWithColumns(column("Id", 1, "int"))
+	b := specWithColumns(column("id", 1, "bigint"))
+	want := []SpecDiff{
+		{Kind: ColumnNameCaseMismatch, Side: SideBoth, Column: "Id", A: "Id", B: "id"},
+		{Kind: ColumnTypeMismatch, Side: SideBoth, Column: "Id", A: "int", B: "bigint"},
+	}
+	if got := DiffSpecs(a, b); !sameDiffs(got, want) {
+		t.Fatalf("DiffSpecs = %+v, want %+v", got, want)
+	}
+}
+
+func TestDiffSpecsFoldIsASCIIOnly(t *testing.T) {
+	t.Parallel()
+	for _, pair := range [][2]string{{"\u212Aey", "key"}, {"\u0131d", "id"}} {
+		t.Run(pair[1], func(t *testing.T) {
+			t.Parallel()
+			a := specWithColumns(column(pair[0], 1, "int"))
+			b := specWithColumns(column(pair[1], 1, "int"))
+			want := []SpecDiff{
+				{Kind: ColumnAbsent, Side: SideB, Column: pair[0], A: "int"},
+				{Kind: ColumnAbsent, Side: SideA, Column: pair[1], B: "int"},
+			}
+			if got := DiffSpecs(a, b); !sameDiffs(got, want) {
+				t.Fatalf("DiffSpecs = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestDiffSpecsCaseCollisionMatchesExactly(t *testing.T) {
+	t.Parallel()
+	collision := specWithColumns(column("Id", 1, "int"), column("id", 1, "int"))
+	single := specWithColumns(column("id", 1, "int"))
+	for _, tc := range []struct {
+		name string
+		a, b TableSpec
+		want SpecDiff
+	}{
+		{"collision on a", collision, single, SpecDiff{Kind: ColumnAbsent, Side: SideB, Column: "Id", A: "int"}},
+		{"collision on b", single, collision, SpecDiff{Kind: ColumnAbsent, Side: SideA, Column: "Id", B: "int"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DiffSpecs(tc.a, tc.b); !sameDiffs(got, []SpecDiff{tc.want}) {
+				t.Fatalf("DiffSpecs = %+v, want only %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiffSpecsIndexCaseCollisionMatchesExactly(t *testing.T) {
+	t.Parallel()
+	upper := IndexSpec{Name: "Idx", Parts: []IndexPart{{Column: "x"}}}
+	lower := IndexSpec{Name: "idx", Parts: []IndexPart{{Column: "x"}}}
+	collision := TableSpec{Indexes: []IndexSpec{upper, lower}, Captured: SectionIndexes}
+	single := TableSpec{Indexes: []IndexSpec{lower}, Captured: SectionIndexes}
+	for _, tc := range []struct {
+		name string
+		a, b TableSpec
+		side DiffSide
+	}{
+		{"collision on a", collision, single, SideB},
+		{"collision on b", single, collision, SideA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			want := []SpecDiff{{Kind: IndexAbsent, Side: tc.side, Index: "Idx"}}
+			if got := DiffSpecs(tc.a, tc.b); !sameDiffs(got, want) {
+				t.Fatalf("DiffSpecs = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestDiffSpecsFoldsIndexNameCaseAndParts(t *testing.T) {
+	t.Parallel()
+	a := specWithColumns(column("id", 1, "int"))
+	b := specWithColumns(column("id", 1, "int"))
+	a.Captured, b.Captured = SectionIndexes, SectionIndexes
+	a.Indexes = []IndexSpec{{Name: "Idx", Parts: []IndexPart{{Column: "Id"}}}}
+	b.Indexes = []IndexSpec{{Name: "idx", Parts: []IndexPart{{Column: "id"}}}}
+	want := []SpecDiff{{Kind: IndexNameCaseMismatch, Side: SideBoth, Index: "Idx", A: "Idx", B: "idx"}}
+	if got := DiffSpecs(a, b); !sameDiffs(got, want) {
+		t.Fatalf("DiffSpecs = %+v, want %+v", got, want)
+	}
+}
+
+func TestDiffSpecsIndexPartsFoldColumnOnly(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		a, b         IndexPart
+		textA, textB string
+	}{
+		{"expression", IndexPart{Expression: "lower(a)"}, IndexPart{Expression: "LOWER(a)"}, "(lower(a))", "(LOWER(a))"},
+		{"prefix", IndexPart{Column: "a", SubPart: 10}, IndexPart{Column: "a", SubPart: 20}, "a(10)", "a(20)"},
+		{"direction", IndexPart{Column: "a"}, IndexPart{Column: "a", Descending: true}, "a", "a DESC"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := TableSpec{Indexes: []IndexSpec{{Name: "idx", Parts: []IndexPart{tc.a}}}, Captured: SectionIndexes}
+			b := TableSpec{Indexes: []IndexSpec{{Name: "idx", Parts: []IndexPart{tc.b}}}, Captured: SectionIndexes}
+			want := []SpecDiff{{Kind: IndexPartsMismatch, Side: SideBoth, Index: "idx", A: tc.textA, B: tc.textB}}
+			if got := DiffSpecs(a, b); !sameDiffs(got, want) {
+				t.Fatalf("DiffSpecs = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func defaultColumn(value *string, expression bool) ColumnSpec {
+	return ColumnSpec{Name: "d", Default: value, DefaultIsExpression: expression}
+}
+
+func TestDiffSpecsDefaultTextIsNotDecorated(t *testing.T) {
+	t.Parallel()
+	literal, expression := "(curdate())", "curdate()"
+	a := specWithColumns(defaultColumn(&literal, false))
+	b := specWithColumns(defaultColumn(&expression, true))
+	want := []SpecDiff{{Kind: ColumnDefaultMismatch, Side: SideBoth, Column: "d",
+		A: literal, B: expression, BIsExpression: true}}
+	if got := DiffSpecs(a, b); !sameDiffs(got, want) {
+		t.Fatalf("DiffSpecs = %+v, want %+v", got, want)
+	}
+}
+
+func TestDiffSpecsExpressionFlagsFollowTheirSide(t *testing.T) {
+	t.Parallel()
+	value, literal := "curdate()", "x"
+	for _, tc := range []struct {
+		name string
+		a, b ColumnSpec
+		want SpecDiff
+	}{
+		{"expression on a", defaultColumn(&value, true), defaultColumn(&value, false),
+			SpecDiff{Kind: ColumnDefaultMismatch, Side: SideBoth, Column: "d", A: value, B: value, AIsExpression: true}},
+		{"flagged nil control", defaultColumn(nil, true), defaultColumn(&literal, false),
+			SpecDiff{Kind: ColumnDefaultMismatch, Side: SideA, Column: "d", B: literal}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DiffSpecs(specWithColumns(tc.a), specWithColumns(tc.b)); !sameDiffs(got, []SpecDiff{tc.want}) {
+				t.Fatalf("DiffSpecs = %+v, want only %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSpecDiffJSONCarriesExpressionFlags(t *testing.T) {
+	t.Parallel()
+	literal, expression, x := "(curdate())", "curdate()", "x"
+	for _, tc := range []struct {
+		name string
+		a, b ColumnSpec
+		want string
+	}{
+		{"expression on b", defaultColumn(&literal, false), defaultColumn(&expression, true),
+			`{"kind":11,"side":3,"column":"d","a":"(curdate())","b":"curdate()","b_is_expression":true}`},
+		{"expression on a", defaultColumn(&expression, true), defaultColumn(&expression, false),
+			`{"kind":11,"side":3,"column":"d","a":"curdate()","b":"curdate()","a_is_expression":true}`},
+		{"flagged nil control", defaultColumn(nil, true), defaultColumn(&x, false),
+			`{"kind":11,"side":1,"column":"d","b":"x"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diffs := DiffSpecs(specWithColumns(tc.a), specWithColumns(tc.b))
+			if len(diffs) != 1 {
+				t.Fatalf("DiffSpecs = %+v, want one diff", diffs)
+			}
+			got, err := json.Marshal(diffs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("JSON = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiffSpecsUnknownConstraintKindsAreUnconfirmed(t *testing.T) {
+	t.Parallel()
+	a := TableSpec{Constraints: []ConstraintSpec{{Name: "c"}}, Captured: SectionConstraints}
+	b := TableSpec{Constraints: []ConstraintSpec{{Name: "c"}}, Captured: SectionConstraints}
+	want := []SpecDiff{{Kind: ConstraintKindUnconfirmed, Side: SideBoth, Index: "c"}}
+	if got := DiffSpecs(a, b); !sameDiffs(got, want) {
+		t.Fatalf("DiffSpecs = %+v, want %+v", got, want)
+	}
+	b.Constraints[0].Kind = ConstraintCheck
+	want = []SpecDiff{{Kind: ConstraintKindMismatch, Side: SideBoth, Index: "c", A: "unknown", B: "check"}}
+	if got := DiffSpecs(a, b); !sameDiffs(got, want) {
+		t.Fatalf("DiffSpecs = %+v, want %+v", got, want)
 	}
 }
 

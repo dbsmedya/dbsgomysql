@@ -2588,6 +2588,20 @@ func TestForeignKeyNamesAreCaseInsensitiveIntegration(t *testing.T) {
 			"CONSTRAINT fk_distinct_2 FOREIGN KEY (parent_b) REFERENCES "+parent+" (id))")
 }
 
+// TestColumnAndIndexNameCaseUniquenessIntegration pins COMPAT entry 28 and
+// refman section "Identifier Case Sensitivity": one table cannot contain
+// case-variant column or index names, and column references ignore case.
+func TestColumnAndIndexNameCaseUniquenessIntegration(t *testing.T) {
+	db, schema := testsupport.MySQLDatabase(t, "dbsgomysql_column_index_case")
+	table := sqlutil.QuoteQualified(schema, "names")
+	testsupport.ExecSQL(t, db, "CREATE TABLE "+table+" (`Id` INT, `x` INT, KEY `Idx` (`x`))")
+	_, err := db.ExecContext(t.Context(), "ALTER TABLE "+table+" ADD COLUMN `id` INT")
+	assertMySQLErrorNumber(t, err, 1060, "case-variant column names on one table")
+	_, err = db.ExecContext(t.Context(), "ALTER TABLE "+table+" ADD KEY `idx` (`x`)")
+	assertMySQLErrorNumber(t, err, 1061, "case-variant index names on one table")
+	testsupport.ExecSQL(t, db, "INSERT INTO "+table+" (`id`, `X`) VALUES (1, 2)")
+}
+
 func assertMySQLErrorNumber(t *testing.T, err error, want uint16, operation string) {
 	t.Helper()
 

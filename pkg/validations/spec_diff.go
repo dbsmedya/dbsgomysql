@@ -329,22 +329,99 @@ func sectionAgreement(a, b *TableSpec, section SpecSections) (side DiffSide, bot
 	}
 }
 
-// diffColumns matches columns by name. Positional matching would compare
+// foldKey returns a name's ASCII-folded comparison key. Non-ASCII bytes stay
+// exact; COMPAT entry 28 records why column and index names can be folded.
+func foldKey(name string) string {
+	for index := range len(name) {
+		if c := name[index]; c >= 'A' && c <= 'Z' {
+			folded := []byte(name)
+			for rest := index; rest < len(folded); rest++ {
+				if folded[rest] >= 'A' && folded[rest] <= 'Z' {
+					folded[rest] += 'a' - 'A'
+				}
+			}
+
+			return string(folded)
+		}
+	}
+
+	return name
+}
+
+// foldCollisions collects keys shared by multiple names on one side. Both
+// sides contribute before matching, so caller-built specs with case-distinct
+// objects cannot match several objects to one. Servers disallow these
+// collisions (COMPAT entry 28); only the colliding keys stay byte-exact.
+func foldCollisions(count int, nameAt func(int) string, into map[string]struct{}) {
+	seen := make(map[string]struct{}, count)
+	for position := range count {
+		key := foldKey(nameAt(position))
+		if _, dup := seen[key]; dup {
+			into[key] = struct{}{}
+		}
+		seen[key] = struct{}{}
+	}
+}
+
+// foldedIndex tries exact spelling first, then an unambiguous folded key.
+type foldedIndex struct {
+	exact    map[string]int
+	folded   map[string]int
+	excluded map[string]struct{}
+}
+
+func newFoldedIndex(count int, nameAt func(int) string, excluded map[string]struct{}) foldedIndex {
+	index := foldedIndex{
+		exact:    make(map[string]int, count),
+		folded:   make(map[string]int, count),
+		excluded: excluded,
+	}
+	for position := range count {
+		name := nameAt(position)
+		index.exact[name] = position
+		if key := foldKey(name); !index.isExcluded(key) {
+			index.folded[key] = position
+		}
+	}
+
+	return index
+}
+
+func (index foldedIndex) isExcluded(key string) bool {
+	_, excluded := index.excluded[key]
+
+	return excluded
+}
+
+func (index foldedIndex) lookup(name string) (int, bool) {
+	if position, ok := index.exact[name]; ok {
+		return position, true
+	}
+	key := foldKey(name)
+	if index.isExcluded(key) {
+		return 0, false
+	}
+	position, ok := index.folded[key]
+
+	return position, ok
+}
+
+// diffColumns matches columns by folded name. Positional matching would compare
 // unrelated columns against each other and report type mismatches that name the
 // wrong problem; a differing ordinal is reported as ColumnOrderMismatch
 // instead, because column order still matters to a caller issuing
 // INSERT INTO dest SELECT * FROM src.
 func diffColumns(a, b []ColumnSpec) []SpecDiff {
-	byNameB := make(map[string]int, len(b))
-	for index := range b {
-		byNameB[b[index].Name] = index
-	}
+	excluded := make(map[string]struct{})
+	foldCollisions(len(a), func(i int) string { return a[i].Name }, excluded)
+	foldCollisions(len(b), func(i int) string { return b[i].Name }, excluded)
+	byNameB := newFoldedIndex(len(b), func(i int) string { return b[i].Name }, excluded)
 
 	var diffs []SpecDiff
-	matched := make(map[string]struct{}, len(a))
+	matched := make(map[int]struct{}, len(a))
 	for indexA := range a {
 		columnA := &a[indexA]
-		indexB, ok := byNameB[columnA.Name]
+		indexB, ok := byNameB.lookup(columnA.Name)
 		if !ok {
 			diffs = append(diffs, SpecDiff{
 				Kind: ColumnAbsent, Side: SideB, Column: columnA.Name,
@@ -353,17 +430,27 @@ func diffColumns(a, b []ColumnSpec) []SpecDiff {
 
 			continue
 		}
-		matched[columnA.Name] = struct{}{}
+		matched[indexB] = struct{}{}
+		if columnA.Name != b[indexB].Name {
+			diffs = append(diffs, SpecDiff{
+				Kind: ColumnNameCaseMismatch, Side: SideBoth, Column: columnA.Name,
+				A: columnA.Name, B: b[indexB].Name,
+			})
+		}
 		diffs = append(diffs, diffColumnPair(columnA, &b[indexB])...)
 	}
 
 	var onlyInB []int
 	for indexB := range b {
-		if _, ok := matched[b[indexB].Name]; !ok {
+		if _, ok := matched[indexB]; !ok {
 			onlyInB = append(onlyInB, indexB)
 		}
 	}
 	sort.Slice(onlyInB, func(i, j int) bool {
+		left, right := foldKey(b[onlyInB[i]].Name), foldKey(b[onlyInB[j]].Name)
+		if left != right {
+			return left < right
+		}
 		return b[onlyInB[i]].Name < b[onlyInB[j]].Name
 	})
 	for _, indexB := range onlyInB {
@@ -376,7 +463,7 @@ func diffColumns(a, b []ColumnSpec) []SpecDiff {
 	return diffs
 }
 
-// diffColumnPair compares two columns of the same name. Comparison uses
+// diffColumnPair compares two columns matched by name. Comparison uses
 // NormalizedType while A and B carry the raw COLUMN_TYPE, so a diff shows what
 // the servers actually said rather than what this package normalized it to.
 //
@@ -407,7 +494,9 @@ func diffColumnPair(a, b *ColumnSpec) []SpecDiff {
 	if !sameDefault(a, b) {
 		diffs = append(diffs, SpecDiff{
 			Kind: ColumnDefaultMismatch, Side: defaultSide(a, b), Column: a.Name,
-			A: defaultText(a), B: defaultText(b),
+			A: defaultValue(a), B: defaultValue(b),
+			AIsExpression: a.Default != nil && a.DefaultIsExpression,
+			BIsExpression: b.Default != nil && b.DefaultIsExpression,
 		})
 	}
 	if a.Ordinal != b.Ordinal {
@@ -437,7 +526,7 @@ func diffColumnPair(a, b *ColumnSpec) []SpecDiff {
 // contract: SideA and SideB name the spec that lacks something, SideBoth means
 // both supplied a value. A pointer to the empty string is a supplied value —
 // the literal empty-string default — which is exactly the distinction
-// defaultText alone cannot carry, since it renders absence and the empty
+// defaultValue alone cannot carry, since it renders absence and the empty
 // string identically. sameDefault treats two nil defaults as equal, so by the
 // time this runs, a nil pointer sits opposite a non-nil one or both are
 // non-nil.
@@ -472,12 +561,9 @@ func sameDefault(a, b *ColumnSpec) bool {
 	}
 }
 
-func defaultText(c *ColumnSpec) string {
+func defaultValue(c *ColumnSpec) string {
 	if c.Default == nil {
 		return ""
-	}
-	if c.DefaultIsExpression {
-		return "(" + *c.Default + ")"
 	}
 
 	return *c.Default
@@ -505,15 +591,15 @@ func diffIndexes(a, b *TableSpec) []SpecDiff {
 		return []SpecDiff{{Kind: IndexUnconfirmed, Side: side}}
 	}
 
-	byNameB := make(map[string]IndexSpec, len(b.Indexes))
-	for _, index := range b.Indexes {
-		byNameB[index.Name] = index
-	}
+	excluded := make(map[string]struct{})
+	foldCollisions(len(a.Indexes), func(i int) string { return a.Indexes[i].Name }, excluded)
+	foldCollisions(len(b.Indexes), func(i int) string { return b.Indexes[i].Name }, excluded)
+	byNameB := newFoldedIndex(len(b.Indexes), func(i int) string { return b.Indexes[i].Name }, excluded)
 
 	var diffs []SpecDiff
-	matched := make(map[string]struct{}, len(a.Indexes))
+	matched := make(map[int]struct{}, len(a.Indexes))
 	for _, indexA := range a.Indexes {
-		indexB, ok := byNameB[indexA.Name]
+		positionB, ok := byNameB.lookup(indexA.Name)
 		if !ok {
 			diffs = append(diffs, SpecDiff{
 				Kind: IndexAbsent, Side: SideB, Index: indexA.Name,
@@ -521,14 +607,18 @@ func diffIndexes(a, b *TableSpec) []SpecDiff {
 
 			continue
 		}
-		matched[indexA.Name] = struct{}{}
+		matched[positionB] = struct{}{}
+		indexB := b.Indexes[positionB]
 
 		emit := func(kind SpecDiffKind, valueA, valueB string) {
 			diffs = append(diffs, SpecDiff{
 				Kind: kind, Side: SideBoth, Index: indexA.Name, A: valueA, B: valueB,
 			})
 		}
-		if !slices.Equal(indexA.Parts, indexB.Parts) {
+		if indexA.Name != indexB.Name {
+			emit(IndexNameCaseMismatch, indexA.Name, indexB.Name)
+		}
+		if !partsEqual(indexA.Parts, indexB.Parts) {
 			emit(IndexPartsMismatch, partsText(indexA.Parts), partsText(indexB.Parts))
 		}
 		if indexA.Unique != indexB.Unique {
@@ -544,8 +634,8 @@ func diffIndexes(a, b *TableSpec) []SpecDiff {
 		}
 	}
 
-	for _, indexB := range b.Indexes {
-		if _, ok := matched[indexB.Name]; !ok {
+	for positionB, indexB := range b.Indexes {
+		if _, ok := matched[positionB]; !ok {
 			diffs = append(diffs, SpecDiff{
 				Kind: IndexAbsent, Side: SideA, Index: indexB.Name,
 			})
@@ -553,6 +643,17 @@ func diffIndexes(a, b *TableSpec) []SpecDiff {
 	}
 
 	return diffs
+}
+
+// partsEqual folds column names but preserves expressions, prefix lengths,
+// directions, and part order. COMPAT entry 28 pins identifier case behavior.
+func partsEqual(a, b []IndexPart) bool {
+	return slices.EqualFunc(a, b, func(left, right IndexPart) bool {
+		return asciiFoldEqual(left.Column, right.Column) &&
+			left.Expression == right.Expression &&
+			left.SubPart == right.SubPart &&
+			left.Descending == right.Descending
+	})
 }
 
 // diffConstraints compares CHECK and FOREIGN KEY constraints, gated on both
@@ -612,6 +713,9 @@ func diffConstraintPair(a, b *ConstraintSpec) []SpecDiff {
 			Kind: ConstraintKindMismatch, Side: SideBoth, Index: a.Name,
 			A: a.Kind.String(), B: b.Kind.String(),
 		}}
+	}
+	if a.Kind == ConstraintUnknown {
+		return []SpecDiff{{Kind: ConstraintKindUnconfirmed, Side: SideBoth, Index: a.Name}}
 	}
 
 	var diffs []SpecDiff
