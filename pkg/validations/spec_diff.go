@@ -16,7 +16,8 @@ const checkEnforcedName = "ENFORCED"
 type DiffSide uint8
 
 // Comparison sides. SideA and SideB name the spec that lacks something;
-// SideBoth means both supplied a value and the values differ.
+// SideBoth means both supplied a value and the values differ — or, for
+// ConstraintKindUnconfirmed, that neither supplied a comparable value.
 const (
 	SideUnknown DiffSide = iota
 	SideA
@@ -50,7 +51,9 @@ type SpecDiffKind uint8
 
 // Kinds of difference DiffSpecs reports. Kinds ending in Unconfirmed mean a
 // section only one side captured, so the question was never asked rather than
-// answered in the negative.
+// answered in the negative — with one documented exception:
+// ConstraintKindUnconfirmed means a constraint matched by name carries
+// ConstraintUnknown on both sides, so nothing could be compared.
 const (
 	SpecDiffUnknown SpecDiffKind = iota
 
@@ -88,6 +91,11 @@ const (
 	ForeignKeyColumnsMismatch
 	ForeignKeyReferenceMismatch
 	ForeignKeyRuleMismatch
+
+	// Added in v1.2.0 after every earlier kind so serialized values stay stable.
+	ColumnNameCaseMismatch
+	IndexNameCaseMismatch
+	ConstraintKindUnconfirmed
 
 	// specDiffKindCount must remain the last constant in this block;
 	// TestSpecDiffKindVocabularyIsDeclaredInOneTerminatedBlock fails if it does
@@ -168,6 +176,12 @@ func (k SpecDiffKind) String() string {
 		return "foreign_key_reference_mismatch"
 	case ForeignKeyRuleMismatch:
 		return "foreign_key_rule_mismatch"
+	case ColumnNameCaseMismatch:
+		return "column_name_case_mismatch"
+	case IndexNameCaseMismatch:
+		return "index_name_case_mismatch"
+	case ConstraintKindUnconfirmed:
+		return "constraint_kind_unconfirmed"
 	default:
 		return "SpecDiffKind(" + strconv.Itoa(int(k)) + ")"
 	}
@@ -205,7 +219,8 @@ type SpecDiff struct {
 	// Kind identifies the difference.
 	Kind SpecDiffKind `json:"kind"`
 	// Side names the spec that lacks something, or SideBoth when both supplied
-	// differing values.
+	// differing values — or, for ConstraintKindUnconfirmed, when neither
+	// supplied a comparable kind.
 	Side DiffSide `json:"side"`
 	// Column is the column the difference concerns, empty otherwise.
 	Column string `json:"column,omitempty"`
@@ -219,6 +234,13 @@ type SpecDiff struct {
 	// literal empty-string default.
 	A string `json:"a,omitempty"`
 	B string `json:"b,omitempty"`
+	// AIsExpression qualifies A for ColumnDefaultMismatch: true when A's
+	// default is an expression rather than a literal (docs/COMPAT.md entry 14).
+	// It is false for an absent default and every other kind, and omitted from
+	// JSON when false. Expression qualifiers never decorate the default text.
+	AIsExpression bool `json:"a_is_expression,omitempty"`
+	// BIsExpression qualifies B on the same terms as AIsExpression.
+	BIsExpression bool `json:"b_is_expression,omitempty"`
 }
 
 // DiffSpecs reports every difference between two table specifications.
@@ -229,8 +251,12 @@ type SpecDiff struct {
 // different servers.
 //
 // Output order is deterministic — table-level differences, then columns in a's
-// ordinal order with b-only columns last by name, then indexes, then
+// ordinal order with b-only columns last by folded name, then indexes, then
 // constraints — so golden comparisons are stable.
+//
+// Columns and indexes are matched by ASCII-folded name, and a case-only
+// spelling difference is reported once as ColumnNameCaseMismatch or
+// IndexNameCaseMismatch; constraint names compare exactly.
 //
 // An empty result means no differences were found in the sections both sides
 // captured. Where only one side captured a section, DiffSpecs emits an

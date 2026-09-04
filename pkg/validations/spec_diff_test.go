@@ -916,13 +916,51 @@ var wantAllSpecDiffKinds = []SpecDiffKind{
 	ConstraintUnconfirmed, ConstraintAbsent, ConstraintKindMismatch,
 	CheckClauseMismatch, CheckEnforcementMismatch, ForeignKeyColumnsMismatch,
 	ForeignKeyReferenceMismatch, ForeignKeyRuleMismatch,
+	ColumnNameCaseMismatch, IndexNameCaseMismatch, ConstraintKindUnconfirmed,
+}
+
+// TestSpecDiffKindValuesAreStable pins the serialized integer vocabulary.
+func TestSpecDiffKindValuesAreStable(t *testing.T) {
+	t.Parallel()
+
+	// Numeric values are the wire contract, independent of the iota block.
+	want := map[SpecDiffKind]int{
+		EngineMismatch: 1, CharsetMismatch: 2, CollationMismatch: 3,
+		CommentMismatch: 4, CommentUnconfirmed: 5, ColumnAbsent: 6,
+		ColumnTypeMismatch: 7, ColumnNullabilityMismatch: 8,
+		ColumnCharsetMismatch: 9, ColumnCollationMismatch: 10,
+		ColumnDefaultMismatch: 11, ColumnOrderMismatch: 12,
+		ColumnVisibilityMismatch: 13, ColumnGeneratedMismatch: 14,
+		ColumnGenerationExprMismatch: 15, ColumnAutoIncrementMismatch: 16,
+		ColumnOnUpdateMismatch: 17, IndexUnconfirmed: 18, IndexAbsent: 19,
+		IndexPartsMismatch: 20, IndexUniquenessMismatch: 21,
+		IndexTypeMismatch: 22, IndexVisibilityMismatch: 23,
+		ConstraintUnconfirmed: 24, ConstraintAbsent: 25,
+		ConstraintKindMismatch: 26, CheckClauseMismatch: 27,
+		CheckEnforcementMismatch: 28, ForeignKeyColumnsMismatch: 29,
+		ForeignKeyReferenceMismatch: 30, ForeignKeyRuleMismatch: 31,
+		ColumnNameCaseMismatch: 32, IndexNameCaseMismatch: 33,
+		ConstraintKindUnconfirmed: 34,
+	}
+	for kind, value := range want {
+		if int(kind) != value {
+			t.Errorf("%s = %d, want %d", kind, kind, value)
+		}
+	}
+	kinds := AllSpecDiffKinds()
+	if len(kinds) != 34 {
+		t.Fatalf("kind count = %d, want 34", len(kinds))
+	}
+	if !slices.Equal(kinds[31:], []SpecDiffKind{
+		ColumnNameCaseMismatch, IndexNameCaseMismatch, ConstraintKindUnconfirmed,
+	}) {
+		t.Errorf("new kinds = %v, want case-column, case-index, unknown-constraint", kinds[31:])
+	}
 }
 
 // TestAllSpecDiffKindsMatchesTheDeclaredVocabulary asserts that
-// AllSpecDiffKinds returns exactly the 31 published kinds, in declaration
-// order. It catches a kind added before the sentinel, removed, or reordered —
-// all of which leave the sentinel terminal, so
-// TestSpecDiffKindVocabularyIsDeclaredInOneTerminatedBlock stays green.
+// AllSpecDiffKinds returns exactly the 34 published kinds, in declaration
+// order. It catches a kind added before the sentinel, removed, or reordered.
 func TestAllSpecDiffKindsMatchesTheDeclaredVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -1083,17 +1121,20 @@ var wantSpecDiffKindStrings = map[SpecDiffKind]string{
 	ForeignKeyColumnsMismatch:    "foreign_key_columns_mismatch",
 	ForeignKeyReferenceMismatch:  "foreign_key_reference_mismatch",
 	ForeignKeyRuleMismatch:       "foreign_key_rule_mismatch",
+	ColumnNameCaseMismatch:       "column_name_case_mismatch",
+	IndexNameCaseMismatch:        "index_name_case_mismatch",
+	ConstraintKindUnconfirmed:    "constraint_kind_unconfirmed",
 }
 
 // TestSpecDiffKindStringMatchesTheDeclaredNames asserts that String() matches
-// a hand-written map of all 31 published kinds, and that the map itself has
-// exactly 31 entries. A kind added without a case falls to the default and
+// a hand-written map of all 34 published kinds, and that the map itself has
+// exactly 34 entries. A kind added without a case falls to the default and
 // fails the per-kind comparison; a name changed on only one side fails too.
 func TestSpecDiffKindStringMatchesTheDeclaredNames(t *testing.T) {
 	t.Parallel()
 
-	if len(wantSpecDiffKindStrings) != 31 {
-		t.Fatalf("wantSpecDiffKindStrings has %d entries, want 31",
+	if len(wantSpecDiffKindStrings) != 34 {
+		t.Fatalf("wantSpecDiffKindStrings has %d entries, want 34",
 			len(wantSpecDiffKindStrings))
 	}
 
@@ -1110,7 +1151,7 @@ func TestSpecDiffKindStringMatchesTheDeclaredNames(t *testing.T) {
 	}
 }
 
-// TestSpecDiffKindStringsAreDistinct asserts that the 31 returned strings are
+// TestSpecDiffKindStringsAreDistinct asserts that the 34 returned strings are
 // pairwise distinct. A hand-written map that agrees with a switch duplicating
 // one string on two kinds would still pass
 // TestSpecDiffKindStringMatchesTheDeclaredNames, so this is the only case that

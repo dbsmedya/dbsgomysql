@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ColumnNameCaseMismatch`, `IndexNameCaseMismatch`, and
+  `ConstraintKindUnconfirmed` diff kinds, declared after every existing kind
+  so serialized `kind` values are unchanged; `AllSpecDiffKinds()` returns
+  them last, so an exhaustive policy switch needs three new cases (#77).
+- `SpecDiff.AIsExpression` and `SpecDiff.BIsExpression` (JSON
+  `a_is_expression`, `b_is_expression`, omitted when false) qualify expression
+  defaults on `ColumnDefaultMismatch` (#77).
+
 ## [1.1.4] - 2026-09-04
 
 ### Changed
