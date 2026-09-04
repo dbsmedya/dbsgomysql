@@ -14,7 +14,7 @@ Most entries here describe behavior MySQL exhibits *identically* on every
 supported version — no behavior the current library exercises differs between
 them. That is a measured claim, not an assumption: the complete integration
 and E2E matrix, run as described in [testing.md](testing.md), last verified it
-on MySQL 8.0.46, 8.4.11, and 9.7.2 (2026-08-10, workflow run 31437959134),
+on MySQL 8.0.46, 8.4.11, and 9.7.2 (2026-09-04, workflow run 33861085153),
 and each entry below names the test that pins it. Where a behavior genuinely
 differs between supported versions, its entry's **Affected** line says so.
 
@@ -145,7 +145,7 @@ matrix pins that new integers are bare, `tinyint(1)` survives, both zerofill
 widths survive and diff as a `ColumnTypeMismatch`, and decimal precision is
 untouched in
 [`TestTableSpecCompatPinsIntegration`](../pkg/validations/validations_integration_test.go),
-verified on 8.0.46, 8.4.9, and 9.7.1. `INT ZEROFILL` declared without a width
+verified by the matrix run named in the introduction. `INT ZEROFILL` declared without a width
 reports `int(10) unsigned zerofill` on all three, so preserving the width does
 not make the bare declaration compare unequal to an explicit `INT(10)`.
 
@@ -255,16 +255,20 @@ another role* therefore does not appear under any grantee the fact queries.
 `GrantUnconfirmed`, even on a pinned session, and never reports `GrantAbsent`
 while any role is enabled. This is necessary because the ordinary
 `*_PRIVILEGES` tables visible to the account do not expose the enabled role's
-grant rows; `SHOW GRANTS` proves the privilege is effective, but parsing that
-statement and walking role-specific metadata are outside this slice. The pure
+grant rows; `SHOW GRANTS ... USING` can prove the privilege is effective, but
+parsing that statement and walking role-specific metadata are outside this
+slice. The pure
 state table and live direct plus role-granted-to-role cases are pinned by
 [`TestGrantResolutionNegativesAndPartialRevokes`](../pkg/validations/grants_test.go)
 and
 [`TestGranteeAndRolePrivilegesIntegration`](../pkg/validations/validations_integration_test.go).
 
-**Reference:** not applicable — this is a scope boundary of this library, not a
-MySQL behavior. MySQL resolves role closure correctly; the entry records that
-this package does not follow it there.
+**Reference:** documented for the alternative, but the limitation itself is a
+scope boundary of this library. Refman §15.7.7.22, "SHOW GRANTS Statement",
+states that without `USING`, `SHOW GRANTS` lists granted roles rather than their
+privileges; adding `USING` also displays the privileges associated with each
+named role. MySQL resolves role closure correctly; the entry records that this
+package does not follow it there.
 
 ## 5. Cross-schema foreign key metadata can be invisible ✅
 
@@ -393,8 +397,9 @@ here as operator guidance: migrate affected accounts to
 `caching_sha2_password` before upgrading, and do not read an 8.4 authentication
 failure as evidence the plugin is gone.
 
-**Reference:** documented. Refman §8.4.1, "Security Components and Plugins"
-(Native Pluggable Authentication), states the sequence exactly: "The
+**Reference:** documented. Refman §8.4.1.1, "Native Pluggable Authentication",
+under §8.4.1, "Authentication Plugins", in §8.4, "Security Components and
+Plugins", states the sequence exactly: "The
 `mysql_native_password` authentication plugin is deprecated as of MySQL 8.0.34,
 disabled by default in MySQL 8.4, and removed as of MySQL 9.0.0", with the
 disable-and-re-enable procedure and both error numbers under "Disabling Native
@@ -416,9 +421,10 @@ hatch above has no 9.x equivalent.
 
 **Affected:** all supported versions.
 
-**Symptom:** MySQL accepts a quoted database or table identifier containing a
-Unicode character above `U+FFFF`, but does not preserve it. For example, an
-object requested as `supp_𐀀` is stored and reported by `information_schema` as
+**Symptom:** The manual states that supplementary characters (above `U+FFFF`)
+are not permitted in identifiers, quoted or unquoted; the server nevertheless
+accepts the statement and stores a replacement. For example, an object
+requested as `supp_𐀀` is stored and reported by `information_schema` as
 `supp_?`. Reusing the original SQL text can appear to work because the same
 replacement happens again, but the configured name does not round-trip and can
 collide with a literal question mark. Looking the original name up afterwards
@@ -444,20 +450,31 @@ on MySQL 8.0, 8.4, and 9.7; the validator result is pinned independently by
 
 The same error reaches the fixed schema parameters used by five facts, both
 fixed parameters used to resolve a `TableSpec`, and the standard foreign-key
-source. Dynamic requested-table predicates reach three further name columns,
-measured on 8.0, 8.4, and 9.7 with identical results:
+source. Dynamic requested-name predicates reach seven further name columns
+through two guarded helpers, `requestedObjects` and `narrowNames`. The three
+marked measured were probed on 8.0, 8.4, and 9.7 with identical results; the
+rest share the guard by construction:
 
-| Column | Read by |
-|---|---|
-| `COLUMNS.TABLE_NAME` | `Columns` |
-| `KEY_COLUMN_USAGE.TABLE_NAME` | `ForeignKeys`, standard source |
-| `INNODB_FOREIGN.FOR_NAME` | `ForeignKeys`, InnoDB source |
+| Column | Read by | Pinned by |
+|---|---|---|
+| `TABLES.TABLE_NAME` | `Tables`, `PrimaryKeys` | by construction |
+| `COLUMNS.TABLE_NAME` | `Columns`, `InvisibleColumns` | `TestPredicateGuardReportsAbsenceIntegration`, `TestPredicateFallbackMatchesNarrowedResultIntegration` — measured |
+| `TRIGGERS.EVENT_OBJECT_TABLE` | `Triggers` | by construction |
+| `KEY_COLUMN_USAGE.TABLE_NAME` | `ForeignKeys`, standard source, outgoing/within | `TestPredicateGuardReportsAbsenceIntegration` — measured |
+| `KEY_COLUMN_USAGE.REFERENCED_TABLE_NAME` | `ForeignKeys`, standard source, incoming | by construction |
+| `INNODB_FOREIGN.FOR_NAME` | `ForeignKeys`, InnoDB source, outgoing/within | `TestPredicateGuardReportsAbsenceIntegration` — measured |
+| `INNODB_FOREIGN.REF_NAME` | `ForeignKeys`, InnoDB source, incoming | by construction |
+
+The same helper guards the grantee lists `Grants` binds to `GRANTEE`; those are
+account names rather than object names, and an unrepresentable one falls back
+to reading every visible row.
 
 `pkg/validations` uses two mechanisms so these requests report absence rather
 than failing:
 
-- **Dynamic table-name lists** in `Columns` and both `ForeignKeys` sources omit
-  an unrepresentable narrowing predicate and select exact returned spellings in
+- **Dynamic table-name lists** in `Tables`, `PrimaryKeys`, `Columns`,
+  `InvisibleColumns`, `Triggers`, and both `ForeignKeys` sources omit an
+  unrepresentable narrowing predicate and select exact returned spellings in
   Go. These predicates only narrow — they never decide — so dropping one widens
   the read but not the answer, per entry 2. Pinned by
   [`TestPredicateGuardReportsAbsenceIntegration`](../pkg/validations/predicate_integration_test.go)
@@ -490,7 +507,10 @@ short-circuiting are therefore defensive for invalid UTF-8 rather than a
 repair. That half is pinned at unit level only — an integration test would pass
 without either guard.
 
-**Reference:** documented in part. The 8.0, 8.4, and 9.7 Error Message
+**Reference:** documented, and contradicted by the server for acceptance;
+documented in part for the rest. Refman §11.2, "Schema Object Names", states in
+all three manuals that supplementary characters are not permitted in quoted or
+unquoted identifiers. The 8.0, 8.4, and 9.7 Error Message
 References, Chapter 2, "Server Error Message Reference", all give error 3988 as
 symbol `ER_IMPOSSIBLE_STRING_CONVERSION`, SQLSTATE `HY000`, with the message
 template quoted above. The 8.0 reference adds a threshold the newer ones drop:
@@ -527,9 +547,11 @@ confirmed verbatim in the 8.4 and 9.7 Error Message References, Chapter 2,
 "Server Error Message Reference" — 1102 `ER_WRONG_DB_NAME` ("Incorrect database
 name '%s'"), 1103 `ER_WRONG_TABLE_NAME` ("Incorrect table name '%s'"), and 1166
 `ER_WRONG_COLUMN_NAME` ("Incorrect column name '%s'"), each SQLSTATE `42000`,
-with no drift between the two. Which characters trigger them, and that position
-rather than identity decides it, is not documented; that mapping comes from the
-pinning test.
+with no drift between the two. That the final position is what matters is
+documented: §11.2, "Schema Object Names", states in all three manuals that
+database, table, and column names cannot end with space characters. Which six
+characters count as space, and that NBSP (`U+00A0`) and ideographic space
+(`U+3000`) do not, is not stated; that set comes from the pinning test.
 
 ## 10. `ACTION_TIMING` sorts by ENUM index, not alphabetically ✅
 
@@ -652,22 +674,27 @@ Revokes", states the interaction this entry turns on: "enabling
 `partial_revokes` causes MySQL to interpret occurrences of unescaped `_` and `%`
 SQL wildcard characters in schema names as literal characters, just as if they
 had been escaped as `\_` and `\%`", and advises avoiding unescaped wildcards for
-that reason. The same wording appears in §15.7.1.6, "GRANT Statement", and in
-the 8.0.16 release note. That a stored pattern therefore defeats an exact-name
+that reason. The same wording appears in §15.7.1.6, "GRANT Statement". The
+8.0.16 release note states the rule in different words: it says the server
+treats the characters as literal where the manual says it interprets
+occurrences of them. That a stored pattern therefore defeats an exact-name
 lookup against `SCHEMA_PRIVILEGES` is the consequence recorded here.
 
-The 9.7 manual adds a sentence the 8.0 one does not carry, and it points at this
-entry's eventual retirement: "use of `_` and `%` as wildcard characters in grants
-is deprecated, and you should expect support for them to be removed in a future
-version of MySQL." The hazard is therefore on its way out, but is not gone in
-any supported version, and a schema captured from an older server can still hold
-a pattern. Keep the downgrade.
+All three manuals carry the deprecation, and the 8.0 one dates it: the
+`partial_revokes` description says use of `_` and `%` as wildcard characters
+in grants "is deprecated as of MySQL 8.0.35" and "you should expect support for
+them to be removed in a future version of MySQL". 8.0.35 is below the 8.0.40
+floor, so the deprecation is in force on every supported version; it is not a
+9.x-forward signal. The hazard is on its way out, but is not gone in any
+supported version, and a schema captured from an older server can still hold a
+pattern. Keep the downgrade.
 
 ---
 
 ## 13. PRIMARY KEY constraint names are discarded ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** MySQL stores every primary key under the fixed name `PRIMARY`.
 Writing `CONSTRAINT pk_orders PRIMARY KEY (id)` does not preserve `pk_orders`,
@@ -693,7 +720,8 @@ up to MySQL 8.0.15, and automatically generates a constraint name thereafter."
 
 ## 14. Expression defaults are rewritten and marked only in `EXTRA` ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** a declaration such as `DEFAULT (CURRENT_DATE)` is exposed through
 `COLUMN_DEFAULT` as `curdate()`. That value alone is indistinguishable from a
@@ -726,7 +754,8 @@ it has never seen.
 
 ## 15. `CHECK_CLAUSE` is server-normalized ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** `information_schema.CHECK_CONSTRAINTS.CHECK_CLAUSE` is not the
 source text. MySQL backticks identifiers and rewrites keyword case; for
@@ -737,22 +766,23 @@ example, `CHECK (gpa BETWEEN 0.00 AND 4.00)` becomes
 form and `DiffSpecs` compares it verbatim. The exact rewrites are pinned by
 [`TestTableSpecCompatPinsIntegration`](../pkg/validations/validations_integration_test.go).
 
-**Reference:** documented in part. Refman "CHECK Constraints" (§15.1.20.6 in the
-8.0 and 8.4 manuals, §15.1.25.6 in 9.7) never states that `CHECK_CLAUSE` is
-normalized, but its own worked example shows the rewrite: `CHECK (i1 <> 0)`
-comes back from `SHOW CREATE TABLE` as ``CONSTRAINT `t1_chk_1` CHECK ((`i1` <>
-0))`` — identifiers backticked and the expression re-parenthesized. The same
-section documents the generated-name pattern (`_chk_` plus an ordinal) and that
-constraint names are "case-sensitive, but not accent-sensitive". The rewrite
-rules themselves are not specified anywhere, so they are pinned rather than
-cited. The 8.0 manual also marks the floor: "Prior to MySQL 8.0.16, `CREATE
+**Reference:** documented in part. Refman "SHOW CREATE TABLE Statement"
+(§15.7.7.11) carries the worked example showing the rewrite: `CHECK (i1 <> 0)`
+comes back as ``CONSTRAINT `t1_chk_1` CHECK ((`i1` <> 0))`` — identifiers
+backticked and the expression re-parenthesized. Refman "CHECK Constraints"
+(§15.1.20.6 in the 8.0 and 8.4 manuals, §15.1.25.6 in 9.7) documents the
+generated-name pattern (`_chk_` plus an ordinal) and that constraint names are
+"case-sensitive, but not accent-sensitive". The rewrite rules themselves are
+not specified anywhere, so they are pinned rather than cited. The 8.0 manual
+also marks the floor: "Prior to MySQL 8.0.16, `CREATE
 TABLE` permits only the following limited version of table `CHECK` constraint
 syntax, which is parsed and ignored." Below 8.0.16 there is no clause to
 normalize, and no constraint either.
 
 ## 16. Foreign keys create a supporting index named after the constraint 👁
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** when no suitable child index exists, MySQL creates one and names
 it after the foreign-key constraint. The index is visible in
@@ -786,7 +816,8 @@ by the `INNODB_FOREIGN` example in §17.15.
 
 ## 17. A `NOT ENFORCED` CHECK is recorded but never evaluated ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** `CHECK (a > 0) NOT ENFORCED` remains present in metadata with the
 same clause as an enforced check, but `TABLE_CONSTRAINTS.ENFORCED` is `NO` and
@@ -807,14 +838,16 @@ or specified as `ENFORCED`, the constraint is created and enforced. If specified
 as `NOT ENFORCED`, the constraint is created but not enforced." The same section
 lists the statements an enforced constraint is evaluated for — `INSERT`,
 `UPDATE`, `REPLACE`, `LOAD DATA`, and `LOAD XML` — which is the set a `NOT
-ENFORCED` constraint silently sits out. The manual's `SHOW CREATE TABLE` example
-also shows how the flag surfaces, behind a version gate: ``CONSTRAINT `t1_chk_3`
-CHECK ((`i2` <> 0)) /*!80016 NOT ENFORCED */``. Reading the clause text alone
-therefore misses it in DDL exactly as it does in metadata.
+ENFORCED` constraint silently sits out. Refman §15.7.7.11, "SHOW CREATE TABLE
+Statement", carries the example showing how the flag surfaces behind a version
+gate: ``CONSTRAINT `t1_chk_3` CHECK ((`i2` <> 0)) /*!80016 NOT ENFORCED */``.
+Reading the clause text alone therefore misses it in DDL exactly as it does in
+metadata.
 
 ## 18. A functional index part reports `COLUMN_NAME` as NULL ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** two symptoms from one cause. `information_schema.STATISTICS`
 describes an index as key *parts*, and a functional part — `INDEX ((amount *
@@ -885,7 +918,8 @@ no version branch is warranted.
 
 ## 19. `INNODB_FOREIGN_COLS.POS` counts from 1, not 0 ✅
 
-**Affected:** all supported versions; verified on 8.0.46, 8.4.9, and 9.7.1.
+**Affected:** all supported versions; verified by the matrix run named in the
+introduction.
 
 **Symptom:** the manual says this column is 0-based. The server returns 1-based
 values. For a two-column foreign key, `POS` is `1` and `2` on every version
@@ -952,7 +986,7 @@ ORDER BY ID, POS;
 DROP DATABASE pos_probe;
 ```
 
-Byte-identical output on 8.0.46, 8.4.9, and 9.7.1:
+Byte-identical output on the matrix run named in the introduction:
 
 ```
 +---------------+--------------+-----+
@@ -1056,9 +1090,10 @@ error 1064, symbol `ER_PARSE_ERROR`, SQLSTATE 42000.
 
 ## 21. GTID sets may contain tagged GTIDs from 8.4 ✅
 
-**Affected:** 8.4 and 9.7. MySQL 8.4.0 added tagged GTIDs — a three-part
-`UUID:TAG:NUMBER` format alongside the original two-part `UUID:NUMBER`,
-which continues unchanged.
+**Affected:** 8.4 and 9.7. MySQL 8.3.0 introduced tagged GTIDs — a three-part
+`UUID:TAG:NUMBER` format alongside the original two-part `UUID:NUMBER`, which
+continues unchanged — so every supported 8.4 and 9.x release carries them and
+no 8.0 release does.
 
 **Symptom:** any GTID-set parser written to the two-part shape mis-reads a
 set containing tags. Every GTID-set surface the library touches can carry
@@ -1071,9 +1106,12 @@ would have to pick a side the documentation does not settle.
 
 **Handling:** `pkg/replication` returns every GTID set as an opaque string
 and never parses one; interpreting or comparing sets is the consumer's
-affair. The 9.x line changes only the write path — setting `gtid_purged`
-requires the `TRANSACTION_GTID_TAG` privilege in 9.7 — and the library only
-reads. Delivered by `pkg/replication` in **v1.1.0** and pinned by
+affair. The `TRANSACTION_GTID_TAG` privilege was introduced with tagged GTIDs
+in 8.3.0, so it is present on the first supported 8.4 release; on every
+supported 8.4 and 9.x release, setting `gtid_purged` requires it, and the 8.4
+and 9.7 manuals say so identically. The library only reads, so no privilege
+beyond `REPLICATION CLIENT` is involved. Delivered by `pkg/replication` in
+**v1.1.0** and pinned by
 [`TestCompat21TaggedGTIDIntegration`](../pkg/replication/compat_integration_test.go),
 which on 8.4 and 9.7 commits one transaction under a tag generated fresh for
 that run and then finds that tag intact in the source's `gtid_executed` and,
@@ -1082,13 +1120,15 @@ by parsing. The tag is fresh per run deliberately: `gtid_executed` accumulates
 for the container's lifetime, so a fixed tag would let the assertion pass on a
 run that created nothing.
 
-**Reference:** documented. Refman 8.4 §1.4, "What Is New in MySQL 8.4 since
-MySQL 8.0" (Features Added: the `UUID:TAG:NUMBER` format, `gtid_next =
-AUTOMATIC:TAG`, the `TRANSACTION_GTID_TAG` privilege; "up to 8 characters").
-Refman 8.4 §19.1.6.5, "Global Transaction ID System Variables" (`gtid_next`
-valid values including `UUID:TAG:NUMBER`; the tag regular expression
-`[a-zA-Z_][a-zA-Z0-9_]{0,31}`). Refman 9.7, gtid_purged system variable
-description: "You must have the TRANSACTION_GTID_TAG to set gtid_purged."
+**Reference:** documented. MySQL 8.4 Release Notes, Changes in MySQL 8.3.0
+(2024-01-16), Replication with GTIDs (WL #15294), introduces tagged GTIDs and
+the `TRANSACTION_GTID_TAG` privilege. Refman 8.4 §1.4, "What Is New in MySQL
+8.4 since MySQL 8.0" (Features Added: the `UUID:TAG:NUMBER` format, `gtid_next =
+AUTOMATIC:TAG`, the privilege; "up to 8 characters"). Refman 8.4 §19.1.6.5,
+"Global Transaction ID System Variables", and its "Dynamic Privilege
+Descriptions" entry state that setting `gtid_purged` requires the privilege;
+the 9.7 manual states the same. The `gtid_next` description gives the tag
+regular expression `[a-zA-Z_][a-zA-Z0-9_]{0,31}`.
 
 ## 22. `SHOW REPLICAS`: three documented behaviors the server does not have ✅
 
@@ -1144,9 +1184,9 @@ SHOW REPLICAS;
 +-----------+----------------+------+-----------+--------------------------------------+
 ```
 
-Identical in shape on **8.0.46, 8.4.9, and 9.7.1** (2026-08-19): the same
-header spelling on all three, and the replica that reports nothing listed on
-all three with an empty `Host` and `Port` 3306. Only the hostname and the
+Identical in shape on the matrix run named in the introduction: the same header
+spelling on all three, and the replica that reports nothing listed on all three
+with an empty `Host` and `Port` 3306. Only the hostname and the
 UUIDs differ between them.
 
 **Handling:** the fact promises the spellings the server actually sends,

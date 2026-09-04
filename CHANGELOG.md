@@ -54,6 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the child table unqualified and carries the child schema in `Facts`
   as `ForeignKey.ChildSchema`, and that the finding for incomplete visibility
   lists the requested targets with the `MetadataVisibility` in `Facts` (#74).
+- Documentation corrections from the 2026-09-01 library-wide review:
+  `docs/COMPAT.md` entries 4, 7, 8, 9, 12, 15, 17, and 21 cite the manual
+  sections that carry their claims, state the wildcard-grant deprecation date
+  (8.0.35), and date tagged GTIDs and `TRANSACTION_GTID_TAG` to their 8.3.0
+  introduction, present on every supported 8.4 and 9.x release; the
+  multithreaded-applier caveat moves from `Seconds_Behind_Source` to
+  `Exec_source_log_pos` in `CheckSecondsBehindSourceWithin` and the replication
+  guide; `docs/LIMITATIONS.md` gains a replication section and no longer names
+  a release; the verification stamps in `docs/COMPAT.md` refer to one matrix
+  run; and several doc comments describe the code as it is
+  (`ConstraintSpec.Enforced`, `TableSpec.Indexes`/`Constraints` order,
+  `Finding.Tables`, `RegisteredReplicas`, `Grants`).
 
 ### Added
 

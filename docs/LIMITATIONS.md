@@ -1,7 +1,7 @@
 # Limitations
 
-> **Applies to:** v1.0.0. These boundaries are the v1 consumer contract unless
-> a later release documents an additive expansion or correction.
+> **Applies to:** the current release; `CHANGELOG.md` records when a release
+> changes one of these boundaries.
 
 `dbsgomysql` is a reference library of MySQL schema facts and validations. It
 does not attempt to be a complete database catalog, authorization engine, DDL
@@ -19,7 +19,7 @@ The supported distributions are deliberately narrow:
 | Distribution | Status | Current evidence |
 |---|---|---|
 | Oracle MySQL, self-managed or official container images | Supported from 8.0.40 | This repository directly tests the current 8.0, 8.4, and 9.7 lines. Exact resolved versions are recorded in [COMPAT.md](COMPAT.md)'s introduction. |
-| Percona Server for MySQL | Supported | This repository directly passes its integration and E2E suites on the official 8.0, 8.4, and 9.7 image lines. On 2026-08-19 the complete suites, now including the `pkg/replication` source-replica layers, passed on all three; those tags resolved to Percona Server 8.0.46-37, 8.4.10-10, and 9.7.1-1, the same releases as the 2026-08-10 standalone run. The reproducible local matrices are [`tests/docker/compose_percona.yml`](../tests/docker/compose_percona.yml) and [`tests/docker/compose_percona_replication.yml`](../tests/docker/compose_percona_replication.yml). |
+| Percona Server for MySQL | Supported | This repository directly passes its integration and E2E suites on the official 8.0, 8.4, and 9.7 image lines. On 2026-08-19 all twelve servers of both Percona matrices reported Percona Server 8.0.46-37, 8.4.10-10, and 9.7.1-1, and the complete integration and E2E suites, including the `pkg/replication` source-replica layers, passed on every version. The reproducible local matrices are [`tests/docker/compose_percona.yml`](../tests/docker/compose_percona.yml) and [`tests/docker/compose_percona_replication.yml`](../tests/docker/compose_percona_replication.yml). |
 | Google Cloud SQL for MySQL | **Not yet tested; support not claimed** | Google documents `PROCESS` as available through its MySQL privilege model, but this repository has not run its integration or E2E suites against Cloud SQL. |
 | Amazon RDS for MySQL | **Not yet tested; support not claimed** | AWS documents `PROCESS` for RDS for MySQL administrative users and roles, but this repository has not run its integration or E2E suites against RDS. |
 | MariaDB | **Not supported** | MariaDB compatibility is neither claimed nor tested. |
@@ -147,6 +147,24 @@ privilege answers and their `GrantState`, not marshal `Grants` itself.
 
 No result from this package replaces authorization by the server at execution
 time.
+
+## Replication facts describe one server's reported state
+
+`pkg/replication` reads what one server reports about itself; it does not
+observe the other end of a channel.
+
+- GTID sets are returned as opaque strings and never parsed, because MySQL
+  8.3.0 added a tagged form, carried by every supported 8.4 and 9.x release,
+  that the two-part grammar mis-reads ([COMPAT.md](COMPAT.md), entry 21).
+- `RegisteredReplicas` is a registration history, never proof that a replica
+  exists, is absent, or is connected now (entry 22).
+- `SecondsBehindSource` is the server's estimate and the check that bounds it
+  proves nothing stronger; see
+  [the replication guide](replication.md#what-seconds_behind_source_within-bounds--and-what-it-does-not).
+- `BinaryLogStatus` issues two statements on MySQL 8.0, because the statement
+  was renamed across the supported range (entry 20).
+- Every check fails closed on any value other than the exact proven one (`Yes`,
+  `ON`), so a new server state is a finding, not a silent pass.
 
 ## Consistency across statements and calls
 
