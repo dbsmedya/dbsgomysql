@@ -12,7 +12,12 @@ type Finding struct {
 	// is not part of the compatibility contract.
 	Message string `json:"message"`
 	// Tables names the affected objects using the spelling supplied by the
-	// server, except for TABLES_EXIST, where no server spelling exists.
+	// server, except for TABLES_EXIST, where no server spelling exists. An
+	// FK_CLOSURE finding for an external key names the child table unqualified;
+	// its schema is in Facts as ForeignKey.ChildSchema, and is the requested
+	// schema for a same-schema child outside the target set. The FK_CLOSURE
+	// finding for incomplete visibility instead lists the requested targets,
+	// with the MetadataVisibility value in Facts.
 	Tables []string `json:"tables"`
 	// Facts is the typed payload that caused the finding. It is nil only for a
 	// missing table.

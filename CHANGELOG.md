@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback when the first statement failed because the context was cancelled
   or its deadline passed, and an error carrying both statements' causes now
   separates them with `; ` instead of a newline (#80).
+- `CheckFKClosure` no longer multiplies `FK_CLOSURE` findings when the
+  requested table list contains a duplicate; it emits one finding per external
+  key in the order the `ForeignKeys` result carries them (#74).
+
+### Changed
+
+- `Finding.Tables` documents that an `FK_CLOSURE` finding for an external key
+  names the child table unqualified and carries the child schema in `Facts`
+  as `ForeignKey.ChildSchema`, and that the finding for incomplete visibility
+  lists the requested targets with the `MetadataVisibility` in `Facts` (#74).
 
 ## [1.1.2] - 2026-09-02
 

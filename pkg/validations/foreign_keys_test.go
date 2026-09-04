@@ -440,26 +440,36 @@ func TestForeignKeyChecks(t *testing.T) {
 func TestCheckFKClosurePreservesTargetOrderAndMultiplicity(t *testing.T) {
 	t.Parallel()
 
-	key := func(parent, child, constraint string) ForeignKey {
+	key := func(child, parent, constraint string) ForeignKey {
 		return ForeignKey{
 			ConstraintName: constraint,
 			ChildSchema:    "external",
 			ChildTable:     child,
+			ChildColumns:   []string{"parent_id"},
 			ParentSchema:   "shop",
 			ParentTable:    parent,
+			ParentColumns:  []string{"id"},
 			Indexed:        true,
 		}
 	}
+	keys := []ForeignKey{
+		key("z_child", "beta", "fk_z"),
+		key("a_child", "alpha", "fk_a"),
+		key("a_child", "beta", "fk_b"),
+	}
+	targets := []string{"beta", "alpha", "beta"}
+
+	// The documented input: what ForeignKeys(ctx, IncomingTo(targets...))
+	// hands the check. It already repeats beta's keys once per occurrence.
 	result := ForeignKeyResult{
-		Keys: []ForeignKey{
-			key("beta", "z_child", "fk_z"),
-			key("alpha", "a_child", "fk_a"),
-			key("beta", "a_child", "fk_b"),
-		},
+		Keys:       selectForeignKeys(keys, "shop", IncomingTo(targets...)),
 		Visibility: VisibilityComplete,
 	}
+	if len(result.Keys) != 5 {
+		t.Fatalf("selector produced %d keys, want 5; the check's input shape moved", len(result.Keys))
+	}
 
-	got := CheckFKClosure(result, "shop", []string{"beta", "alpha", "beta"})
+	got := CheckFKClosure(result, "shop", targets)
 	want := []string{"fk_b", "fk_z", "fk_a", "fk_b", "fk_z"}
 	names := make([]string, 0, len(got))
 	for _, finding := range got {
@@ -468,9 +478,44 @@ func TestCheckFKClosurePreservesTargetOrderAndMultiplicity(t *testing.T) {
 			t.Fatalf("finding Facts has type %T, want ForeignKey", finding.Facts)
 		}
 		names = append(names, fact.ConstraintName)
+		// D15: Tables stays unqualified; the schema is in Facts.
+		if !slices.Equal(finding.Tables, []string{fact.ChildTable}) {
+			t.Errorf("finding Tables = %v, want [%s]", finding.Tables, fact.ChildTable)
+		}
+		if fact.ChildSchema != "external" {
+			t.Errorf("finding Facts.ChildSchema = %q, want %q", fact.ChildSchema, "external")
+		}
 	}
 	if !slices.Equal(names, want) {
-		t.Errorf("constraint order = %v, want %v", names, want)
+		t.Errorf("constraint order = %v, want %v: one finding per key, in the result's order", names, want)
+	}
+
+	// One key, one duplicated target: the fact carries the key twice, so the
+	// check must emit two findings, not four.
+	single := ForeignKeyResult{
+		Keys:       selectForeignKeys(keys[:1], "shop", IncomingTo("beta", "beta")),
+		Visibility: VisibilityComplete,
+	}
+	singleGot := CheckFKClosure(single, "shop", []string{"beta", "beta"})
+	if len(singleGot) != 2 {
+		t.Errorf("duplicated target with one key produced %d findings, want 2", len(singleGot))
+	}
+
+	// The other FK_CLOSURE shape: incomplete visibility appends one finding
+	// whose Facts is the MetadataVisibility value and whose Tables is the
+	// requested target list, not a child table — which is why finding.go
+	// tells consumers to switch on the type of Facts.
+	unconfirmed := ForeignKeyResult{Keys: result.Keys, Visibility: VisibilityUnconfirmed}
+	got = CheckFKClosure(unconfirmed, "shop", targets)
+	if len(got) != 6 {
+		t.Fatalf("unconfirmed visibility produced %d findings, want 5 external keys plus 1", len(got))
+	}
+	last := got[len(got)-1]
+	if visibility, ok := last.Facts.(MetadataVisibility); !ok || visibility != VisibilityUnconfirmed {
+		t.Errorf("visibility finding Facts = %#v, want VisibilityUnconfirmed", last.Facts)
+	}
+	if !slices.Equal(last.Tables, targets) {
+		t.Errorf("visibility finding Tables = %v, want the requested targets %v", last.Tables, targets)
 	}
 }
 

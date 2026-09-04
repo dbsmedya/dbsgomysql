@@ -207,7 +207,14 @@ cascades := validations.CheckCascadeRules(within.Keys)
 ```
 
 `CheckFKClosure` reports same-schema children outside `tables` and every
-cross-schema child as external. For a non-empty set it also reports closure as
+cross-schema child as external. It emits one finding per external key in the
+order the result carries them, so a table listed twice in `tables` yields its
+external keys twice, as the fact does. For an external key, `Finding.Tables`
+names the child table unqualified and `Facts` is the `ForeignKey`, whose
+`ChildSchema` is the child's schema. The unconfirmed-closure finding has a
+different shape — `Tables` is the requested list and `Facts` is the
+`MetadataVisibility` — so switch on the type of `Facts` rather than asserting
+`ForeignKey` unconditionally. For a non-empty set it also reports closure as
 unconfirmed unless visibility is complete. A `nil` closure result is trustworthy
 only when the argument is the matching, unmodified complete result of
 `ForeignKeys(ctx, IncomingTo(tables...))` from the Inspector bound to the same
