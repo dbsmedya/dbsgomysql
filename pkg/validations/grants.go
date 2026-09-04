@@ -49,6 +49,16 @@ type tablePrivilegeKey struct {
 	privilege Privilege
 }
 
+// schemaScanMemo caches the two whole-map scans of Grants.schema whose result
+// depends only on (schema, priv). It lives on the caller's stack for one
+// CheckTablePrivileges call, never on Grants, which is immutable and shared.
+type schemaScanMemo struct {
+	patternKnown   bool
+	patternCovers  bool
+	variantKnown   bool
+	variantMatches bool
+}
+
 // GrantState reports whether a requested privilege is established.
 //
 // The zero value means the fact was not populated. GrantState is a plain value
@@ -526,7 +536,7 @@ func (g Grants) Schema(schema string, priv Privilege) GrantState {
 	}
 	state := g.resolve(priv, specific, g.global[priv])
 
-	state = g.downgradeForSchemaPattern(state, schema, priv)
+	state = g.downgradeForSchemaPattern(state, schema, priv, &schemaScanMemo{})
 
 	return g.downgradeForSchemaCaseVariant(state, schema, priv)
 }
@@ -536,15 +546,23 @@ func (g Grants) Schema(schema string, priv Privilege) GrantState {
 //
 // Table is safe for concurrent use.
 func (g Grants) Table(schema, table string, priv Privilege) GrantState {
+	return g.tableState(schema, table, priv, &schemaScanMemo{})
+}
+
+func (g Grants) tableState(
+	schema, table string,
+	priv Privilege,
+	memo *schemaScanMemo,
+) GrantState {
 	specific := []grantSources{
 		g.table[tablePrivilegeKey{schema: schema, table: table, privilege: priv}],
 		g.schema[schemaPrivilegeKey{schema: schema, privilege: priv}],
 	}
 	state := g.resolve(priv, specific, g.global[priv])
-	state = g.downgradeForSchemaPattern(state, schema, priv)
+	state = g.downgradeForSchemaPattern(state, schema, priv, memo)
 	state = g.downgradeForColumnGrant(state, schema, table, priv)
 
-	return g.downgradeForTableCaseVariant(state, schema, table, priv)
+	return g.downgradeForTableCaseVariant(state, schema, table, priv, memo)
 }
 
 func (g Grants) resolve(
@@ -611,6 +629,7 @@ func (g Grants) downgradeForSchemaPattern(
 	state GrantState,
 	schema string,
 	priv Privilege,
+	memo *schemaScanMemo,
 ) GrantState {
 	if state != GrantAbsent {
 		return state
@@ -622,16 +641,28 @@ func (g Grants) downgradeForSchemaPattern(
 	if g.partialRevokes {
 		return state
 	}
+	if !memo.patternKnown {
+		memo.patternCovers = g.schemaPatternCovers(schema, priv)
+		memo.patternKnown = true
+	}
+	if memo.patternCovers {
+		return GrantUnconfirmed
+	}
+
+	return state
+}
+
+func (g Grants) schemaPatternCovers(schema string, priv Privilege) bool {
 	for key, sources := range g.schema {
 		if key.privilege != priv || sources == 0 || key.schema == schema {
 			continue
 		}
 		if likePatternMatches(key.schema, schema) {
-			return GrantUnconfirmed
+			return true
 		}
 	}
 
-	return state
+	return false
 }
 
 func (g Grants) downgradeForColumnGrant(
@@ -659,29 +690,39 @@ func (g Grants) downgradeForSchemaCaseVariant(
 	if state != GrantAbsent {
 		return state
 	}
-	for key, sources := range g.schema {
-		if key.privilege == priv && sources != 0 && key.schema != schema &&
-			strings.EqualFold(key.schema, schema) {
-			return GrantUnconfirmed
-		}
+	if g.schemaCaseVariantMatches(schema, priv) {
+		return GrantUnconfirmed
 	}
 
 	return state
+}
+
+func (g Grants) schemaCaseVariantMatches(schema string, priv Privilege) bool {
+	for key, sources := range g.schema {
+		if key.privilege == priv && sources != 0 && key.schema != schema &&
+			strings.EqualFold(key.schema, schema) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (g Grants) downgradeForTableCaseVariant(
 	state GrantState,
 	schema, table string,
 	priv Privilege,
+	memo *schemaScanMemo,
 ) GrantState {
 	if state != GrantAbsent {
 		return state
 	}
-	for key, sources := range g.schema {
-		if key.privilege == priv && sources != 0 && key.schema != schema &&
-			strings.EqualFold(key.schema, schema) {
-			return GrantUnconfirmed
-		}
+	if !memo.variantKnown {
+		memo.variantMatches = g.schemaCaseVariantMatches(schema, priv)
+		memo.variantKnown = true
+	}
+	if memo.variantMatches {
+		return GrantUnconfirmed
 	}
 	for _, grants := range []map[tablePrivilegeKey]grantSources{g.table, g.column} {
 		for key, sources := range grants {

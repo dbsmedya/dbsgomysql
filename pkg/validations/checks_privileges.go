@@ -14,9 +14,10 @@ func CheckTablePrivileges(
 	tables []string,
 	priv Privilege,
 ) []Finding {
+	memo := &schemaScanMemo{}
 	var findings []Finding
 	for _, table := range tables {
-		state := grants.Table(schema, table, priv)
+		state := grants.tableState(schema, table, priv, memo)
 		if state == GrantPresent {
 			continue
 		}

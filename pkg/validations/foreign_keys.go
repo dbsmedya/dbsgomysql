@@ -708,17 +708,23 @@ func (i *Inspector) populateFallbackIndexes(
 		}
 	}
 
+	candidatesByTable := make(map[tableIdentity][][]string, len(indexes))
+	for identity, byName := range indexes {
+		candidates := make([][]string, 0, len(byName))
+		for _, columns := range byName {
+			candidates = append(candidates, columns)
+		}
+		candidatesByTable[identity] = candidates
+	}
+
 	for index := range keys {
 		identity := tableIdentity{
 			schema: keys[index].ChildSchema,
 			table:  keys[index].ChildTable,
 		}
-		byName := indexes[identity]
-		candidates := make([][]string, 0, len(byName))
-		for _, columns := range byName {
-			candidates = append(candidates, columns)
-		}
-		keys[index].Indexed = foreignKeyColumnsIndexed(keys[index].ChildColumns, candidates)
+		keys[index].Indexed = foreignKeyColumnsIndexed(
+			keys[index].ChildColumns, candidatesByTable[identity],
+		)
 	}
 
 	return nil
