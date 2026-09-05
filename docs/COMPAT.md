@@ -1405,6 +1405,33 @@ but state no rule for when foreign grantees become visible:
 
 ---
 
+## 28. Column and index names are case-insensitive within a table ✅
+
+**Affected:** all supported versions.
+
+**Symptom:** one table cannot hold two columns or two indexes whose names
+differ only by ASCII case: the server rejects them with errors 1060 and 1061,
+respectively. A statement may refer to a column in either case.
+
+**Handling:** `DiffSpecs` matches column and index names, and column-valued
+key parts, by ASCII fold. A column or index spelling difference is reported
+once by its own case kind before comparing the pair's attributes. Non-ASCII
+bytes remain exact. The server rejects the case collisions this matching
+would otherwise merge; caller-built specs with a folded-key collision on
+either side instead use exact matching for that key on both sides. Pinned by
+[`TestColumnAndIndexNameCaseUniquenessIntegration`](../pkg/validations/validations_integration_test.go).
+
+**Reference:** documented, with identical substance across the supported
+manuals:
+
+| Claim | 8.0 | 8.4 | 9.7 |
+|---|---|---|---|
+| Column and index names are not case-sensitive on any platform | §11.2.3, "Identifier Case Sensitivity" | §11.2.3, identical | §11.2.3, identical |
+| Error 1060: `ER_DUP_FIELDNAME`, SQLSTATE `42S21`, `Duplicate column name '%s'` | "Server Error Message Reference", `ER_DUP_FIELDNAME` | Identical | Identical |
+| Error 1061: `ER_DUP_KEYNAME`, SQLSTATE `42000`, `Duplicate key name '%s'` | "Server Error Message Reference", `ER_DUP_KEYNAME` | Identical | Identical |
+
+---
+
 ## Adding an entry
 
 Every version-specific behavior the code accommodates gets an entry here **and**

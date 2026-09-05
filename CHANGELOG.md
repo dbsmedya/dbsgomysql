@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ColumnNameCaseMismatch`, `IndexNameCaseMismatch`, and
+  `ConstraintKindUnconfirmed` diff kinds, declared after every existing kind
+  so serialized `kind` values are unchanged; `AllSpecDiffKinds()` returns
+  them last, so an exhaustive policy switch needs three new cases (#77).
+- `SpecDiff.AIsExpression` and `SpecDiff.BIsExpression` (JSON
+  `a_is_expression`, `b_is_expression`, omitted when false) qualify expression
+  defaults on `ColumnDefaultMismatch` (#77).
+- `docs/COMPAT.md` entry 28: column and index names are case-insensitive
+  within a table on every supported version, pinned by
+  `TestColumnAndIndexNameCaseUniquenessIntegration`.
+
+### Changed
+
+- `DiffSpecs` matches columns, indexes, and column-valued index key parts by
+  ASCII-folded name. A column or index pair differing only by ASCII case is
+  reported once by its new case kind, then compared attribute by attribute;
+  every diff of the pair names side A's spelling, and `b`-only columns sort by
+  folded name. Non-ASCII bytes and constraint names/column lists remain exact.
+  Caller-built case collisions on either side retain exact matching (#77).
+- The text in `SpecDiff.A`/`B` is now documented as contract: raw
+  `COLUMN_TYPE` for type mismatches, `true`/`false` for boolean kinds,
+  `ENFORCED`/`NOT ENFORCED` for enforcement, DDL-style key parts and
+  references. No rendering other than the default text changed.
+
+### Fixed
+
+- `ColumnDefaultMismatch` no longer wraps expression defaults in parentheses,
+  which a literal such as `'(curdate())'` could reproduce. `a`/`b` carry raw
+  default text; the new expression flags distinguish expressions from
+  literals and are suppressed for absent defaults (#77).
+- Two name-matched constraints whose kinds are both unset now emit
+  `ConstraintKindUnconfirmed` instead of comparing silently equal (#77).
+
 ## [1.1.4] - 2026-09-04
 
 ### Changed
