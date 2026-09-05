@@ -361,9 +361,13 @@ reported once as `ColumnNameCaseMismatch` or `IndexNameCaseMismatch`, carrying
 both spellings, then compared attribute by attribute. Every diff of the pair
 names side A's spelling; `b`-only columns are listed last in folded-name order,
 with exact-byte order breaking ties. Non-ASCII bytes must match exactly.
-Caller-built names that collide under folding on either side use exact
-matching for that key on both sides. Constraint names and their column lists
-continue to compare exactly.
+Caller-built names that collide under folding on either side keep byte-exact
+name matching for that key on both sides, as every release before 1.2.0 did:
+the unmatched spelling surfaces as `ColumnAbsent` or `IndexAbsent`, no case
+kind is emitted for that key, and nothing else signals the fallback.
+Column-valued key parts and the `b`-only column order still fold. Capture
+never produces such a spec ([COMPAT](COMPAT.md) entry 28). Constraint names
+and their column lists continue to compare exactly.
 
 A reordering therefore produces
 `ColumnOrderMismatch` instead of comparing unrelated columns and cascading

@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `docs/validations.md` states what the `DiffSpecs` case-collision fallback
+  looks like: byte-exact name matching for the colliding key as before 1.2.0,
+  the unmatched spelling reported as `ColumnAbsent`/`IndexAbsent`, no case
+  kind and no other signal; only a caller-built spec can contain one (#77).
+
 ## [1.2.0] - 2026-09-05
 
 ### Added
