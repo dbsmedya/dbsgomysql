@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `group_replication_group_name`. A server without the plugin, or with it
   `DISABLED`, is a reported state, never an error; two statements, no
   privilege beyond connecting (COMPAT entry 30).
+- Integration coverage on a three-member Group Replication cluster
+  (`tests/docker/compose_group_replication.yaml`): `ReplicaStatus` reports no
+  Group Replication channel on a member, also while it is `RECOVERING`, and
+  still reports an ordinary async channel on one; distributed recovery
+  registers the recovering member on its donor (COMPAT entries 29 and 33).
 
 ## [1.2.1] - 2026-10-12
 
