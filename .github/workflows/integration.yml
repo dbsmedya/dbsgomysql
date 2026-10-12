@@ -51,16 +51,37 @@ jobs:
             source_port: 3580
             replica_port: 3680
             silent_port: 3780
+            gr_project: gr80
+            gr_port_1: 4180
+            gr_port_2: 4280
+            gr_port_3: 4380
+            gr_port_installed: 4780
+            gr_port_disabled: 4880
+            gr_port_ext: 4980
           - mysql: "8.4"
             repl_prefix: repl84
             source_port: 3584
             replica_port: 3684
             silent_port: 3784
+            gr_project: gr84
+            gr_port_1: 4184
+            gr_port_2: 4284
+            gr_port_3: 4384
+            gr_port_installed: 4784
+            gr_port_disabled: 4884
+            gr_port_ext: 4984
           - mysql: "9.7"
             repl_prefix: repl97
             source_port: 3597
             replica_port: 3697
             silent_port: 3797
+            gr_project: gr97
+            gr_port_1: 4197
+            gr_port_2: 4297
+            gr_port_3: 4397
+            gr_port_installed: 4797
+            gr_port_disabled: 4897
+            gr_port_ext: 4997
 
     services:
       mysql:
@@ -91,6 +112,25 @@ jobs:
       # A skipped replication test is not evidence. With this set, a missing
       # DSN fails the job instead of quietly reducing what ran.
       DBSGOMYSQL_TEST_REQUIRE_REPLICATION: "1"
+      # The Group Replication topology: a three-member cluster and three
+      # standalone servers of this version, from the same compose file
+      # developers run locally.
+      GR_IMAGE: mysql:${{ matrix.mysql }}
+      GR_PORT_1: ${{ matrix.gr_port_1 }}
+      GR_PORT_2: ${{ matrix.gr_port_2 }}
+      GR_PORT_3: ${{ matrix.gr_port_3 }}
+      GR_PORT_INSTALLED: ${{ matrix.gr_port_installed }}
+      GR_PORT_DISABLED: ${{ matrix.gr_port_disabled }}
+      GR_PORT_EXT: ${{ matrix.gr_port_ext }}
+      DBSGOMYSQL_TEST_GR_PRIMARY_DSN: "root:root@tcp(127.0.0.1:${{ matrix.gr_port_1 }})/"
+      DBSGOMYSQL_TEST_GR_SECONDARY_DSN: "root:root@tcp(127.0.0.1:${{ matrix.gr_port_2 }})/"
+      DBSGOMYSQL_TEST_GR_REJOINER_DSN: "root:root@tcp(127.0.0.1:${{ matrix.gr_port_3 }})/"
+      DBSGOMYSQL_TEST_GR_INSTALLED_DSN: "root:root@tcp(127.0.0.1:${{ matrix.gr_port_installed }})/"
+      DBSGOMYSQL_TEST_GR_DISABLED_DSN: "root:root@tcp(127.0.0.1:${{ matrix.gr_port_disabled }})/"
+      DBSGOMYSQL_TEST_GR_EXT_DSN: "root:root@tcp(127.0.0.1:${{ matrix.gr_port_ext }})/"
+      # gr-ext as the members reach it: its compose hostname.
+      DBSGOMYSQL_TEST_GR_EXT_HOST: gr-ext
+      DBSGOMYSQL_TEST_REQUIRE_GROUP_REPLICATION: "1"
 
     steps:
       - name: Checkout
@@ -116,14 +156,20 @@ jobs:
             ${{ matrix.repl_prefix }}-replica \
             ${{ matrix.repl_prefix }}-silent
 
+      # `--wait` returns when every cluster member reports itself ONLINE.
+      - name: Start the group replication topology
+        run: |
+          docker compose -p ${{ matrix.gr_project }} \
+            -f tests/docker/compose_group_replication.yaml up -d --wait --wait-timeout 300
+
       # Moving-tag evidence: mysql:8.0, :8.4, and :9.7 are moving tags, so the
-      # run records which releases all four servers actually were.
+      # run records which releases every server actually was.
       - name: Wait for MySQL
         run: |
           for i in $(seq 1 30); do
             if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
               echo "MySQL is up"
-              for p in 3306 ${{ matrix.source_port }} ${{ matrix.replica_port }} ${{ matrix.silent_port }}; do
+              for p in 3306 ${{ matrix.source_port }} ${{ matrix.replica_port }} ${{ matrix.silent_port }} ${{ matrix.gr_port_1 }} ${{ matrix.gr_port_installed }} ${{ matrix.gr_port_disabled }} ${{ matrix.gr_port_ext }}; do
                 mysql -h 127.0.0.1 -P "$p" -uroot -proot -e 'SELECT VERSION();'
               done
               exit 0
@@ -143,3 +189,7 @@ jobs:
       - name: Dump replication topology logs
         if: failure()
         run: docker compose -f tests/docker/compose_replication.yaml logs --no-color
+
+      - name: Dump group replication topology logs
+        if: failure()
+        run: docker compose -p ${{ matrix.gr_project }} -f tests/docker/compose_group_replication.yaml logs --no-color
