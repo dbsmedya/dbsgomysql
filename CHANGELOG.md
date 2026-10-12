@@ -10,12 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-12
+
 ### Changed
 
 - `docs/validations.md` states what the `DiffSpecs` case-collision fallback
   looks like: byte-exact name matching for the colliding key as before 1.2.0,
   the unmatched spelling reported as `ColumnAbsent`/`IndexAbsent`, no case
   kind and no other signal; only a caller-built spec can contain one (#77).
+- The ZEROFILL passages of `ColumnSpec.NormalizedType`'s GoDoc, the
+  type-normalization comment and `docs/COMPAT.md` entry 1 no longer say
+  retrieved values are always zero-padded. The width specifies padding for
+  formatted values, the server applies it over the text protocol for
+  directly selected integer columns and sends the integer over the binary
+  protocol, and whether a client shows it is up to the client — the pinned
+  test driver does not. `NormalizedType` and its behavior are unchanged.
 
 ## [1.2.0] - 2026-09-05
 
@@ -921,7 +930,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.4...v1.2.0
 [1.1.4]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.2...v1.1.3

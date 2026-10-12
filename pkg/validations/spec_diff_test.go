@@ -278,8 +278,8 @@ func TestDiffSpecsZerofillWidthIsADifference(t *testing.T) {
 	diffs := DiffSpecs(specA, specB)
 	if len(diffs) != 1 || diffs[0].Kind != ColumnTypeMismatch {
 		t.Fatalf("int(5) zerofill against int(10) zerofill produced %+v, want one "+
-			"ColumnTypeMismatch; the two zero-pad retrieved values to different lengths "+
-			"(00042 against 0000000042), so they are different client-visible schemas",
+			"ColumnTypeMismatch; MySQL retains each ZEROFILL width in COLUMN_TYPE, so "+
+			"they are different column definitions",
 			diffs)
 	}
 	if diffs[0].A != "int(5) unsigned zerofill" || diffs[0].B != "int(10) unsigned zerofill" {

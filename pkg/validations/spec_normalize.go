@@ -17,9 +17,10 @@ import (
 //   - tinyint(1). BOOLEAN is an alias for TINYINT(1) and MySQL keeps that width
 //     where it strips every other, so erasing it would report a BOOLEAN and a
 //     plain TINYINT as identical.
-//   - Any type carrying ZEROFILL. Retrieved values are zero-padded to the
-//     display width, so int(5) zerofill yields 00042 where int(10) zerofill
-//     yields 0000000042 — different client-visible schemas, kept distinct.
+//   - Any type carrying ZEROFILL. MySQL retains its display width in
+//     COLUMN_TYPE. The width specifies zero-padding for formatted values,
+//     but a client may expose only the numeric value. Different ZEROFILL
+//     widths remain distinct column definitions here.
 //
 // Attributes following the width, such as unsigned, are preserved because they
 // change the value range. Types whose parenthesised part is semantic, such as
