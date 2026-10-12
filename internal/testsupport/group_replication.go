@@ -34,10 +34,16 @@ const (
 	MemberOffline    = "OFFLINE"
 	MemberRecovering = "RECOVERING"
 
+	// ExtChannel is the asynchronous channel tests may create on the group
+	// primary, replicating from the Ext server.
+	ExtChannel = "grext"
+
 	sqlSelfMemberState = "SELECT MEMBER_STATE FROM performance_schema.replication_group_members " +
 		"WHERE MEMBER_ID = @@server_uuid"
 	sqlStartGroupReplication = "START GROUP_REPLICATION"
 	sqlServerUUID            = "SELECT @@server_uuid"
+	sqlExtChannelConfigured  = "SELECT COUNT(*) FROM performance_schema.replication_connection_configuration " +
+		"WHERE CHANNEL_NAME = '" + ExtChannel + "'"
 
 	// grStatementTimeout bounds each statement these helpers issue. They run
 	// from t.Cleanup too, where t.Context() is already canceled, so every
@@ -99,8 +105,36 @@ func GroupReplicationTopology(t *testing.T) *GRTopology {
 	topology.Ext = openReplicationDB(t, "external source", extDSN)
 
 	EnsureGroupOnline(t, topology)
+	removeExtChannel(t, topology)
 
 	return topology
+}
+
+// removeExtChannel removes an ExtChannel that an interrupted earlier run left
+// on the primary, configured or running, so that every test starts from a
+// primary with no asynchronous channel: a killed run never reaches its
+// cleanups.
+func removeExtChannel(t *testing.T, topology *GRTopology) {
+	t.Helper()
+
+	ctx, cancel := cleanupSafeContext(t, grStatementTimeout)
+	defer cancel()
+
+	var configured int
+	if err := topology.Primary.QueryRowContext(ctx, sqlExtChannelConfigured).Scan(&configured); err != nil {
+		t.Fatalf("look for a leftover %s channel on the group primary: %v", ExtChannel, err)
+	}
+	if configured == 0 {
+		return
+	}
+	for _, statement := range []string{
+		"STOP REPLICA FOR CHANNEL '" + ExtChannel + "'",
+		"RESET REPLICA ALL FOR CHANNEL '" + ExtChannel + "'",
+	} {
+		if _, err := topology.Primary.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("remove the leftover %s channel from the group primary: %s: %v", ExtChannel, statement, err)
+		}
+	}
 }
 
 func requiredGREnv(t *testing.T, name string) string {

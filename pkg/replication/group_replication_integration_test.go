@@ -31,8 +31,6 @@ const (
 	grSQLShowGroupName         = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'"
 	grSQLRecoveryConnection    = "SELECT SERVICE_STATE FROM performance_schema.replication_connection_status " +
 		"WHERE CHANNEL_NAME = 'group_replication_recovery'"
-	grSQLExtChannelConfigured = "SELECT CHANNEL_NAME FROM performance_schema.replication_connection_configuration " +
-		"WHERE CHANNEL_NAME = 'grext'"
 	grSQLExecuted = "SELECT @@GLOBAL.gtid_executed"
 	grSQLWaitFor  = "SELECT WAIT_FOR_EXECUTED_GTID_SET(?, 60)"
 
@@ -40,7 +38,7 @@ const (
 	erUnknownSystemVariable = 1193 // ER_UNKNOWN_SYSTEM_VARIABLE
 	erReplicaChannelOp      = 3139 // SHOW REPLICA STATUS refused for group_replication_applier
 
-	grExtChannel = "grext"
+	grExtChannel = testsupport.ExtChannel
 	grPluginOn   = "ACTIVE"
 	grPluginOff  = "DISABLED"
 	grThreadYes  = "Yes"
@@ -213,13 +211,8 @@ func TestCompat29And33HeldRecoveryIntegration(t *testing.T) {
 func TestReplicaStatusKeepsAsyncChannelOnGroupMemberIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
-	// Convergent: a channel an interrupted earlier run left behind is removed
-	// first.
-	if countRows(t, topology.Primary, grSQLExtChannelConfigured) != 0 {
-		execOn(t, topology.Primary, "STOP REPLICA FOR CHANNEL '"+grExtChannel+"'")
-		execOn(t, topology.Primary, "RESET REPLICA ALL FOR CHANNEL '"+grExtChannel+"'")
-	}
-
+	// GroupReplicationTopology has already removed a channel an interrupted
+	// earlier run left behind.
 	execOn(t, topology.Primary, "CHANGE REPLICATION SOURCE TO SOURCE_HOST = '"+topology.ExtHost+
 		"', SOURCE_PORT = 3306, SOURCE_USER = 'repl', SOURCE_PASSWORD = 'repl', "+
 		"SOURCE_AUTO_POSITION = 1, GET_SOURCE_PUBLIC_KEY = 1 FOR CHANNEL '"+grExtChannel+"'")
