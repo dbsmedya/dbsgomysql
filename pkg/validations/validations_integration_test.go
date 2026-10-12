@@ -2267,8 +2267,8 @@ func TestTableSpecCompatPinsIntegration(t *testing.T) {
 		diffs := validations.DiffSpecs(specA, specB)
 		if len(diffs) != 1 || diffs[0].Kind != validations.ColumnTypeMismatch {
 			t.Errorf("diffing int(5) zerofill against int(10) zerofill produced %+v, "+
-				"want one ColumnTypeMismatch; 00042 and 0000000042 are different "+
-				"client-visible schemas", diffs)
+				"want one ColumnTypeMismatch; different ZEROFILL widths are different "+
+				"column definitions", diffs)
 		}
 	})
 

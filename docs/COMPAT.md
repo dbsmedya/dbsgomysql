@@ -145,15 +145,15 @@ expression or `UNION` result; the manual documents exceptions.
 
 On 2026-10-12, the test driver `go-sql-driver/mysql` v1.10.0 returned `int64(42)`
 for both columns over both protocols on Oracle MySQL 8.0.40, 8.4.11 and 9.7.1.
-Its text-row decoder parses integer digits into numbers. On 8.4.11, scanning
-those directly selected columns into `string` or `sql.RawBytes` also yielded
-`42`, while the `mysql` CLI displayed the padded forms. These are observations
-of that driver and CLI, not requirements imposed by this driver-independent
-library.
+Its text-row decoder parses integer digits into numbers. On 8.4.11, over the
+text protocol, scanning those directly selected columns into `string` or
+`sql.RawBytes` also yielded `42`, while the `mysql` CLI displayed the padded
+forms. These are observations of that driver and CLI, not requirements
+imposed by this driver-independent library.
 
 Trailing attributes such as `unsigned` are preserved because they change the
-value range. The same applies to `YEAR`: `year(4)` is normalized to `year`, with no
-carve-out, because YEAR has none.
+value range. Display-width stripping applies to `YEAR` too: `year(4)` is
+normalized to `year`, with no carve-out, because YEAR has none.
 
 A fresh current server cannot reproduce `int(11)`, so legacy-form
 normalization is pinned synthetically by
@@ -187,9 +187,12 @@ Where ZEROFILL padding is applied: Refman 8.0, 8.4 and 9.7, "Numeric Type
 Attributes" (the width "is present in the metadata returned with result sets.
 Whether it is used is up to the application"); MySQL Client/Server Protocol,
 "Binary Protocol Resultset" (`MYSQL_TYPE_LONG` and `MYSQL_TYPE_INT24` values are
-four-byte integers); MySQL 8.4.11 server source, `sql/field.cc`
-`Field_long::send_to_protocol`, and `sql/protocol_classic.cc`
-`Protocol_text::store_long` / `Protocol_binary::store_long`. The driver and CLI
+four-byte integers); MySQL server source at the 8.0.40, 8.4.11 and 9.7.1 tags,
+`sql/field.cc` `Field_tiny`, `Field_short`, `Field_medium`, `Field_long` and
+`Field_longlong::send_to_protocol` (each passes the column width only when it
+is ZEROFILL), and `sql/protocol_classic.cc` `Protocol_text::store_tiny`,
+`store_short`, `store_long` and `store_longlong` (each zero-pads through
+`store_integer`), with `Protocol_binary::store_long` writing four bytes. The driver and CLI
 readings above were taken on 2026-10-12; no wire bytes were captured.
 
 ## 2. `information_schema` name collations vary by category ✅

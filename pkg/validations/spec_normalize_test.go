@@ -32,15 +32,15 @@ func TestNormalizeColumnType(t *testing.T) {
 		{
 			name: "zerofill width preserved", columnType: "int(11) unsigned zerofill",
 			want: "int(11) unsigned zerofill",
-			explanation: "retrieved values are zero-padded to the display width, so the width " +
-				"is semantic under ZEROFILL and MySQL keeps emitting it",
+			explanation: "MySQL retains a ZEROFILL width in COLUMN_TYPE as a formatting " +
+				"attribute, so it survives normalization",
 		},
 		{
 			name:       "zerofill width preserved at a narrower width",
 			columnType: "int(5) unsigned zerofill", want: "int(5) unsigned zerofill",
-			explanation: "int(5) zerofill renders 00042 and int(10) zerofill renders " +
-				"0000000042; stripping both to int unsigned zerofill makes two different " +
-				"client-visible schemas compare equal",
+			explanation: "int(5) zerofill and int(10) zerofill are different column " +
+				"definitions; stripping both to int unsigned zerofill would make them " +
+				"compare equal",
 		},
 		{
 			name:       "zerofill matched case-insensitively",
