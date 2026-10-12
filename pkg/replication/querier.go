@@ -10,6 +10,7 @@ const (
 	opBinaryLogEnabled   = "binary_log_enabled"
 	opBinaryLogStatus    = "binary_log_status"
 	opGTIDStatus         = "gtid_status"
+	opGroupReplication   = "group_replication"
 	opRegisteredReplicas = "registered_replicas"
 	opReplicaStatus      = "replica_status"
 	opReplicationConfig  = "replication_config"

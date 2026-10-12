@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `replication.Inspector.GroupReplication` reports the Group Replication
+  plugin's status (`information_schema.PLUGINS`, raw) and the configured
+  `group_replication_group_name`. A server without the plugin, or with it
+  `DISABLED`, is a reported state, never an error; two statements, no
+  privilege beyond connecting (COMPAT entry 30).
+
 ## [1.2.1] - 2026-10-12
 
 ### Changed

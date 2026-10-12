@@ -17,10 +17,10 @@ var ErrNilQuerier = errors.New("replication: nil Querier")
 // provided callers do not mutate its exported fields.
 type OpError struct {
 	// Op names the facts operation that failed: "binary_log_enabled",
-	// "binary_log_status", "gtid_status", "replica_status",
-	// "registered_replicas", or "replication_config". One value per fact
-	// method, so a new fact is visibly missing from this list until it is
-	// added.
+	// "binary_log_status", "group_replication", "gtid_status",
+	// "replica_status", "registered_replicas", or "replication_config". One
+	// value per fact method, so a new fact is visibly missing from this list
+	// until it is added.
 	Op string
 	// Channel names the replication channel the failure concerns, in the
 	// server's own spelling, where the empty name is the default channel. It is
