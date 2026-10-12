@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   looks like: byte-exact name matching for the colliding key as before 1.2.0,
   the unmatched spelling reported as `ColumnAbsent`/`IndexAbsent`, no case
   kind and no other signal; only a caller-built spec can contain one (#77).
+- The ZEROFILL passages of `ColumnSpec.NormalizedType`'s GoDoc, the
+  type-normalization comment and `docs/COMPAT.md` entry 1 no longer say
+  retrieved values are always zero-padded. The width specifies padding for
+  formatted values, the server applies it over the text protocol for
+  directly selected integer columns and sends the integer over the binary
+  protocol, and whether a client shows it is up to the client — the pinned
+  test driver does not. `NormalizedType` and its behavior are unchanged.
 
 ## [1.2.0] - 2026-09-05
 

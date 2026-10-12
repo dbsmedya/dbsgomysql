@@ -131,12 +131,11 @@ type ColumnSpec struct {
 	// Type is COLUMN_TYPE verbatim.
 	Type string `json:"type"`
 	// NormalizedType is Type with the deprecated integer or YEAR display width
-	// removed, except for the two integer widths MySQL itself still emits:
-	// tinyint(1), which BOOLEAN is an alias for, and any type carrying ZEROFILL,
-	// whose retrieved values are zero-padded to the width. Both are real
-	// differences between schemas rather than formatting noise, so both survive
-	// here; see docs/COMPAT.md entry 1. Comparison uses this; Type is what the
-	// server said.
+	// removed, except for tinyint(1), which BOOLEAN is an alias for, and integer
+	// types carrying ZEROFILL. A ZEROFILL width specifies zero-padding for
+	// formatted values; whether a client preserves that formatting depends on
+	// the client. These distinctions are retained for schema comparison; see
+	// docs/COMPAT.md entry 1. Comparison uses this; Type is what the server said.
 	NormalizedType string `json:"normalized_type"`
 	// Nullable reports IS_NULLABLE.
 	Nullable bool `json:"nullable"`

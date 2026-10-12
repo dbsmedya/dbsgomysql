@@ -2248,8 +2248,8 @@ func TestTableSpecCompatPinsIntegration(t *testing.T) {
 		wide := byName["zf_wide"].NormalizedType
 		if narrow != "int(5) unsigned zerofill" {
 			t.Errorf("NormalizedType for INT(5) ZEROFILL = %q, want "+
-				"\"int(5) unsigned zerofill\"; retrieved values are zero-padded to the "+
-				"display width, so the width is semantic here", narrow)
+				"\"int(5) unsigned zerofill\"; MySQL retains a ZEROFILL width in "+
+				"COLUMN_TYPE, so it survives normalization", narrow)
 		}
 		if wide != "int(10) unsigned zerofill" {
 			t.Errorf("NormalizedType for INT(10) ZEROFILL = %q, want "+
