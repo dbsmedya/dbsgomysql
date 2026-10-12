@@ -99,10 +99,11 @@ started". It runs in the main worktree, where `.ayder/` lives.
 
 ### goarchive is read-only reference material
 
-A checkout sitting beside this one — `../goarchive` — pinned at `d48152c`.
+A checkout sitting beside this one — `../goarchive`. It moves independently and
+may sit on any branch, so no document here names a goarchive revision.
 **Copy and reconstruct; never move, never edit.** Read it without touching the
-working tree: `git -C ../goarchive show d48152c:<path>`. Run nothing there that
-can write.
+working tree: `git -C ../goarchive show <rev>:<path>`, with whichever revision
+you mean. Run nothing there that can write.
 
 ## 4. Look before asserting
 
