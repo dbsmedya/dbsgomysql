@@ -204,15 +204,16 @@ privilege beyond connecting:
   member is still listed.
 - So on a member with no asynchronous channel `REPLICATION_CONFIGURED` fires,
   and the channel checks judge only asynchronous channels.
-- **`RegisteredReplicas` on a donor lists members that recovered from it**,
-  and keeps listing them after they are `ONLINE` ([COMPAT.md](COMPAT.md)
-  entry 33). This is the fact's registration-history contract at work. If you
+- **`RegisteredReplicas` on a donor lists a member recovering from it**, and
+  can go on listing it for a while after it is `ONLINE` — until the donor's
+  dump thread for that connection ends ([COMPAT.md](COMPAT.md) entry 33). This
+  is the fact's registration-history contract at work. If you
   know the group's current members, dropping rows whose `ReplicaUUID` matches
   one of them is a reasonable filter for *known current peers* — but it is not
   a classifier: a match proves identity, not why the server registered or
   whether it is connected, and a non-match does not prove an asynchronous
-  replica, because a former member leaves the group's view but not the
-  registration history.
+  replica, because a former member can leave the group's view while its row is
+  still listed.
 
 ## GTID sets are opaque
 

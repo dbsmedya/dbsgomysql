@@ -1531,10 +1531,13 @@ DISABLED behavior is measured, not documented (2026-10-12, all six servers).
 
 **Affected:** every supported version, Oracle and Percona.
 
-**Symptom:** after a member rejoins through incremental distributed recovery,
-exactly one donor's `SHOW REPLICAS` lists it — `Replica_UUID` is the member's
-server UUID — during recovery and still after the member is `ONLINE`. Which
-member donates varies. After a cluster's initial formation no donor listed
+**Symptom:** while a member rejoins through incremental distributed recovery,
+its donor's `SHOW REPLICAS` lists it — `Replica_UUID` is the member's server
+UUID. In every run measured exactly one member listed it, and which member
+donates varies. The row is transient: it lasts as long as the donor's dump
+thread for the recovery connection, which outlived the member's return to
+`ONLINE` by anything from moments to over a minute before the thread and the
+row both disappeared. After a cluster's initial formation no donor listed
 anything.
 
 **Handling:** none — `RegisteredReplicas` keeps its registration-history
@@ -1543,10 +1546,14 @@ Schema privilege the fact does not require. The consumer guide describes
 matching against current members as an optional filter, not a classifier.
 Delivered in **v1.3.0** as documentation, pinned by
 [`TestCompat29And33HeldRecoveryIntegration`](../pkg/replication/group_replication_integration_test.go),
-which identifies the donor by whichever member lists the rejoiner.
+which holds the member in recovery and requires a donor to list it. How long
+the row survives afterwards is measured, not pinned, because the dump
+thread's exit decides it.
 
-**Reference:** measured, 2026-10-12, all six servers; the registration itself
-is not documented. Refman 8.0, 8.4 and 9.7, "Distributed Recovery", identical:
+**Reference:** measured, 2026-10-12, all six servers; the row's lifetime after
+`ONLINE` re-measured the same day on Oracle 8.4.11 (present 30 s after
+`ONLINE` with the donor's `Binlog Dump GTID` thread alive, gone with it within
+the next minute). The registration itself is not documented. Refman 8.0, 8.4 and 9.7, "Distributed Recovery", identical:
 state transfer from a donor's binary log "uses a standard asynchronous
 replication channel named group_replication_recovery that is established
 between the donor and the joining member"; Refman 8.4, "Connections for
