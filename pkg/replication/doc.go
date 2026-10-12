@@ -32,6 +32,7 @@
 // # Design record
 //
 // The design this package implements is recorded internally as the 2026-08-19
-// replication-facts design spec; its highest revision governs. Consumer-facing
-// version behavior lives in docs/COMPAT.md.
+// replication-facts design spec and, for the Group Replication facts, the
+// 2026-10-12 group-replication-facts design spec; the highest revision of each
+// governs. Consumer-facing version behavior lives in docs/COMPAT.md.
 package replication

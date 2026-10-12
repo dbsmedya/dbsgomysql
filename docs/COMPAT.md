@@ -78,7 +78,8 @@ in AGENTS.md, "Look before asserting", is what settles a claim.
 the corpus described in AGENTS.md, "Look before asserting"; the replication
 entries (6 and 20–23) were checked or re-checked on **2026-08-19** during the
 `pkg/replication` scoping sweep, which is also what corrected entry 6's `NULL`
-claim. Entries carrying a
+claim; the Group Replication entries (29, 30 and 33) were checked on
+**2026-10-12**. Entries carrying a
 version threshold, an error number, or an "all supported versions" claim were
 queried once per version file and the answers diffed — the method that turned up
 the three corrections recorded in `CHANGELOG.md`. Where an entry's **Reference**
@@ -1460,6 +1461,98 @@ manuals:
 | Column and index names are not case-sensitive on any platform | §11.2.3, "Identifier Case Sensitivity" | §11.2.3, identical | §11.2.3, identical |
 | Error 1060: `ER_DUP_FIELDNAME`, SQLSTATE `42S21`, `Duplicate column name '%s'` | "Server Error Message Reference", `ER_DUP_FIELDNAME` | Identical | Identical |
 | Error 1061: `ER_DUP_KEYNAME`, SQLSTATE `42000`, `Duplicate key name '%s'` | "Server Error Message Reference", `ER_DUP_KEYNAME` | Identical | Identical |
+
+---
+
+## 29. `SHOW REPLICA STATUS` omits both Group Replication channels ✅
+
+**Affected:** every supported version, Oracle and Percona, on a Group
+Replication member. The manual says the all-channels form reports every
+channel "except the group_replication_applier channel"; measured, it omits
+`group_replication_recovery` as well.
+
+**Symptom:** on a healthy primary or secondary the statement returns no rows,
+although Performance Schema lists both channels. It still returns no rows
+while the member is `RECOVERING` with its recovery connection and applier
+`ON`. `FOR CHANNEL 'group_replication_recovery'` does return the channel's
+row, and `FOR CHANNEL 'group_replication_applier'` is refused with error 3139.
+An ordinary asynchronous channel on a member is listed as usual.
+
+**Handling:** none needed — `ReplicaStatus` keeps its single statement and
+reports asynchronous channels only, so `REPLICATION_CONFIGURED` fires on a
+member with no asynchronous channel and the channel checks never judge a group
+channel. Delivered in **v1.3.0** as documentation, pinned by
+[`TestCompat29ReplicaStatusOnGroupMembersIntegration`](../pkg/replication/group_replication_integration_test.go)
+(every member, healthy) and
+[`TestCompat29And33HeldRecoveryIntegration`](../pkg/replication/group_replication_integration_test.go),
+which holds a member in `RECOVERING` with a table lock and proves the state
+independently before asserting the absence;
+[`TestReplicaStatusKeepsAsyncChannelOnGroupMemberIntegration`](../pkg/replication/group_replication_integration_test.go)
+proves an asynchronous channel on a member is still listed.
+
+**Reference:** live behavior contradicts the documentation. Refman 8.0, 8.4
+and 9.7, "Compatibility with Previous Replication Statements", identical in
+all three ("SHOW REPLICA STATUS reports the status for all channels, except
+the group_replication_applier channel"). Measured on Oracle 8.0.40, 8.4.11,
+9.7.1 and Percona 8.0.46-37, 8.4.11-11, 9.7.1-1 (2026-10-12). Error 3139 is
+`ER_REPLICA_CHANNEL_OPERATION_NOT_ALLOWED`, SQLSTATE HY000, "%s cannot be
+performed on channel '%s'" (MySQL 8.0, 8.4 and 9.7 Error Message References;
+in 8.0 the symbol replaced `ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED` in 8.0.33).
+
+## 30. Group Replication variables exist only while the plugin is ACTIVE ✅
+
+**Affected:** every supported version, Oracle and Percona.
+
+**Symptom:** `group_replication_*` system variables are registered only while
+the plugin is `ACTIVE`. With the plugin not installed, and equally with it
+installed but `DISABLED` (`--loose-group-replication=OFF`),
+`SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'`
+returns no rows and `SELECT @@GLOBAL.group_replication_group_name` raises
+`ER_UNKNOWN_SYSTEM_VARIABLE` (1193). The two states are indistinguishable from
+the variable alone. With the plugin `ACTIVE` and no name set, the statement
+returns one row with an empty value.
+
+**Handling:** `GroupReplication` reads the plugin's status from
+`information_schema.PLUGINS` as well as the variable, never `@@GLOBAL`, and
+reports absence as a state. Both statements need no privilege beyond
+connecting. Delivered in **v1.3.0**, pinned by
+[`TestCompat30GroupReplicationPluginStatesIntegration`](../pkg/replication/group_replication_integration_test.go)
+on all four states, each read by a USAGE-only account.
+
+**Reference:** Refman 8.0, 8.4 and 9.7, "SHOW VARIABLES Statement", identical
+("This statement does not require any privilege. It requires only the ability
+to connect to the server"); Refman 8.0, 8.4 and 9.7, "The INFORMATION_SCHEMA
+PLUGINS Table", identical (`PLUGIN_STATUS` is "one of ACTIVE, INACTIVE,
+DISABLED, DELETING, or DELETED"). Error 1193 `ER_UNKNOWN_SYSTEM_VARIABLE`,
+SQLSTATE HY000 (MySQL 8.0, 8.4 and 9.7 Error Message References). The
+DISABLED behavior is measured, not documented (2026-10-12, all six servers).
+
+## 33. Distributed recovery registers the recovering member on its donor ✅
+
+**Affected:** every supported version, Oracle and Percona.
+
+**Symptom:** after a member rejoins through incremental distributed recovery,
+exactly one donor's `SHOW REPLICAS` lists it — `Replica_UUID` is the member's
+server UUID — during recovery and still after the member is `ONLINE`. Which
+member donates varies. After a cluster's initial formation no donor listed
+anything.
+
+**Handling:** none — `RegisteredReplicas` keeps its registration-history
+contract (entry 22) and stays unfiltered; filtering would need a Performance
+Schema privilege the fact does not require. The consumer guide describes
+matching against current members as an optional filter, not a classifier.
+Delivered in **v1.3.0** as documentation, pinned by
+[`TestCompat29And33HeldRecoveryIntegration`](../pkg/replication/group_replication_integration_test.go),
+which identifies the donor by whichever member lists the rejoiner.
+
+**Reference:** measured, 2026-10-12, all six servers; the registration itself
+is not documented. Refman 8.0, 8.4 and 9.7, "Distributed Recovery", identical:
+state transfer from a donor's binary log "uses a standard asynchronous
+replication channel named group_replication_recovery that is established
+between the donor and the joining member"; Refman 8.4, "Connections for
+Distributed Recovery": over that channel "the joining member acts as the
+replica and the existing member acts as the source". The registration-history
+contract is entry 22's.
 
 ---
 

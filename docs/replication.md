@@ -70,15 +70,17 @@ Every call takes a `context.Context` first and returns `(fact, error)`.
 
 | Fact | Reads | Privilege | Answers |
 |---|---|---|---|
-| `ReplicaStatus(ctx)` | `SHOW REPLICA STATUS` | `REPLICATION CLIENT` | one `ChannelStatus` per replication channel |
+| `ReplicaStatus(ctx)` | `SHOW REPLICA STATUS` | `REPLICATION CLIENT` | one `ChannelStatus` per asynchronous replication channel |
 | `BinaryLogEnabled(ctx)` | `@@GLOBAL.log_bin` | — | is this server writing a binary log? |
 | `BinaryLogStatus(ctx)` | `SHOW BINARY LOG STATUS`, or `SHOW MASTER STATUS` on 8.0 | `REPLICATION CLIENT` | the current binary log coordinates |
 | `GTIDStatus(ctx)` | `@@GLOBAL.gtid_mode`, `gtid_executed`, `gtid_purged` | — | GTID mode and both sets |
 | `ReplicationConfig(ctx)` | five `@@GLOBAL` variables | — | read-only state, server id, applier configuration |
 | `RegisteredReplicas(ctx)` | `SHOW REPLICAS` | **`REPLICATION SLAVE`** | which replicas have registered with this source |
+| `GroupReplication(ctx)` | `information_schema.PLUGINS`, then `SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'` | — | is the Group Replication plugin active, and which group name is configured? |
 
-The three variable facts read global system variables. The statement-backed
-facts are the ones carrying a documented privilege requirement, and
+The three variable facts read global system variables, and
+`GroupReplication` needs no privilege beyond connecting either. The other
+statement-backed facts carry a documented privilege requirement, and
 `RegisteredReplicas` needs a *different* grant from the other two:
 `REPLICATION SLAVE`, not `REPLICATION CLIENT`. An account that can read every
 status fact can still be refused there, and that refusal arrives as an error,
@@ -91,6 +93,7 @@ status, err := insp.BinaryLogStatus(ctx)
 gtid, err := insp.GTIDStatus(ctx)
 config, err := insp.ReplicationConfig(ctx)
 replicas, err := insp.RegisteredReplicas(ctx)
+gr, err := insp.GroupReplication(ctx)
 ```
 
 The configuration fact's type is `replication.Config`; the method that returns
@@ -101,7 +104,9 @@ mutate a result without affecting the next call.
 
 ### Channels
 
-`ReplicaStatus` always reads every channel — it never issues `FOR CHANNEL`.
+`ReplicaStatus` reads every channel `SHOW REPLICA STATUS` lists — it never
+issues `FOR CHANNEL`. On a Group Replication member that list omits the
+group's own channels; see [Group Replication](#group-replication).
 Filter in Go if you want one:
 
 ```go
@@ -126,7 +131,7 @@ than an error.
 
 | Fact | Empty result means |
 |---|---|
-| `ReplicaStatus` | **This server is not a replica.** An empty slice is a real answer: a successful statement is authoritative, and an unprivileged account gets an error instead. |
+| `ReplicaStatus` | **This server has no asynchronous replication channel.** That includes a Group Replication member that replicates nothing asynchronously ([COMPAT.md](COMPAT.md) entry 29). An empty slice is a real answer: a successful statement is authoritative, and an unprivileged account gets an error instead. |
 | `BinaryLogStatus` | **Binary logging is disabled.** The fact returns `(nil, nil)` — a nil pointer with no error — which you can cross-check against `BinaryLogEnabled`. |
 | `RegisteredReplicas` | **Nothing.** See below; this one is never proof of absence. |
 
@@ -157,6 +162,57 @@ answer, and neither is any other statement MySQL offers for asynchronous
 replication. [COMPAT.md](COMPAT.md) entry 22 records the manual's claims here,
 which the server contradicts on every supported version, and the live output
 that settles it.
+
+## Group Replication
+
+### Is this server configured for a group?
+
+`GroupReplication` answers two questions with two statements, and needs no
+privilege beyond connecting:
+
+| Server state | `PluginStatus` | `GroupName` |
+|---|---|---|
+| plugin not installed | `""` | `""` |
+| plugin installed but `DISABLED` | `"DISABLED"` | `""` |
+| plugin `ACTIVE`, no group name set | `"ACTIVE"` | `""` |
+| configured member, in any member state | `"ACTIVE"` | the group's UUID |
+
+- **Absence is a state, never an error.** An error always means the read
+  failed: transport, privilege, more than one row, a `NULL`, or an
+  undecodable value. Both statements must succeed; you never get half a fact.
+- **A `DISABLED` plugin hides the group-name variable** exactly as a missing
+  plugin does, which is why the fact reads the plugin's own status
+  ([COMPAT.md](COMPAT.md) entry 30). Never read
+  `@@GLOBAL.group_replication_group_name` yourself: it raises error 1193
+  whenever the variable is not registered.
+- **A non-empty `GroupName` proves configuration, not membership.** A server
+  can carry a name and never have joined a running group. What that means for
+  your job is your policy.
+- **The two fields are not one snapshot.** Each reports what its own statement
+  saw; a plugin installed between them can show `PluginStatus ""` with a name.
+- Values are spelled as the server sent them; `PluginStatus` may be any
+  documented status (`ACTIVE`, `INACTIVE`, `DISABLED`, `DELETING`, `DELETED`)
+  or one this release does not know.
+
+### The asynchronous facts on a group member
+
+- `ReplicaStatus` on a member lists **no Group Replication channel** — not the
+  applier channel, which the manual says is excluded, and not the recovery
+  channel either, which the manual implies is listed. That holds while a
+  member is `RECOVERING` with its recovery channel running
+  ([COMPAT.md](COMPAT.md) entry 29). An ordinary asynchronous channel on a
+  member is still listed.
+- So on a member with no asynchronous channel `REPLICATION_CONFIGURED` fires,
+  and the channel checks judge only asynchronous channels.
+- **`RegisteredReplicas` on a donor lists members that recovered from it**,
+  and keeps listing them after they are `ONLINE` ([COMPAT.md](COMPAT.md)
+  entry 33). This is the fact's registration-history contract at work. If you
+  know the group's current members, dropping rows whose `ReplicaUUID` matches
+  one of them is a reasonable filter for *known current peers* — but it is not
+  a classifier: a match proves identity, not why the server registered or
+  whether it is connected, and a non-match does not prove an asynchronous
+  replica, because a former member leaves the group's view but not the
+  registration history.
 
 ## GTID sets are opaque
 

@@ -165,6 +165,10 @@ observe the other end of a channel.
   was renamed across the supported range (entry 20).
 - Every check fails closed on any value other than the exact proven one (`Yes`,
   `ON`), so a new server state is a finding, not a silent pass.
+- On a Group Replication member, `ReplicaStatus` lists no group channel, and
+  `RegisteredReplicas` on a donor can list members that recovered from it;
+  `GroupReplication`'s group name proves configuration, not membership
+  (entries 29, 30, 33).
 
 ## Consistency across statements and calls
 

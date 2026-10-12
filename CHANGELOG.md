@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still reports an ordinary async channel on one; distributed recovery
   registers the recovering member on its donor (COMPAT entries 29 and 33).
 
+### Changed
+
+- `docs/replication.md` no longer says `ReplicaStatus` returns "every channel"
+  or that an empty result means "this server is not a replica": on a Group
+  Replication member it omits the group's own channels (COMPAT entry 29).
+  `ReplicaStatus`'s GoDoc says the same.
+
 ## [1.2.1] - 2026-10-12
 
 ### Changed
