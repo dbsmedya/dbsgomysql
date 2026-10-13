@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-13
+
 ### Added
 
 - `replication.Inspector.GroupReplication` reports the Group Replication
@@ -973,7 +975,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.4...v1.2.0
 [1.1.4]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.3...v1.1.4
