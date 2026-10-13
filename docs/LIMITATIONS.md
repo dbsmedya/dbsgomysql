@@ -169,6 +169,11 @@ observe the other end of a channel.
   `RegisteredReplicas` on a donor can list members that recovered from it;
   `GroupReplication`'s group name proves configuration, not membership
   (entries 29, 30, 33).
+- `GroupMembers` is one member's view, not the group's configured size, and
+  `GroupMemberStats` reports a row of zeros on a server that is not in a
+  running group; the two are separate reads, so the queue checks pass a
+  stats slice that is empty, missing a member, or holding a stopped member's
+  own zero row (entries 31, 32).
 
 ## Consistency across statements and calls
 
