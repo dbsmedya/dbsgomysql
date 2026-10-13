@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group — each member's state, role, version and communication stack, and
   which row is the queried server (`Self`, computed by the server). Needs
   `SELECT` on that table (COMPAT entry 31).
+- `replication.Inspector.GroupMemberStats` reads
+  `performance_schema.replication_group_member_stats`: each member's
+  certification and applier queues and counters, as this member holds them.
+  Needs `SELECT` on that table (COMPAT entry 32).
 
 ### Changed
 
