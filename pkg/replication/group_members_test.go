@@ -444,3 +444,24 @@ func TestGroupMembersErrorNamesMember(t *testing.T) {
 		})
 	}
 }
+
+// TestGroupMembersMemberIDFailureNamesNoMember pins that a failure of MEMBER_ID
+// itself names no member, even when an earlier row decoded one: the UUID a
+// row's error names is that row's own, never a neighbor's.
+func TestGroupMembersMemberIDFailureNamesNoMember(t *testing.T) {
+	t.Parallel()
+
+	first := groupMemberRow(testMemberA, int64(3306), testStateOnline, "PRIMARY", int64(1))
+	second := groupMemberRow(testMemberB, int64(3306), testStateOnline, "SECONDARY", int64(0))
+	second[1] = nil
+	db := scriptGroupMembers(t, groupMembersColumns(), [][]driver.Value{first, second})
+
+	_, err := NewInspector(db).GroupMembers(t.Context())
+	assertOpError(t, err, "group_members", testApplierChannel, "MEMBER_ID")
+	if strings.Contains(err.Error(), "member ") {
+		t.Errorf("error %q names a member, want none: MEMBER_ID itself failed", err)
+	}
+	if !errors.Is(err, errUnexpectedNULL) {
+		t.Errorf("error %v does not wrap errUnexpectedNULL", err)
+	}
+}
