@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `GROUP_REPLICATION_CERTIFIER_QUEUE_WITHIN`, with a documented gate
   recipe. An empty member view fails the local check; the queue bounds are
   the caller's and are never clamped.
+- Integration coverage of both Performance Schema tables in every plugin and
+  member state measured, including a member stopped after participating, and
+  of each fact's privilege (COMPAT entries 31 and 32).
 
 ### Changed
 
