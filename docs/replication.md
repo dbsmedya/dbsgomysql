@@ -1,6 +1,6 @@
 # pkg/replication — Consumer Guide
 
-> **Status:** six facts and all five catalog checks are implemented. Track
+> **Status:** nine facts and all nine catalog checks are implemented. Track
 > shipped changes in [CHANGELOG.md](../CHANGELOG.md).
 
 `pkg/replication` has two layers built on one connection:
@@ -77,14 +77,17 @@ Every call takes a `context.Context` first and returns `(fact, error)`.
 | `ReplicationConfig(ctx)` | five `@@GLOBAL` variables | — | read-only state, server id, applier configuration |
 | `RegisteredReplicas(ctx)` | `SHOW REPLICAS` | **`REPLICATION SLAVE`** | which replicas have registered with this source |
 | `GroupReplication(ctx)` | `information_schema.PLUGINS`, then `SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'` | — | is the Group Replication plugin active, and which group name is configured? |
+| `GroupMembers(ctx)` | `performance_schema.replication_group_members` | **`SELECT` on that table** | this member's view of its group: one `GroupMember` per member |
+| `GroupMemberStats(ctx)` | `performance_schema.replication_group_member_stats` | **`SELECT` on that table** | the certification and applier counters this member holds, one `GroupMemberStats` per member |
 
 The three variable facts read global system variables, and
 `GroupReplication` needs no privilege beyond connecting either. The other
 statement-backed facts carry a documented privilege requirement, and
 `RegisteredReplicas` needs a *different* grant from the other two:
-`REPLICATION SLAVE`, not `REPLICATION CLIENT`. An account that can read every
-status fact can still be refused there, and that refusal arrives as an error,
-never as an empty list.
+`REPLICATION SLAVE`, not `REPLICATION CLIENT`. The two Performance Schema
+facts each need `SELECT` on their own table, which neither of those grants
+gives. An account that can read every status fact can still be refused
+there, and that refusal arrives as an error, never as an empty list.
 
 ```go
 channels, err := insp.ReplicaStatus(ctx)
@@ -94,6 +97,8 @@ gtid, err := insp.GTIDStatus(ctx)
 config, err := insp.ReplicationConfig(ctx)
 replicas, err := insp.RegisteredReplicas(ctx)
 gr, err := insp.GroupReplication(ctx)
+members, err := insp.GroupMembers(ctx)
+stats, err := insp.GroupMemberStats(ctx)
 ```
 
 The configuration fact's type is `replication.Config`; the method that returns
@@ -194,6 +199,103 @@ privilege beyond connecting:
   documented status (`ACTIVE`, `INACTIVE`, `DISABLED`, `DELETING`, `DELETED`)
   or one this release does not know.
 
+### Who is in the group, and how far behind are they?
+
+`GroupMembers` reads this member's view of its group, and `GroupMemberStats`
+the certification and applier counters it holds for each member. Each needs
+`SELECT` on its own Performance Schema table; `USAGE` alone is refused with
+error 1142, and that refusal is an error, never an empty slice.
+
+What the two tables hold depends on the server's state, and not always as the
+manual says ([COMPAT.md](COMPAT.md) entries 31 and 32):
+
+| Server state | `GroupMembers` | `GroupMemberStats` |
+|---|---|---|
+| plugin not installed, or `DISABLED` | empty | empty |
+| plugin `ACTIVE`, Group Replication never started — 8.0, 8.4 | one `OFFLINE` row with no member ID, host, role, version or stack, and an invalid `Port`; `Self` false | one row of zeros with no view or member ID; `Self` false |
+| the same on 9.7 | one `OFFLINE` row identifying the server; no role; `Self` true | as on 8.x: anonymous, `Self` false |
+| stopped after participating | one `OFFLINE` row of its own; no role; `Self` true | one row of zeros of its own, no view ID; `Self` true |
+| member of a running group | one row per member in this member's view | one row per member, refreshed periodically |
+
+- **The view is this member's, never the group's configured size.** A peer
+  that leaves disappears from the others' view rather than being listed
+  `OFFLINE`, and a member cut off from the group reports the others
+  `UNREACHABLE` rather than guessing.
+- **`Self` is computed by the server** (`MEMBER_ID = @@server_uuid`). On 9.7 a
+  never-started server is `Self` in the members table and anonymous in the
+  stats table, so the two facts can disagree about the same server.
+- **Zero counters are not a healthy backlog.** A server that is not in a
+  running group reports a row of zeros. Read the counters only alongside a
+  `GroupMembers` snapshot that shows the member `ONLINE`.
+- **A remote member's counters are periodic copies**, refreshed on the
+  group's flow-control period, so they can differ slightly from that
+  member's own.
+- `Port` follows `SecondsBehindSource`'s rule: invalid means only that the
+  server sent `NULL`. Values are spelled as sent: `Version` omits a
+  distribution's build suffix (`8.0.46`, not `8.0.46-37`), and
+  `CommunicationStack` reads `MySQL` or `XCom`.
+
+### Gating on a group
+
+The four Group Replication checks compose the way the asynchronous ones do,
+with one rule the checks cannot enforce for you:
+
+```go
+members, err := insp.GroupMembers(ctx)
+if err != nil {
+    return err // fail closed: a view you could not read is not a healthy group
+}
+stats, err := insp.GroupMemberStats(ctx)
+if err != nil {
+    return err
+}
+
+findings := replication.CheckGroupReplicationLocalMemberOnline(members)
+findings = append(findings, replication.CheckGroupReplicationMembersOnline(members)...)
+findings = append(findings, replication.CheckGroupReplicationApplierQueueWithin(stats, 100)...)
+findings = append(findings, replication.CheckGroupReplicationCertifierQueueWithin(stats, 100)...)
+if len(findings) > 0 {
+    return gateFailed(findings) // act on findings first
+}
+
+// No findings: every member in this view is ONLINE, this server's own row
+// among them. The checks still pass an empty stats slice, one missing a
+// member, and a stopped member's own row of zeros. Require, for every member
+// you gate on — this one included — a stats row with its MemberID and a
+// non-empty ViewID, and treat anything else as unavailable data under your
+// own policy (retry, pause). runningStatsRow, gateFailed and
+// errNoRunningStats are yours to write.
+for _, member := range members {
+    if !runningStatsRow(stats, member.MemberID) {
+        return errNoRunningStats(member.MemberID)
+    }
+}
+```
+
+- **`GROUP_REPLICATION_LOCAL_MEMBER_ONLINE` runs first, and always.** Without
+  it, a server that is not a running member — no plugin, never started,
+  stopped — passes: the other checks have nothing to iterate. It guards the
+  members input only.
+- **Act on findings before the coverage rule.** A stopped or never-started
+  server has no running stats row either, so checking coverage first would
+  report it as unavailable data to retry on, rather than as the finding that
+  it is not a running member.
+- **An own `ONLINE` row does not prove this member is in the majority.** An
+  expelled member "sees itself as online and the other members as
+  unreachable" (refman 8.4, "Responses to Failure Detection and Network
+  Partitioning"), so `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE` passes it;
+  `GROUP_REPLICATION_MEMBERS_ONLINE` is what fires on those `UNREACHABLE`
+  rows. Run both.
+- **Members and stats are separate reads**, and the stats are periodic
+  copies, so they are two observations, not one snapshot. A members read can
+  show a member `ONLINE` a moment before the stats read finds it stopped —
+  its own row then has an empty `ViewID` and zero counters, which the queue
+  checks pass. That is why the coverage rule above lives in your gate rather
+  than in a check, and why it asks for a `ViewID`. It still does not make the
+  two reads one snapshot or remove the staleness of remote rows.
+- **`GROUP_REPLICATION_MEMBERS_ONLINE` describes the supplied view only.** It
+  cannot prove the group's configured size or its fault tolerance.
+
 ### The asynchronous facts on a group member
 
 - `ReplicaStatus` on a member lists **no Group Replication channel** — not the
@@ -203,7 +305,9 @@ privilege beyond connecting:
   ([COMPAT.md](COMPAT.md) entry 29). An ordinary asynchronous channel on a
   member is still listed.
 - So on a member with no asynchronous channel `REPLICATION_CONFIGURED` fires,
-  and the channel checks judge only asynchronous channels.
+  and the channel checks judge only asynchronous channels. To ask whether a
+  server is a running group member, use
+  `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE` (see [Gating on a group](#gating-on-a-group)).
 - **`RegisteredReplicas` on a donor lists a member recovering from it**, and
   can go on listing it for a while after it is `ONLINE` — until the donor's
   dump thread for that connection ends ([COMPAT.md](COMPAT.md) entry 33). This
@@ -267,16 +371,23 @@ severity.
 | ID | Input | Finding when | Rationale |
 |---|---|---|---|
 | `BINARY_LOG_ENABLED` | `bool` | binary logging is off | a server without binary logging cannot serve as a replication source and supports no binlog-based capture or point-in-time recovery |
-| `REPLICATION_CONFIGURED` | `[]ChannelStatus` | zero channels | a consumer expecting to monitor replication here is pointed at a server that has none |
+| `REPLICATION_CONFIGURED` | `[]ChannelStatus` | zero channels | a consumer expecting to monitor asynchronous replication here is pointed at a server that has none; a Group Replication member's own channels are not counted |
 | `REPLICATION_CHANNELS_RUNNING` | `[]ChannelStatus` | any channel whose receiver or applier is not `Yes` | a stopped channel accumulates lag and drift silently; the finding carries that channel's last errors, which may help diagnose the stop — the server records none for a deliberate stop, and `Connecting` is a failing state that may carry no error |
 | `SECONDS_BEHIND_SOURCE_WITHIN` | `[]ChannelStatus`, your `maxSeconds` | any channel whose reported estimate is `NULL` or above your bound | the server's reported lag beyond your bound means the replica trails the source; `NULL` means the estimate is unknowable because a thread is stopped |
 | `GTID_MODE_ON` | `GTIDStatus` | mode is not `ON` | consumers that coordinate by GTID — resume, failover, CDC positioning — need `ON`; in other modes the GTID sets describe only part of the write history |
+| `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE` | `[]GroupMember` | no row is `Self` with state exactly `ONLINE` | a member is only fully synchronized with the group, and participating in it, when it is `ONLINE`; a server with no row of its own, including one without an active plugin, fails rather than passes |
+| `GROUP_REPLICATION_MEMBERS_ONLINE` | `[]GroupMember` | any member whose state is not exactly `ONLINE` | this view does not report that member `ONLINE`, the only fully synchronized, participating state; an `UNREACHABLE` row is a suspicion, and the queried member may be the one cut off |
+| `GROUP_REPLICATION_APPLIER_QUEUE_WITHIN` | `[]GroupMemberStats`, your `maxTransactions` | any member whose applier queue is above your bound | an application backlog on that member — not an exact measure of how far its data trails the group |
+| `GROUP_REPLICATION_CERTIFIER_QUEUE_WITHIN` | `[]GroupMemberStats`, your `maxTransactions` | any member whose certification queue is above your bound | a backlog of transactions waiting for conflict detection |
 
-`Catalog()` returns all five sorted by ID, and `LookupCheck(id)` looks one up
-by exact ID — never case-folded.
+`Catalog()` returns all nine sorted by ID, and `LookupCheck(id)` looks one up
+by exact ID — never case-folded. Each entry's `Phase` names the release that
+delivered it: `v1.1.0` for the asynchronous checks, `v1.3.0` for the Group
+Replication ones.
 
 **The checks fail closed.** A check passes only on the exact proven value:
-`"Yes"` for a running thread, `"ON"` for GTID mode. Every other string the
+`"Yes"` for a running thread, `"ON"` for GTID mode, `"ONLINE"` for a group
+member. Every other string the
 server might send — including values that do not exist today — produces a
 finding. A future server state becomes something you can see, never a silent
 pass.
@@ -287,7 +398,9 @@ Two consequences worth knowing:
   finding. That is deliberate: reconnecting is not running.
 - `maxSeconds` is never clamped and never defaulted. A negative bound produces
   a finding for every channel you supplied, because no reported estimate can
-  satisfy it. A channel reporting exactly `maxSeconds` passes.
+  satisfy it. A channel reporting exactly `maxSeconds` passes. The two queue
+  checks' `maxTransactions` follows the same rules, and a queue above
+  `math.MaxInt64` is compared exactly, never narrowed into a pass.
 
 A stopped applier fires `REPLICATION_CHANNELS_RUNNING` *and*
 `SECONDS_BEHIND_SOURCE_WITHIN`, each under its own ID, so you can tell
@@ -345,7 +458,7 @@ for {
 Three things about this shape are load-bearing:
 
 - **`REPLICATION_CONFIGURED` runs first, and always.** Without it, a server
-  with no replication at all passes the gate silently: the other two checks
+  with no asynchronous channel passes the gate silently: the other two checks
   have nothing to iterate and return nothing. An empty snapshot must fail the
   gate, never pass it.
 - **If you filter to a named channel, run the gate on the filtered slice.** A

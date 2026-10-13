@@ -54,11 +54,12 @@ go get github.com/dbsmedya/dbsgomysql
 Available now: `pkg/sqlutil` for MySQL identifier validation and quoting, plus
 the `pkg/validations` metadata, column, foreign-key, and privilege facts and all
 15 pure catalog checks, including table specification and diff facts.
-`pkg/replication` adds seven replication facts — replica channel status,
+`pkg/replication` adds nine replication facts — replica channel status,
 binary log enablement and coordinates, GTID state, replication configuration,
-registered replicas, and Group Replication plugin status and group name — with
-five pure catalog checks over them, tested against live source-replica and
-Group Replication topologies on 8.0, 8.4, and 9.7.
+registered replicas, Group Replication plugin status and group name, group
+members, and per-member queues and counters — with nine pure catalog checks
+over them, tested against live source-replica and Group Replication
+topologies on 8.0, 8.4, and 9.7.
 
 Which release added what is recorded in [CHANGELOG.md](CHANGELOG.md), the sole
 owner of version history.

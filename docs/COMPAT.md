@@ -79,7 +79,7 @@ the corpus described in AGENTS.md, "Look before asserting"; the replication
 entries (6 and 20–23) were checked or re-checked on **2026-08-19** during the
 `pkg/replication` scoping sweep, which is also what corrected entry 6's `NULL`
 claim; the Group Replication entries (29, 30 and 33) were checked on
-**2026-10-12**. Entries carrying a
+**2026-10-12**, and 31 and 32 on **2026-10-13**. Entries carrying a
 version threshold, an error number, or an "all supported versions" claim were
 queried once per version file and the answers diffed — the method that turned up
 the three corrections recorded in `CHANGELOG.md`. Where an entry's **Reference**
@@ -1526,6 +1526,72 @@ PLUGINS Table", identical (`PLUGIN_STATUS` is "one of ACTIVE, INACTIVE,
 DISABLED, DELETING, or DELETED"). Error 1193 `ER_UNKNOWN_SYSTEM_VARIABLE`,
 SQLSTATE HY000 (MySQL 8.0, 8.4 and 9.7 Error Message References). The
 DISABLED behavior is measured, not documented (2026-10-12, all six servers).
+
+## 31. `replication_group_members` reports a row without a running group ✅
+
+**Affected:** every supported version, Oracle and Percona; the never-started
+row differs between 8.x and 9.7.
+
+**Symptom:** with the plugin not installed or `DISABLED`, the table is empty.
+With the plugin `ACTIVE` and Group Replication never started, it holds one
+`OFFLINE` row for `group_replication_applier`: on 8.0 and 8.4 that row is
+anonymous — empty `MEMBER_ID`, host, role, version and stack, `MEMBER_PORT`
+`NULL` — so `MEMBER_ID = @@server_uuid` is false; on 9.7 it identifies the
+server (ID, host, port, version, stack) with an empty role, and is the
+server's own row. A member stopped after participating holds one `OFFLINE`
+row of its own with an empty role, and drops out of the other members' view
+rather than appearing there as `OFFLINE`. The manual's column description
+says `MEMBER_ROLE` is "either PRIMARY or SECONDARY"; outside a running group
+it is empty. `MEMBER_VERSION` omits Percona's build suffix, and
+`MEMBER_COMMUNICATION_STACK` reads `MySQL` or `XCom` where the description
+says "XCOM" and "MYSQL". `MEMBER_PORT` is the table's only nullable column.
+
+**Handling:** `GroupMembers` reports every row raw, `Port` as
+`sql.NullInt64`, and `Self` as the server computes it; an empty slice is an
+answer. `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE` fails on an empty view and on
+an anonymous row alike. Delivered in **v1.3.0**, pinned by
+[`TestCompat31And32GroupTablesByStateIntegration`](../pkg/replication/group_members_integration_test.go)
+through the fact and the raw table in every state above.
+
+**Reference:** Refman 8.0, 8.4 and 9.7, "The replication_group_members
+Table" (Performance Schema table descriptions): `MEMBER_ROLE` "either PRIMARY
+or SECONDARY"; `MEMBER_STATE` `OFFLINE` "The group replication plugin is
+installed but has not been started"; the stack "either the XCOM
+communication stack or the MYSQL communication stack". Refman
+8.4, "Group Replication Server States": a member that has left the group or
+is in a partition reports the others as unreachable rather than guessing.
+The row shapes are measured, not documented (2026-10-12, all six servers;
+nullability read from `information_schema.COLUMNS` on 8.0, 8.4 and 9.7,
+2026-10-13).
+
+## 32. `replication_group_member_stats` is populated without a running group ✅
+
+**Affected:** every supported version, Oracle and Percona.
+
+**Symptom:** with the plugin not installed or `DISABLED`, the table is empty.
+With the plugin `ACTIVE` and Group Replication never started, it holds one
+row for `group_replication_applier` with an empty `VIEW_ID` and `MEMBER_ID`
+and every counter zero — on 9.7 too, where the members table identifies the
+same server (entry 31), so the two tables disagree about it. A member stopped
+after participating holds one row of its own with an empty `VIEW_ID` and
+every counter zero. The manual says the table "is populated only when Group
+Replication is running".
+
+**Handling:** `GroupMemberStats` reports the rows raw. Its documentation and
+the consumer guide say zero counters are not evidence of a healthy backlog
+and must be read alongside a members snapshot showing the member `ONLINE`;
+the gate recipe requires, for every gated member, a stats row with its
+member ID and a non-empty `VIEW_ID`. Delivered in **v1.3.0**, pinned by
+[`TestCompat31And32GroupTablesByStateIntegration`](../pkg/replication/group_members_integration_test.go).
+
+**Reference:** Refman 8.0, 8.4 and 9.7, "The replication_group_member_stats
+Table" (Performance Schema table descriptions): "It is populated only when
+Group Replication is running". Refman 8.0, 8.4
+and 9.7, "The replication_group_member_stats Table" (Monitoring Group
+Replication), identical: remote members' statistics are refreshed on
+`group_replication_flow_control_period` "so these can differ slightly from
+the locally collected statistics". The rows are measured (2026-10-12, all
+six servers).
 
 ## 33. Distributed recovery registers the recovering member on its donor ✅
 

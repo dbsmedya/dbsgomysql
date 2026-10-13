@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -9,6 +10,10 @@ func TestCatalogSortedAndFresh(t *testing.T) {
 
 	want := []string{
 		IDBinaryLogEnabled,
+		IDGroupReplicationApplierQueueWithin,
+		IDGroupReplicationCertifierQueueWithin,
+		IDGroupReplicationLocalMemberOnline,
+		IDGroupReplicationMembersOnline,
 		IDGTIDModeOn,
 		IDReplicationChannelsRunning,
 		IDReplicationConfigured,
@@ -26,8 +31,12 @@ func TestCatalogSortedAndFresh(t *testing.T) {
 		if info.Status != StatusImplemented {
 			t.Errorf("Catalog()[%d].Status = %v, want %v", index, info.Status, StatusImplemented)
 		}
-		if info.Phase != "v1.1.0" {
-			t.Errorf("Catalog()[%d].Phase = %q, want %q", index, info.Phase, "v1.1.0")
+		wantPhase := "v1.1.0"
+		if strings.HasPrefix(info.ID, "GROUP_REPLICATION_") {
+			wantPhase = "v1.3.0"
+		}
+		if info.Phase != wantPhase {
+			t.Errorf("Catalog()[%d].Phase = %q, want %q", index, info.Phase, wantPhase)
 		}
 		if info.Rationale == "" {
 			t.Errorf("Catalog()[%d] (%s) has an empty Rationale", index, info.ID)

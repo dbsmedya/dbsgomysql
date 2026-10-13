@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-13
+
 ### Added
 
 - `replication.Inspector.GroupReplication` reports the Group Replication
@@ -22,6 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Group Replication channel on a member, also while it is `RECOVERING`, and
   still reports an ordinary async channel on one; distributed recovery
   registers the recovering member on its donor (COMPAT entries 29 and 33).
+- `replication.Inspector.GroupMembers` reads
+  `performance_schema.replication_group_members`: this member's view of its
+  group — each member's state, role, version and communication stack, and
+  which row is the queried server (`Self`, computed by the server). Needs
+  `SELECT` on that table (COMPAT entry 31).
+- `replication.Inspector.GroupMemberStats` reads
+  `performance_schema.replication_group_member_stats`: each member's
+  certification and applier queues and counters, as this member holds them.
+  Needs `SELECT` on that table (COMPAT entry 32).
+- Four Group Replication checks: `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE`,
+  `GROUP_REPLICATION_MEMBERS_ONLINE`, `GROUP_REPLICATION_APPLIER_QUEUE_WITHIN`
+  and `GROUP_REPLICATION_CERTIFIER_QUEUE_WITHIN`, with a documented gate
+  recipe. An empty member view fails the local check; the queue bounds are
+  the caller's and are never clamped.
+- Integration coverage of both Performance Schema tables in every plugin and
+  member state measured, including a member stopped after participating, and
+  of each fact's privilege (COMPAT entries 31 and 32).
 
 ### Changed
 
@@ -29,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or that an empty result means "this server is not a replica": on a Group
   Replication member it omits the group's own channels (COMPAT entry 29).
   `ReplicaStatus`'s GoDoc says the same.
+- `REPLICATION_CONFIGURED`'s finding message and catalog rationale now say
+  the server has no *asynchronous* replication channels: on a Group
+  Replication member with no asynchronous channel the check fires, and the
+  old wording said the server had no replication at all. The predicate, the
+  ID and the finding's `Facts` are unchanged; message text is not part of the
+  compatibility contract.
 
 ## [1.2.1] - 2026-10-12
 
@@ -950,7 +975,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.4...v1.2.0
 [1.1.4]: https://github.com/dbsmedya/dbsgomysql/compare/v1.1.3...v1.1.4

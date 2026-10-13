@@ -10,8 +10,8 @@ import (
 
 var (
 	// errUnexpectedNULL means the server sent SQL NULL for a column that is
-	// never NULL. Only Seconds_Behind_Source may be NULL; every other promised
-	// column fails closed rather than fabricating a zero value.
+	// never NULL. Only Seconds_Behind_Source and MEMBER_PORT may be NULL; every
+	// other promised column fails closed rather than fabricating a zero value.
 	errUnexpectedNULL = errors.New("unexpected NULL")
 	// errValueOutOfRange means a decoded number does not fit the field it was
 	// read into, or is negative where the field is unsigned.
@@ -202,12 +202,12 @@ func float64ToUint64(value float64) (uint64, error) {
 	return uint64(value), nil
 }
 
-// decodeNullSeconds reads the one promised column that may be NULL,
-// Seconds_Behind_Source. An invalid result is reachable only through a driver
-// nil: every other input either decodes to a valid value or returns an error,
-// so a consumer reading Valid false learns that the server sent SQL NULL and
-// nothing else.
-func decodeNullSeconds(value any) (sql.NullInt64, error) {
+// decodeNullInt64 reads a promised column that may be NULL:
+// Seconds_Behind_Source and MEMBER_PORT. An invalid result is reachable only
+// through a driver nil: every other input either decodes to a valid value or
+// returns an error, so a consumer reading Valid false learns that the server
+// sent SQL NULL and nothing else.
+func decodeNullInt64(value any) (sql.NullInt64, error) {
 	if value == nil {
 		return sql.NullInt64{}, nil
 	}

@@ -34,13 +34,16 @@ func CheckBinaryLogEnabled(enabled bool) []Finding {
 	}}
 }
 
-// CheckReplicationConfigured reports a finding when the server has no
-// replication channels at all.
+// CheckReplicationConfigured reports a finding when the supplied snapshot has
+// no asynchronous replication channel. A Group Replication member with no
+// asynchronous channel fires it too: ReplicaStatus omits the group's own
+// channels (docs/COMPAT.md entry 29), and CheckGroupReplicationLocalMemberOnline
+// is the check that asks whether a server is a running member.
 //
 // This is the check that makes an unconfigured server fail a replication gate:
 // the per-channel checks have nothing to report on an empty snapshot, so a
-// consumer that omits this one lets a server with no replication pass. That
-// applies equally to a snapshot filtered down to no channels.
+// consumer that omits this one lets a server with no asynchronous channel
+// pass. That applies equally to a snapshot filtered down to no channels.
 //
 // CheckReplicationConfigured is safe for concurrent use when channels is not
 // mutated concurrently.
@@ -51,7 +54,7 @@ func CheckReplicationConfigured(channels []ChannelStatus) []Finding {
 
 	return []Finding{{
 		Check:   IDReplicationConfigured,
-		Message: findingMessage(IDReplicationConfigured, "The server has no replication channels"),
+		Message: findingMessage(IDReplicationConfigured, "The server has no asynchronous replication channels"),
 		Facts:   channels,
 	}}
 }

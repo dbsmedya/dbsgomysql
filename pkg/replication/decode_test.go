@@ -29,7 +29,7 @@ func TestDecodeProvenance(t *testing.T) {
 	decodeUint32Any := adaptDecoder(decodeUint32)
 	decodeUint64Any := adaptDecoder(decodeUint64)
 	decodeBoolAny := adaptDecoder(decodeBool)
-	decodeNullSecondsAny := adaptDecoder(decodeNullSeconds)
+	decodeNullInt64Any := adaptDecoder(decodeNullInt64)
 
 	cases := []struct {
 		name            string
@@ -354,34 +354,34 @@ func TestDecodeProvenance(t *testing.T) {
 			wantErrContains: "float64",
 		},
 
-		// decodeNullSeconds.
+		// decodeNullInt64.
 		{
 			name:   "null seconds from NULL",
-			decode: decodeNullSecondsAny,
+			decode: decodeNullInt64Any,
 			input:  nil,
 			want:   sql.NullInt64{},
 		},
 		{
 			name:   "null seconds from bytes",
-			decode: decodeNullSecondsAny,
+			decode: decodeNullInt64Any,
 			input:  []byte("12"),
 			want:   sql.NullInt64{Int64: 12, Valid: true},
 		},
 		{
 			name:   "null seconds from zero",
-			decode: decodeNullSecondsAny,
+			decode: decodeNullInt64Any,
 			input:  int64(0),
 			want:   sql.NullInt64{Int64: 0, Valid: true},
 		},
 		{
 			name:            "null seconds from malformed text",
-			decode:          decodeNullSecondsAny,
+			decode:          decodeNullInt64Any,
 			input:           []byte("soon"),
 			wantErrContains: "malformed",
 		},
 		{
 			name:   "null seconds from integral float64",
-			decode: decodeNullSecondsAny,
+			decode: decodeNullInt64Any,
 			input:  float64(3),
 			want:   sql.NullInt64{Int64: 3, Valid: true},
 		},
@@ -419,18 +419,18 @@ func TestDecodeProvenance(t *testing.T) {
 	}
 }
 
-// TestDecodeNullSecondsProvenance pins the provenance guarantee: an invalid
+// TestDecodeNullInt64Provenance pins the provenance guarantee: an invalid
 // sql.NullInt64 is reachable only through a driver nil. Any other input either
 // decodes to a valid value or fails loudly.
-func TestDecodeNullSecondsProvenance(t *testing.T) {
+func TestDecodeNullInt64Provenance(t *testing.T) {
 	t.Parallel()
 
-	nullSeconds, err := decodeNullSeconds(nil)
+	nullSeconds, err := decodeNullInt64(nil)
 	if err != nil {
-		t.Fatalf("decodeNullSeconds(nil) returned error %v, want nil", err)
+		t.Fatalf("decodeNullInt64(nil) returned error %v, want nil", err)
 	}
 	if nullSeconds.Valid {
-		t.Errorf("decodeNullSeconds(nil) = %#v, want Valid false", nullSeconds)
+		t.Errorf("decodeNullInt64(nil) = %#v, want Valid false", nullSeconds)
 	}
 
 	nonNull := []any{
@@ -447,12 +447,12 @@ func TestDecodeNullSecondsProvenance(t *testing.T) {
 		struct{}{},
 	}
 	for _, input := range nonNull {
-		seconds, err := decodeNullSeconds(input)
+		seconds, err := decodeNullInt64(input)
 		if err != nil {
 			continue
 		}
 		if !seconds.Valid {
-			t.Errorf("decodeNullSeconds(%#v) = %#v, nil; a non-nil input must never yield Valid false",
+			t.Errorf("decodeNullInt64(%#v) = %#v, nil; a non-nil input must never yield Valid false",
 				input, seconds)
 		}
 	}
