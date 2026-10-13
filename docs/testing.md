@@ -220,8 +220,12 @@ no test may assume their absence.
 | `DBSGOMYSQL_TEST_GR_EXT_HOST` | gr-ext's hostname **as the members reach it** | `gr-ext` |
 | `DBSGOMYSQL_TEST_REQUIRE_GROUP_REPLICATION` | `1` in CI: a missing variable **fails** instead of skipping | `1` |
 
-The not-installed state is read on the `DBSGOMYSQL_TEST_DSN` standalone server.
-Setup is convergent: a member an earlier test left `OFFLINE` is started again.
+The not-installed state is read on the `DBSGOMYSQL_TEST_DSN` standalone server,
+so `DBSGOMYSQL_TEST_REQUIRE_GROUP_REPLICATION=1` requires that variable too.
+Setup is convergent: a member an earlier test left `OFFLINE` is started again,
+and one in `ERROR` is stopped and started again; a member that still does not
+return to `ONLINE` fails the test with the `down -v` instruction rather than
+waiting out the deadline.
 Shell steps against 9.7 use the client's `-E`, never `\G` inside `-e`: the 9.7
 client rejects it.
 
