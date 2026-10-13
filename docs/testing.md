@@ -91,8 +91,9 @@ Server 8.0.46-37, 8.4.10-10, and 9.7.1-1; the complete integration and E2E
 suites passed on all three. On 2026-08-19 all twelve servers of both Percona
 matrices reported Percona Server 8.0.46-37, 8.4.10-10, and 9.7.1-1, and the
 complete integration and E2E suites, including the `pkg/replication`
-source-replica layers, passed on every version. On 2026-10-12 the Group
-Replication layers passed on Percona Server 8.0.46-37, 8.4.11-11, and 9.7.1-1
+source-replica layers, passed on every version. On 2026-10-13 the Group
+Replication layers, including group members and member statistics, passed on
+Percona Server 8.0.46-37, 8.4.11-11, and 9.7.1-1
 with the same compose file, `GR_IMAGE=percona/percona-server:<v>` and the
 Percona port rows of [the Group Replication topology](#the-group-replication-topology),
 alongside the complete integration and E2E suites.
