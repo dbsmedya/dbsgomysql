@@ -21,12 +21,19 @@ const (
 //
 // A member is only fully synchronized with the group, and participating in it,
 // when it is ONLINE, so any other own state leaves both unestablished. An
-// empty view fails, never passes: a server without an active Group Replication plugin reports no rows,
-// and the other member checks have nothing to report on an empty slice. This
-// is the check that makes a server that is not a running member fail a Group
-// Replication gate, the way CheckReplicationConfigured does for asynchronous
-// channels. It guards the members input only; it says nothing about whether a
-// GroupMemberStats snapshot covers the members a gate relies on.
+// empty view fails, never passes: a server without an active Group
+// Replication plugin reports no rows, and the other member checks have
+// nothing to report on an empty slice. This is the check that makes a server
+// that is not a running member fail a Group Replication gate, the way
+// CheckReplicationConfigured does for asynchronous channels. It guards the
+// members input only; it says nothing about whether a GroupMemberStats
+// snapshot covers the members a gate relies on.
+//
+// An own ONLINE row does not prove the member is in the group's majority: an
+// expelled member "sees itself as online and the other members as
+// unreachable" (MySQL manual, "Responses to Failure Detection and Network
+// Partitioning"), and passes this check. CheckGroupReplicationMembersOnline is
+// the check that fires on those UNREACHABLE rows; a gate runs both.
 //
 // The single finding carries the whole slice supplied.
 //

@@ -42,8 +42,8 @@ func CheckBinaryLogEnabled(enabled bool) []Finding {
 //
 // This is the check that makes an unconfigured server fail a replication gate:
 // the per-channel checks have nothing to report on an empty snapshot, so a
-// consumer that omits this one lets a server with no replication pass. That
-// applies equally to a snapshot filtered down to no channels.
+// consumer that omits this one lets a server with no asynchronous channel
+// pass. That applies equally to a snapshot filtered down to no channels.
 //
 // CheckReplicationConfigured is safe for concurrent use when channels is not
 // mutated concurrently.
