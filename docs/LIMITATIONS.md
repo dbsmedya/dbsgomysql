@@ -19,7 +19,7 @@ The supported distributions are deliberately narrow:
 | Distribution | Status | Current evidence |
 |---|---|---|
 | Oracle MySQL, self-managed or official container images | Supported from 8.0.40 | This repository directly tests the current 8.0, 8.4, and 9.7 lines. Exact resolved versions are recorded in [COMPAT.md](COMPAT.md)'s introduction. |
-| Percona Server for MySQL | Supported | This repository directly passes its integration and E2E suites on the official 8.0, 8.4, and 9.7 image lines. On 2026-08-19 all twelve servers of both Percona matrices reported Percona Server 8.0.46-37, 8.4.10-10, and 9.7.1-1, and the complete integration and E2E suites, including the `pkg/replication` source-replica layers, passed on every version. The reproducible local matrices are [`tests/docker/compose_percona.yml`](../tests/docker/compose_percona.yml) and [`tests/docker/compose_percona_replication.yml`](../tests/docker/compose_percona_replication.yml). |
+| Percona Server for MySQL | Supported | This repository directly passes its integration and E2E suites on the official 8.0, 8.4, and 9.7 image lines. On 2026-08-19 all twelve servers of both Percona matrices reported Percona Server 8.0.46-37, 8.4.10-10, and 9.7.1-1, and the complete integration and E2E suites, including the `pkg/replication` source-replica layers, passed on every version. On 2026-10-12 the Group Replication layers passed on Percona Server 8.0.46-37, 8.4.11-11, and 9.7.1-1 with the same compose file as the Oracle matrix, [`tests/docker/compose_group_replication.yaml`](../tests/docker/compose_group_replication.yaml), run with `GR_IMAGE=percona/percona-server:<v>`. The reproducible local matrices are [`tests/docker/compose_percona.yml`](../tests/docker/compose_percona.yml) and [`tests/docker/compose_percona_replication.yml`](../tests/docker/compose_percona_replication.yml). |
 | Google Cloud SQL for MySQL | **Not yet tested; support not claimed** | Google documents `PROCESS` as available through its MySQL privilege model, but this repository has not run its integration or E2E suites against Cloud SQL. |
 | Amazon RDS for MySQL | **Not yet tested; support not claimed** | AWS documents `PROCESS` for RDS for MySQL administrative users and roles, but this repository has not run its integration or E2E suites against RDS. |
 | MariaDB | **Not supported** | MariaDB compatibility is neither claimed nor tested. |
@@ -165,6 +165,10 @@ observe the other end of a channel.
   was renamed across the supported range (entry 20).
 - Every check fails closed on any value other than the exact proven one (`Yes`,
   `ON`), so a new server state is a finding, not a silent pass.
+- On a Group Replication member, `ReplicaStatus` lists no group channel, and
+  `RegisteredReplicas` on a donor can list members that recovered from it;
+  `GroupReplication`'s group name proves configuration, not membership
+  (entries 29, 30, 33).
 
 ## Consistency across statements and calls
 

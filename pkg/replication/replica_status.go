@@ -6,9 +6,10 @@ import (
 	"errors"
 )
 
-// sqlReplicaStatus reads every replication channel this server applies. The
-// statement spelling exists on every supported version (docs/COMPAT.md entry
-// 6), so no version branch is involved.
+// sqlReplicaStatus reads every channel SHOW REPLICA STATUS lists. On a Group
+// Replication member that excludes the group's own channels (docs/COMPAT.md
+// entry 29). The statement spelling exists on every supported version
+// (docs/COMPAT.md entry 6), so no version branch is involved.
 const sqlReplicaStatus = "SHOW REPLICA STATUS"
 
 // Promised columns of SHOW REPLICA STATUS. Columns the server reports beyond
@@ -76,9 +77,11 @@ type ChannelStatus struct {
 	SourcePort uint16 `json:"source_port"`
 }
 
-// ReplicaStatus reports one ChannelStatus per replication channel, in the
-// order the server returned them. A server that is not a replica returns an
-// empty slice and no error: having no channels is an answer, not a failure.
+// ReplicaStatus reports one ChannelStatus per channel SHOW REPLICA STATUS
+// lists, in the order the server returned them. On a Group Replication member
+// that excludes the group's own channels (docs/COMPAT.md entry 29). A server
+// with no such channel returns an empty slice and no error: having no channels
+// is an answer, not a failure.
 //
 // The returned slice is owned by the caller and built fresh per call.
 //

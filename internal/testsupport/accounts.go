@@ -96,7 +96,15 @@ func CreateMySQLRole(t *testing.T, admin *sql.DB, prefix string) MySQLAccount {
 func MySQLDBAs(t *testing.T, account MySQLAccount) *sql.DB {
 	t.Helper()
 
-	cfg := accountDSN(t, account)
+	return MySQLDBAsOn(t, os.Getenv("DBSGOMYSQL_TEST_DSN"), account)
+}
+
+// MySQLDBAsOn opens and registers a database authenticated as account on the
+// server baseDSN reaches, keeping baseDSN's address and driver settings.
+func MySQLDBAsOn(t *testing.T, baseDSN string, account MySQLAccount) *sql.DB {
+	t.Helper()
+
+	cfg := accountDSNFrom(t, baseDSN, account)
 	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		t.Fatalf("open database as %s: %v", quoteAccount(account.User, account.Host), err)
@@ -137,10 +145,10 @@ func GrantAccountSQL(account MySQLAccount) string {
 	return quoteAccount(account.User, account.Host)
 }
 
-func accountDSN(t *testing.T, account MySQLAccount) *mysql.Config {
+func accountDSNFrom(t *testing.T, baseDSN string, account MySQLAccount) *mysql.Config {
 	t.Helper()
 
-	cfg, err := mysql.ParseDSN(os.Getenv("DBSGOMYSQL_TEST_DSN"))
+	cfg, err := mysql.ParseDSN(baseDSN)
 	if err != nil {
 		t.Fatalf("parse MySQL test DSN: %v", err)
 	}

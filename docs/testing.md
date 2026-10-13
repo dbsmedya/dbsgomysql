@@ -91,7 +91,11 @@ Server 8.0.46-37, 8.4.10-10, and 9.7.1-1; the complete integration and E2E
 suites passed on all three. On 2026-08-19 all twelve servers of both Percona
 matrices reported Percona Server 8.0.46-37, 8.4.10-10, and 9.7.1-1, and the
 complete integration and E2E suites, including the `pkg/replication`
-source-replica layers, passed on every version.
+source-replica layers, passed on every version. On 2026-10-12 the Group
+Replication layers passed on Percona Server 8.0.46-37, 8.4.11-11, and 9.7.1-1
+with the same compose file, `GR_IMAGE=percona/percona-server:<v>` and the
+Percona port rows of [the Group Replication topology](#the-group-replication-topology),
+alongside the complete integration and E2E suites.
 Percona is a supported distribution, but this local matrix is not currently
 part of the GitHub Actions gate. See [LIMITATIONS.md](LIMITATIONS.md) for the
 complete distribution-support scope.
@@ -175,6 +179,51 @@ The topology is disposable. Reset it with:
 docker compose -f tests/docker/compose_replication.yaml down -v
 ```
 
+## The Group Replication topology
+
+`tests/docker/compose_group_replication.yaml` runs a three-member
+single-primary InnoDB Cluster, built by its `gr-bootstrap.sh` with the MySQL
+Shell AdminAPI that ships in every supported image, plus three standalone
+servers: one with the plugin `ACTIVE` and never configured, one with it
+`DISABLED`, and a GTID source a test replicates into the primary. One file
+serves every image: choose it with `GR_IMAGE` and the host ports with the
+`GR_PORT_*` variables, and give each run its own project name.
+
+```sh
+GR_IMAGE=mysql:8.4 docker compose -p gr84 \
+  -f tests/docker/compose_group_replication.yaml up -d --wait --wait-timeout 300
+```
+
+| Image | gr1 (primary) | gr2 | gr3 (rejoiner) | installed | disabled | ext |
+|---|---|---|---|---|---|---|
+| `mysql:8.0` | 4180 | 4280 | 4380 | 4780 | 4880 | 4980 |
+| `mysql:8.4` (defaults) | 4184 | 4284 | 4384 | 4784 | 4884 | 4984 |
+| `mysql:9.7` | 4197 | 4297 | 4397 | 4797 | 4897 | 4997 |
+| `percona/percona-server:8.0` | 4480 | 4580 | 4680 | 5080 | 5180 | 5280 |
+| `percona/percona-server:8.4` | 4484 | 4584 | 4684 | 5084 | 5184 | 5284 |
+| `percona/percona-server:9.7` | 4497 | 4597 | 4697 | 5097 | 5197 | 5297 |
+
+`up --wait` returns when gr1–gr3 each report themselves `ONLINE`. The topology
+is disposable: after any failure, `down -v` and start again. AdminAPI adds the
+`mysql_innodb_cluster_metadata` schema and `mysql_innodb_cluster_*` accounts;
+no test may assume their absence.
+
+| Variable | Server | 8.4 local value |
+|---|---|---|
+| `DBSGOMYSQL_TEST_GR_PRIMARY_DSN` | gr1 | `root:root@tcp(127.0.0.1:4184)/` |
+| `DBSGOMYSQL_TEST_GR_SECONDARY_DSN` | gr2 | `root:root@tcp(127.0.0.1:4284)/` |
+| `DBSGOMYSQL_TEST_GR_REJOINER_DSN` | gr3, which the held-recovery test stops and rejoins | `root:root@tcp(127.0.0.1:4384)/` |
+| `DBSGOMYSQL_TEST_GR_INSTALLED_DSN` | gr-installed | `root:root@tcp(127.0.0.1:4784)/` |
+| `DBSGOMYSQL_TEST_GR_DISABLED_DSN` | gr-disabled | `root:root@tcp(127.0.0.1:4884)/` |
+| `DBSGOMYSQL_TEST_GR_EXT_DSN` | gr-ext | `root:root@tcp(127.0.0.1:4984)/` |
+| `DBSGOMYSQL_TEST_GR_EXT_HOST` | gr-ext's hostname **as the members reach it** | `gr-ext` |
+| `DBSGOMYSQL_TEST_REQUIRE_GROUP_REPLICATION` | `1` in CI: a missing variable **fails** instead of skipping | `1` |
+
+The not-installed state is read on the `DBSGOMYSQL_TEST_DSN` standalone server.
+Setup is convergent: a member an earlier test left `OFFLINE` is started again.
+Shell steps against 9.7 use the client's `-E`, never `\G` inside `-e`: the 9.7
+client rejects it.
+
 ## Fixtures
 
 `tests/fixtures/` holds repository-owned seed schemas. The validations fixture
@@ -219,8 +268,8 @@ another project's test infrastructure in place.
 
 | Workflow | Trigger | What runs |
 |---|---|---|
-| `ci.yml` | every push and pull request | `make check` without a database, plus MySQL 8.4 smoke against a standalone server and the 8.4 replication trio |
-| `integration.yml` | version tags, manual dispatch, or the `run-integration` PR label | the full Oracle MySQL 8.0 / 8.4 / 9.7 matrix, each version with its own replication trio |
+| `ci.yml` | every push and pull request | `make check` without a database, plus MySQL 8.4 smoke against a standalone server and the 8.4 replication trio, and the 8.4 Group Replication topology |
+| `integration.yml` | version tags, manual dispatch, or the `run-integration` PR label | the full Oracle MySQL 8.0 / 8.4 / 9.7 matrix, each version with its own replication trio, and its Group Replication topology |
 
 Smoke runs on every push so every fact and check gets a real-server go/no-go.
 The full three-version integration and E2E matrix remains off the per-push path

@@ -91,6 +91,15 @@ jobs:
       # A skipped replication test is not evidence. With this set, a missing
       # DSN fails the job instead of quietly reducing what ran.
       DBSGOMYSQL_TEST_REQUIRE_REPLICATION: "1"
+      GR_IMAGE: mysql:8.4
+      DBSGOMYSQL_TEST_GR_PRIMARY_DSN: "root:root@tcp(127.0.0.1:4184)/"
+      DBSGOMYSQL_TEST_GR_SECONDARY_DSN: "root:root@tcp(127.0.0.1:4284)/"
+      DBSGOMYSQL_TEST_GR_REJOINER_DSN: "root:root@tcp(127.0.0.1:4384)/"
+      DBSGOMYSQL_TEST_GR_INSTALLED_DSN: "root:root@tcp(127.0.0.1:4784)/"
+      DBSGOMYSQL_TEST_GR_DISABLED_DSN: "root:root@tcp(127.0.0.1:4884)/"
+      DBSGOMYSQL_TEST_GR_EXT_DSN: "root:root@tcp(127.0.0.1:4984)/"
+      DBSGOMYSQL_TEST_GR_EXT_HOST: gr-ext
+      DBSGOMYSQL_TEST_REQUIRE_GROUP_REPLICATION: "1"
 
     steps:
       - name: Checkout
@@ -114,11 +123,15 @@ jobs:
           docker compose -f tests/docker/compose_replication.yaml up -d --wait \
             repl84-source repl84-replica repl84-silent
 
+      - name: Start the group replication topology
+        run: |
+          docker compose -p gr84 -f tests/docker/compose_group_replication.yaml up -d --wait --wait-timeout 300
+
       # Moving-tag evidence: mysql:8.4 is a moving tag, so the run records
       # which releases it actually tested against.
       - name: Record topology server versions
         run: |
-          for p in 3584 3684 3784; do
+          for p in 3584 3684 3784 4184 4784 4884 4984; do
             mysql -h 127.0.0.1 -P "$p" -uroot -proot -e 'SELECT VERSION();'
           done
 
@@ -128,3 +141,7 @@ jobs:
       - name: Dump replication topology logs
         if: failure()
         run: docker compose -f tests/docker/compose_replication.yaml logs --no-color
+
+      - name: Dump group replication topology logs
+        if: failure()
+        run: docker compose -p gr84 -f tests/docker/compose_group_replication.yaml logs --no-color
