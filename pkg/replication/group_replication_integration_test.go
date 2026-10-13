@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -31,8 +32,9 @@ const (
 	grSQLShowGroupName         = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'"
 	grSQLRecoveryConnection    = "SELECT SERVICE_STATE FROM performance_schema.replication_connection_status " +
 		"WHERE CHANNEL_NAME = 'group_replication_recovery'"
-	grSQLExecuted = "SELECT @@GLOBAL.gtid_executed"
-	grSQLWaitFor  = "SELECT WAIT_FOR_EXECUTED_GTID_SET(?, 60)"
+	grSQLExecuted     = "SELECT @@GLOBAL.gtid_executed"
+	grSQLWaitFor      = "SELECT WAIT_FOR_EXECUTED_GTID_SET(?, 60)"
+	grSQLShowReplicas = "SHOW REPLICAS"
 
 	// Server error numbers these pins assert, from the MySQL error reference.
 	erUnknownSystemVariable = 1193 // ER_UNKNOWN_SYSTEM_VARIABLE
@@ -51,7 +53,7 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
 	t.Run("not installed", func(t *testing.T) {
-		admin, _ := testsupport.MySQLDatabase(t, "grabsent")
+		admin, _ := testsupport.GroupReplicationStandalone(t, "grabsent")
 		account := testsupport.CreateMySQLAccount(t, admin, "grabsent")
 		usage := testsupport.MySQLDBAs(t, account)
 
@@ -75,6 +77,12 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 		usage := testsupport.MySQLDBAsOn(t, topology.InstalledDSN, account)
 
 		assertGroupReplication(t, usage, replication.GroupReplication{PluginStatus: grPluginOn})
+		// The fact reads "" from one row with an empty value here, and from
+		// zero rows on the two states above; only the raw count tells them
+		// apart.
+		if rows := countRows(t, usage, grSQLShowGroupName); rows != 1 {
+			t.Errorf("an ACTIVE, unnamed plugin's variable: %d rows, want 1 (registered, empty)", rows)
+		}
 	})
 
 	t.Run("cluster member", func(t *testing.T) {
@@ -132,6 +140,19 @@ func TestCompat29And33HeldRecoveryIntegration(t *testing.T) {
 
 	rejoiner := testsupport.ServerUUID(t, topology.Rejoiner)
 
+	// A registration left by an earlier run lasts as long as its donor's dump
+	// thread (COMPAT entry 33). Waiting it out first means the registration
+	// asserted below is this run's.
+	testsupport.PollUntil(t, "no donor still lists the rejoiner from an earlier run", func() (bool, string) {
+		for role, db := range map[string]*sql.DB{"primary": topology.Primary, "secondary": topology.Secondary} {
+			if registers(t, db, rejoiner) || rawRegisters(t, db, rejoiner) {
+				return false, "the " + role + " lists " + rejoiner
+			}
+		}
+
+		return true, ""
+	})
+
 	// Registered before the stop, so a failure anywhere below still returns
 	// the group to all-ONLINE for the next test.
 	t.Cleanup(func() { testsupport.EnsureGroupOnline(t, topology) })
@@ -180,10 +201,11 @@ func TestCompat29And33HeldRecoveryIntegration(t *testing.T) {
 	}
 
 	donor := ""
+	var donorDB *sql.DB
 	testsupport.PollUntil(t, "a donor registers the rejoiner", func() (bool, string) {
 		for role, db := range map[string]*sql.DB{"primary": topology.Primary, "secondary": topology.Secondary} {
 			if registers(t, db, rejoiner) {
-				donor = role
+				donor, donorDB = role, db
 
 				return true, role
 			}
@@ -191,6 +213,9 @@ func TestCompat29And33HeldRecoveryIntegration(t *testing.T) {
 
 		return false, "no donor lists " + rejoiner
 	})
+	if !rawRegisters(t, donorDB, rejoiner) {
+		t.Errorf("the %s's raw SHOW REPLICAS does not list %s, though RegisteredReplicas does", donor, rejoiner)
+	}
 
 	unlock()
 	testsupport.WaitMemberState(t, topology.Rejoiner, testsupport.MemberOnline)
@@ -339,6 +364,50 @@ func registers(t *testing.T, db *sql.DB, replicaUUID string) bool {
 	}
 
 	return false
+}
+
+// rawRegisters reports whether db's raw SHOW REPLICAS lists replicaUUID,
+// reading Replica_UUID by name, independently of the library's decoder.
+func rawRegisters(t *testing.T, db *sql.DB, replicaUUID string) bool {
+	t.Helper()
+
+	ctx, cancel := statementContext(t)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, grSQLShowReplicas)
+	if err != nil {
+		t.Fatalf("%s: %v", grSQLShowReplicas, err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("%s columns: %v", grSQLShowReplicas, err)
+	}
+	uuidAt := slices.Index(columns, "Replica_UUID")
+	if uuidAt < 0 {
+		t.Fatalf("%s has no Replica_UUID column: %v", grSQLShowReplicas, columns)
+	}
+
+	found := false
+	values := make([]sql.RawBytes, len(columns))
+	targets := make([]any, len(columns))
+	for index := range values {
+		targets[index] = &values[index]
+	}
+	for rows.Next() {
+		if err := rows.Scan(targets...); err != nil {
+			t.Fatalf("scan %s: %v", grSQLShowReplicas, err)
+		}
+		if string(values[uuidAt]) == replicaUUID {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate %s: %v", grSQLShowReplicas, err)
+	}
+
+	return found
 }
 
 // grStatementTimeout bounds each statement the helpers below issue. They also

@@ -1630,9 +1630,11 @@ Schema privilege the fact does not require. The consumer guide describes
 matching against current members as an optional filter, not a classifier.
 Delivered in **v1.3.0** as documentation, pinned by
 [`TestCompat29And33HeldRecoveryIntegration`](../pkg/replication/group_replication_integration_test.go),
-which holds the member in recovery and requires a donor to list it. How long
-the row survives afterwards is measured, not pinned, because the dump
-thread's exit decides it.
+which first waits until no donor still lists the member from an earlier run,
+then holds the member in recovery and requires a donor to list it, through
+the fact and the raw `SHOW REPLICAS` alike. How long the row survives
+afterwards is measured, not pinned, because the dump thread's exit decides
+it.
 
 **Reference:** measured, 2026-10-12, all six servers; the row's lifetime after
 `ONLINE` re-measured the same day on Oracle 8.4.11 (present 30 s after

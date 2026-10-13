@@ -97,7 +97,7 @@ func TestCompat31And32GroupTablesByStateIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
 	t.Run("no active plugin", func(t *testing.T) {
-		standalone, _ := testsupport.MySQLDatabase(t, "grnoplugin")
+		standalone, _ := testsupport.GroupReplicationStandalone(t, "grnoplugin")
 
 		for role, db := range map[string]*sql.DB{"not installed": standalone, "disabled": topology.Disabled} {
 			members := groupMembers(t, db)
