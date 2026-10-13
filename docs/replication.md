@@ -254,12 +254,17 @@ findings := replication.CheckGroupReplicationLocalMemberOnline(members)
 findings = append(findings, replication.CheckGroupReplicationMembersOnline(members)...)
 findings = append(findings, replication.CheckGroupReplicationApplierQueueWithin(stats, 100)...)
 findings = append(findings, replication.CheckGroupReplicationCertifierQueueWithin(stats, 100)...)
+if len(findings) > 0 {
+    return gateFailed(findings) // act on findings first
+}
 
-// The checks pass an empty stats slice, one missing a member, and a stopped
-// member's own row of zeros. Require, for every member you gate on — this
-// one included — a stats row with its MemberID and a non-empty ViewID, and
-// treat anything else as unavailable data under your own policy (retry,
-// pause). runningStatsRow and errNoRunningStats are yours to write.
+// No findings: every member in this view is ONLINE, this server's own row
+// among them. The checks still pass an empty stats slice, one missing a
+// member, and a stopped member's own row of zeros. Require, for every member
+// you gate on — this one included — a stats row with its MemberID and a
+// non-empty ViewID, and treat anything else as unavailable data under your
+// own policy (retry, pause). runningStatsRow, gateFailed and
+// errNoRunningStats are yours to write.
 for _, member := range members {
     if !runningStatsRow(stats, member.MemberID) {
         return errNoRunningStats(member.MemberID)
@@ -271,6 +276,16 @@ for _, member := range members {
   it, a server that is not a running member — no plugin, never started,
   stopped — passes: the other checks have nothing to iterate. It guards the
   members input only.
+- **Act on findings before the coverage rule.** A stopped or never-started
+  server has no running stats row either, so checking coverage first would
+  report it as unavailable data to retry on, rather than as the finding that
+  it is not a running member.
+- **An own `ONLINE` row does not prove this member is in the majority.** An
+  expelled member "sees itself as online and the other members as
+  unreachable" (refman 8.4, "Responses to Failure Detection and Network
+  Partitioning"), so `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE` passes it;
+  `GROUP_REPLICATION_MEMBERS_ONLINE` is what fires on those `UNREACHABLE`
+  rows. Run both.
 - **Members and stats are separate reads**, and the stats are periodic
   copies, so they are two observations, not one snapshot. A members read can
   show a member `ONLINE` a moment before the stats read finds it stopped —

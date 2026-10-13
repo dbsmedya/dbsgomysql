@@ -2,6 +2,7 @@ package replication
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"reflect"
 	"strings"
@@ -343,6 +344,67 @@ func TestGroupReplicationGateComposition(t *testing.T) {
 			t.Errorf("gate = %#v, want exactly one %s finding", findings, IDGroupReplicationLocalMemberOnline)
 		}
 	})
+}
+
+// errNoRunningStats stands in for the consumer's own error in the gate recipe.
+var errNoRunningStats = errors.New("no running stats row for a gated member")
+
+// TestGroupReplicationGateRecipeOrder pins the order of the documented gate
+// recipe (docs/replication.md, "Gating on a group"): findings are acted on
+// before the coverage rule, so a server that is not a running member is
+// reported as the LOCAL_MEMBER_ONLINE finding, never as unavailable stats a
+// consumer would retry on. recipe mirrors the documented snippet line for line.
+func TestGroupReplicationGateRecipeOrder(t *testing.T) {
+	t.Parallel()
+
+	recipe := func(members []GroupMember, stats []GroupMemberStats) ([]Finding, error) {
+		findings := CheckGroupReplicationLocalMemberOnline(members)
+		findings = append(findings, CheckGroupReplicationMembersOnline(members)...)
+		findings = append(findings, CheckGroupReplicationApplierQueueWithin(stats, 100)...)
+		findings = append(findings, CheckGroupReplicationCertifierQueueWithin(stats, 100)...)
+		if len(findings) > 0 {
+			return findings, nil
+		}
+
+		for index := range members {
+			if !runningStatsRow(stats, members[index].MemberID) {
+				return nil, errNoRunningStats
+			}
+		}
+
+		return findings, nil
+	}
+
+	cases := []struct {
+		name    string
+		members []GroupMember
+		stats   []GroupMemberStats
+	}{
+		{
+			name:    "stopped after participating",
+			members: []GroupMember{memberInState(testMemberA, testStateOffline, true)},
+			stats:   []GroupMemberStats{{ChannelName: testApplierChannel, MemberID: testMemberA, Self: true}},
+		},
+		{
+			name:    "never started on 8.0 or 8.4",
+			members: []GroupMember{{ChannelName: testApplierChannel, State: testStateOffline}},
+			stats:   []GroupMemberStats{{ChannelName: testApplierChannel}},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			findings, err := recipe(testCase.members, testCase.stats)
+			if err != nil {
+				t.Fatalf("recipe returned error %v, want the %s finding: a server that is not a running member "+
+					"is a finding, not unavailable data", err, IDGroupReplicationLocalMemberOnline)
+			}
+			if len(findings) == 0 || findings[0].Check != IDGroupReplicationLocalMemberOnline {
+				t.Errorf("recipe = %#v, want a %s finding first", findings, IDGroupReplicationLocalMemberOnline)
+			}
+		})
+	}
 }
 
 func TestGroupReplicationFindingJSON(t *testing.T) {
