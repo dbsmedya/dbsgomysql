@@ -173,7 +173,7 @@ func decodeChannelStatus(index columnIndex, values []any) (ChannelStatus, error)
 		return ChannelStatus{}, err
 	}
 	if err := decodeColumn(
-		row, colSecondsBehindSource, decodeNullSeconds, &channel.SecondsBehindSource,
+		row, colSecondsBehindSource, decodeNullInt64, &channel.SecondsBehindSource,
 	); err != nil {
 		return ChannelStatus{}, err
 	}

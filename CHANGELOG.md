@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Group Replication channel on a member, also while it is `RECOVERING`, and
   still reports an ordinary async channel on one; distributed recovery
   registers the recovering member on its donor (COMPAT entries 29 and 33).
+- `replication.Inspector.GroupMembers` reads
+  `performance_schema.replication_group_members`: this member's view of its
+  group — each member's state, role, version and communication stack, and
+  which row is the queried server (`Self`, computed by the server). Needs
+  `SELECT` on that table (COMPAT entry 31).
 
 ### Changed
 
