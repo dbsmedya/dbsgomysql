@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE`'s finding summary for a view with
+  no row identified as this server now reads "No row of this server's group
+  view is identified as this server": an 8.0 or 8.4 server that never started
+  Group Replication does report a row of its own, just an anonymous one.
+  Message text is not part of the compatibility contract.
+- `docs/replication.md` says that `GroupMembers` and `GroupMemberStats` decode
+  errors name the member (`member <uuid>: ` in the cause), and that both facts
+  return one value per row, normally one per member.
+
 ## [1.4.0] - 2026-10-14
 
 ### Added

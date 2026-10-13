@@ -91,8 +91,8 @@ func waitForFullView(t *testing.T, role string, db *sql.DB, ids map[string]strin
 }
 
 // TestCompat31And32GroupTablesByStateIntegration pins both tables in every
-// state spec §4.1 and §4.2 record, through the shipped facts and the raw
-// tables, and runs the member checks over each state.
+// state docs/COMPAT.md entries 31 and 32 record, through the shipped facts and
+// the raw tables, and runs the member checks over each state.
 func TestCompat31And32GroupTablesByStateIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 

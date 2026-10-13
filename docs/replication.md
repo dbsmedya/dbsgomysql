@@ -84,19 +84,19 @@ Every call takes a `context.Context` first and returns `(fact, error)`.
 | `ReplicationConfig(ctx)` | five `@@GLOBAL` variables | — | read-only state, server id, applier configuration |
 | `RegisteredReplicas(ctx)` | `SHOW REPLICAS` | **`REPLICATION SLAVE`** | which replicas have registered with this source |
 | `GroupReplication(ctx)` | `information_schema.PLUGINS`, then `performance_schema.global_variables` | — | is the Group Replication plugin active, and which group name is configured? |
-| `GroupMembers(ctx)` | `performance_schema.replication_group_members` | **`SELECT` on that table** | this member's view of its group: one `GroupMember` per member |
-| `GroupMemberStats(ctx)` | `performance_schema.replication_group_member_stats` | **`SELECT` on that table** | the certification and applier counters this member holds, one `GroupMemberStats` per member |
+| `GroupMembers(ctx)` | `performance_schema.replication_group_members` | **`SELECT` on that table** | this member's view of its group: one `GroupMember` per row, normally one per member |
+| `GroupMemberStats(ctx)` | `performance_schema.replication_group_member_stats` | **`SELECT` on that table** | the certification and applier counters this member holds, one `GroupMemberStats` per row, normally one per member |
 
 The three variable facts read global system variables, and
 `GroupReplication` needs no privilege beyond connecting either. The other
 statement-backed facts carry a documented privilege requirement, and
-`RegisteredReplicas` needs a *different* grant from the other two:
-`REPLICATION SLAVE`, not `REPLICATION CLIENT`. `GroupMembers` and
-`GroupMemberStats` each need `SELECT` on their own Performance Schema table,
-which neither of those grants gives. An account that can read every status
-fact can still be refused there, and that refusal arrives as an error, never
-as an empty list. `GroupReplication` reads Performance Schema too, but only
-`global_variables`, which a USAGE-only account can read
+`RegisteredReplicas` needs a *different* grant from `ReplicaStatus` and
+`BinaryLogStatus`: `REPLICATION SLAVE`, not `REPLICATION CLIENT`.
+`GroupMembers` and `GroupMemberStats` each need `SELECT` on their own
+Performance Schema table, which neither of those grants gives. An account that
+can read every status fact can still be refused there, and that refusal arrives
+as an error, never as an empty list. `GroupReplication` reads Performance
+Schema too, but only `global_variables`, which a USAGE-only account can read
 ([COMPAT.md](COMPAT.md) entry 30).
 
 ```go
@@ -549,6 +549,12 @@ if errors.As(err, &opErr) {
         opErr.Op, opErr.Channel, opErr.Column, opErr.Unwrap())
 }
 ```
+
+`GroupMembers` and `GroupMemberStats` rows all share one channel, so a decode
+failure after a row's `MEMBER_ID` has decoded also names that member: the
+cause begins `member <uuid>: `. `OpError` gains no field for it, and
+`errors.Is` and `errors.As` still reach the underlying cause. A failure on an
+anonymous row, or on `MEMBER_ID` itself, names no member.
 
 `BinaryLogStatus` is the one fact that may issue two statements, because the
 statement's name differs across the supported range. When both fail, the

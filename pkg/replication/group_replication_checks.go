@@ -11,8 +11,10 @@ const (
 	// finding.
 	memberOnline = "ONLINE"
 	// summaryNoOwnRow is CheckGroupReplicationLocalMemberOnline's summary when
-	// no row of the view describes the queried server.
-	summaryNoOwnRow = "This server has no row of its own in its group view"
+	// no row of the view is identified as the queried server: an empty view,
+	// or the anonymous row an 8.0 or 8.4 server reports before Group
+	// Replication was ever started on it.
+	summaryNoOwnRow = "No row of this server's group view is identified as this server"
 )
 
 // CheckGroupReplicationLocalMemberOnline reports a finding unless the supplied
@@ -69,8 +71,8 @@ func CheckGroupReplicationLocalMemberOnline(members []GroupMember) []Finding {
 // be the one cut off. The check describes the supplied view only. A member
 // that left the group is absent from every other member's view rather than
 // listed OFFLINE, so the check cannot prove the group's configured size or its
-// fault tolerance. An empty slice produces no findings: detecting a server that is
-// not a running member is CheckGroupReplicationLocalMemberOnline's job.
+// fault tolerance. An empty slice produces no findings: detecting a server
+// that is not a running member is CheckGroupReplicationLocalMemberOnline's job.
 //
 // Each finding carries the member's whole GroupMember.
 //
