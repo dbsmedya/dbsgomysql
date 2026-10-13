@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `performance_schema.replication_group_member_stats`: each member's
   certification and applier queues and counters, as this member holds them.
   Needs `SELECT` on that table (COMPAT entry 32).
+- Four Group Replication checks: `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE`,
+  `GROUP_REPLICATION_MEMBERS_ONLINE`, `GROUP_REPLICATION_APPLIER_QUEUE_WITHIN`
+  and `GROUP_REPLICATION_CERTIFIER_QUEUE_WITHIN`, with a documented gate
+  recipe. An empty member view fails the local check; the queue bounds are
+  the caller's and are never clamped.
 
 ### Changed
 

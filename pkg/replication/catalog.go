@@ -6,15 +6,23 @@ import "strconv"
 // of these values, so they are part of the compatibility contract: consumers
 // branch on them rather than on message text.
 const (
-	IDBinaryLogEnabled           = "BINARY_LOG_ENABLED"
-	IDGTIDModeOn                 = "GTID_MODE_ON"
-	IDReplicationChannelsRunning = "REPLICATION_CHANNELS_RUNNING"
-	IDReplicationConfigured      = "REPLICATION_CONFIGURED"
-	IDSecondsBehindSourceWithin  = "SECONDS_BEHIND_SOURCE_WITHIN"
+	IDBinaryLogEnabled                     = "BINARY_LOG_ENABLED"
+	IDGroupReplicationApplierQueueWithin   = "GROUP_REPLICATION_APPLIER_QUEUE_WITHIN"
+	IDGroupReplicationCertifierQueueWithin = "GROUP_REPLICATION_CERTIFIER_QUEUE_WITHIN"
+	IDGroupReplicationLocalMemberOnline    = "GROUP_REPLICATION_LOCAL_MEMBER_ONLINE"
+	IDGroupReplicationMembersOnline        = "GROUP_REPLICATION_MEMBERS_ONLINE"
+	IDGTIDModeOn                           = "GTID_MODE_ON"
+	IDReplicationChannelsRunning           = "REPLICATION_CHANNELS_RUNNING"
+	IDReplicationConfigured                = "REPLICATION_CONFIGURED"
+	IDSecondsBehindSourceWithin            = "SECONDS_BEHIND_SOURCE_WITHIN"
 )
 
-// phaseV110 is the release that delivered every check in this catalog.
-const phaseV110 = "v1.1.0"
+// The releases that delivered the checks in this catalog: the asynchronous
+// checks in v1.1.0, the Group Replication checks in v1.3.0.
+const (
+	phaseV110 = "v1.1.0"
+	phaseV130 = "v1.3.0"
+)
 
 // CheckStatus records whether a cataloged check is callable in this release.
 // The zero value is not a valid status, so an unpopulated CheckInfo is
@@ -71,6 +79,10 @@ type CheckInfo struct {
 func Catalog() []CheckInfo {
 	return []CheckInfo{
 		checkInfo(IDBinaryLogEnabled),
+		checkInfo(IDGroupReplicationApplierQueueWithin),
+		checkInfo(IDGroupReplicationCertifierQueueWithin),
+		checkInfo(IDGroupReplicationLocalMemberOnline),
+		checkInfo(IDGroupReplicationMembersOnline),
 		checkInfo(IDGTIDModeOn),
 		checkInfo(IDReplicationChannelsRunning),
 		checkInfo(IDReplicationConfigured),
@@ -99,6 +111,39 @@ func checkInfo(id string) CheckInfo {
 			Rationale: "A server without binary logging cannot serve as a replication source " +
 				"and supports no binlog-based capture or point-in-time recovery.",
 			Status: StatusImplemented, Phase: phaseV110,
+		}
+	case IDGroupReplicationApplierQueueWithin:
+		return CheckInfo{
+			ID: id,
+			Rationale: "A remote-transaction applier queue beyond the caller's bound is an " +
+				"application backlog on that member; it is not an exact measure of how far the " +
+				"member's data trails the group, and a remote member's value is a periodic copy.",
+			Status: StatusImplemented, Phase: phaseV130,
+		}
+	case IDGroupReplicationCertifierQueueWithin:
+		return CheckInfo{
+			ID: id,
+			Rationale: "A certification queue beyond the caller's bound is a backlog of " +
+				"transactions waiting for conflict detection; a remote member's value is a " +
+				"periodic copy.",
+			Status: StatusImplemented, Phase: phaseV130,
+		}
+	case IDGroupReplicationLocalMemberOnline:
+		return CheckInfo{
+			ID: id,
+			Rationale: "A member is only fully synchronized with the group, and participating in " +
+				"it, when it is ONLINE, so any other own state leaves both unestablished; a server " +
+				"with no row of its own, including one without an active plugin, fails rather than " +
+				"passes.",
+			Status: StatusImplemented, Phase: phaseV130,
+		}
+	case IDGroupReplicationMembersOnline:
+		return CheckInfo{
+			ID: id,
+			Rationale: "This view does not report the member ONLINE, the only state in which a " +
+				"member is fully synchronized and participating; an UNREACHABLE row is a suspicion, " +
+				"and the queried member may be the one cut off in a partition.",
+			Status: StatusImplemented, Phase: phaseV130,
 		}
 	case IDGTIDModeOn:
 		return CheckInfo{
