@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or that an empty result means "this server is not a replica": on a Group
   Replication member it omits the group's own channels (COMPAT entry 29).
   `ReplicaStatus`'s GoDoc says the same.
+- `REPLICATION_CONFIGURED`'s finding message and catalog rationale now say
+  the server has no *asynchronous* replication channels: on a Group
+  Replication member with no asynchronous channel the check fires, and the
+  old wording said the server had no replication at all. The predicate, the
+  ID and the finding's `Facts` are unchanged; message text is not part of the
+  compatibility contract.
 
 ## [1.2.1] - 2026-10-12
 

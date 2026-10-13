@@ -369,6 +369,34 @@ func TestCheckSecondsBehindSourceWithin(t *testing.T) {
 // TestJobLoopRecipeComposition pins the documented gate: an unconfigured
 // server must never pass it. REPLICATION_CONFIGURED is what makes an empty
 // snapshot fail, since the per-channel checks have nothing to report.
+// TestReplicationConfiguredNamesAsynchronousChannels pins D8's wording: on a
+// Group Replication member with no asynchronous channel the check fires,
+// so neither its message nor its rationale may say the server has no
+// replication at all.
+func TestReplicationConfiguredNamesAsynchronousChannels(t *testing.T) {
+	t.Parallel()
+
+	findings := CheckReplicationConfigured(nil)
+	if len(findings) != 1 {
+		t.Fatalf("CheckReplicationConfigured(nil) returned %d findings, want 1", len(findings))
+	}
+	const summary = "The server has no asynchronous replication channels. "
+	if !strings.HasPrefix(findings[0].Message, summary) {
+		t.Errorf("Message = %q, want it to start with %q", findings[0].Message, summary)
+	}
+
+	info, ok := LookupCheck(IDReplicationConfigured)
+	if !ok {
+		t.Fatalf("LookupCheck(%q) found = false, want true", IDReplicationConfigured)
+	}
+	const rationale = "A consumer expecting to monitor asynchronous replication here is pointed at a " +
+		"server that has none; a Group Replication member's own channels are not counted " +
+		"(docs/COMPAT.md entry 29)."
+	if info.Rationale != rationale {
+		t.Errorf("Rationale = %q, want %q", info.Rationale, rationale)
+	}
+}
+
 func TestJobLoopRecipeComposition(t *testing.T) {
 	t.Parallel()
 

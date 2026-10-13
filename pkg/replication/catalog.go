@@ -164,8 +164,9 @@ func checkInfo(id string) CheckInfo {
 	case IDReplicationConfigured:
 		return CheckInfo{
 			ID: id,
-			Rationale: "A consumer expecting to monitor replication here is pointed at a server " +
-				"that has none.",
+			Rationale: "A consumer expecting to monitor asynchronous replication here is pointed at a " +
+				"server that has none; a Group Replication member's own channels are not counted " +
+				"(docs/COMPAT.md entry 29).",
 			Status: StatusImplemented, Phase: phaseV110,
 		}
 	case IDSecondsBehindSourceWithin:
