@@ -6,26 +6,28 @@ import (
 	"errors"
 )
 
-// SQL read by GroupReplication, in the order it issues them. Neither touches
-// Performance Schema, and neither needs a privilege beyond connecting: SHOW
-// VARIABLES "does not require any privilege", and a USAGE-only account reads
-// information_schema.PLUGINS on every supported server (docs/COMPAT.md entry
-// 30). @@GLOBAL.group_replication_group_name is never read: it raises ERROR
-// 1193 whenever the variable is not registered.
+// SQL read by GroupReplication, in the order it issues them. Neither needs a
+// privilege beyond connecting: a USAGE-only account reads
+// information_schema.PLUGINS and performance_schema.global_variables on every
+// supported server (docs/COMPAT.md entry 30), and global_variables is
+// populated even with Performance Schema disabled. It answers every plugin
+// state as SHOW GLOBAL VARIABLES does, but takes a LIMIT: SHOW VARIABLES is
+// capped by sql_select_limit and cannot (docs/COMPAT.md entry 35).
+// @@GLOBAL.group_replication_group_name is never read: it raises ERROR 1193
+// whenever the variable is not registered.
 //
-// The variable is matched with WHERE, not LIKE, because "_" is a LIKE
-// wildcard.
+// The variable is matched with =, not LIKE, because "_" is a LIKE wildcard.
 const (
 	sqlGroupReplicationPluginStatus = "SELECT PLUGIN_STATUS FROM information_schema.PLUGINS " +
 		"WHERE PLUGIN_NAME = 'group_replication'" + limitAllRows
-	sqlGroupReplicationGroupName = "SHOW GLOBAL VARIABLES " +
-		"WHERE Variable_name = 'group_replication_group_name'"
+	sqlGroupReplicationGroupName = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
+		"WHERE VARIABLE_NAME = 'group_replication_group_name'" + limitAllRows
 )
 
 // Result columns GroupReplication decodes, spelled as the server spells them.
 const (
 	colPluginStatus  = "PLUGIN_STATUS"
-	colVariableValue = "Value"
+	colVariableValue = "VARIABLE_VALUE"
 )
 
 // errMultipleRows means a statement that identifies one object by name
