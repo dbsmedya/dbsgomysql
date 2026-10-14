@@ -9,9 +9,9 @@ You are in **BUILD**. Nothing here requires the spec/plan revision protocol.
 
 1. **Pick the layer** from the table below — the cheapest one that can actually
    catch the defect.
-2. **Write the test and watch it fail for the right reason.** For a test added
-   to cover existing behavior, remove the thing it depends on, confirm it fails,
-   and put it back. Green on first run proves nothing.
+2. **Work test-driven** — red, green, refactor. A test added for behavior that
+   already exists asserts that behavior; nothing in the library is broken to
+   make it fail.
 3. Run that layer's target, then `make check`. Paste the output.
 4. If a consumer could notice the change, record it under `CHANGELOG.md
    ## [Unreleased]` **in the same commit**. New coverage counts: `v0.7.1` was
@@ -34,8 +34,19 @@ Do not pick the version, write the plan, or merge.
 
 ## Rules
 
-- **Write the test first and watch it fail for the right reason.** A test that
-  has never failed has not been shown to test anything.
+- **Use test-driven development.**
+- **Never mutate library code to prove a test.** No reverting a mechanism, no
+  injected bug, no "prove the test bites" step, no mutation evidence in a plan
+  or PR body. Which code to mutate, and what a red run then proves, has no
+  answer, so it is not evidence.
+- **Drive failure paths from the server, not the code.** To show a fact or
+  check handles a hostile environment, change the database the test runs
+  against — a session or global variable (`SET SESSION autocommit = 0`,
+  `sql_mode`), a privilege the account lacks, a stopped replication thread or
+  group member, a plugin state — and assert the library detects it and reports
+  what its documentation promises. Restore the setting in cleanup registered
+  before the change. A unit test's scripted querier stands in for that server
+  state: it is test input, not a mutation.
 - **Keep DB-backed tests behind the `integration` and `e2e` build tags**, so
   `go test ./...` passes with no database present.
 - **Skip, do not fail, when the DSN is unset.** The harness conventions — DSN
