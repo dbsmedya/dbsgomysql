@@ -19,7 +19,7 @@ const (
 	testSQLGroupMembers = "SELECT CHANNEL_NAME, MEMBER_ID, MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, " +
 		"MEMBER_ROLE, MEMBER_VERSION, MEMBER_COMMUNICATION_STACK, " +
 		"MEMBER_ID = @@server_uuid AS IS_SELF " +
-		"FROM performance_schema.replication_group_members"
+		"FROM performance_schema.replication_group_members LIMIT 18446744073709551615"
 
 	testMatchGroupMembers = "performance_schema.replication_group_members"
 	testApplierChannel    = "group_replication_applier"

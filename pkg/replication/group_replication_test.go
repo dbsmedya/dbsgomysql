@@ -16,7 +16,7 @@ import (
 // that reused them could not detect the library misspelling one.
 const (
 	testSQLPluginStatus = "SELECT PLUGIN_STATUS FROM information_schema.PLUGINS " +
-		"WHERE PLUGIN_NAME = 'group_replication'"
+		"WHERE PLUGIN_NAME = 'group_replication' LIMIT 18446744073709551615"
 	testSQLGroupName = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'"
 
 	testMatchPlugins  = "information_schema.PLUGINS"
