@@ -123,7 +123,7 @@ func (i *Inspector) resolveTable(ctx context.Context, ref TableRef) (TableSpec, 
 		       ON c.COLLATION_NAME = t.TABLE_COLLATION
 		WHERE t.TABLE_SCHEMA = ? AND t.TABLE_NAME = ?`
 
-	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, ref.schema, ref.table)
 	if err != nil {
 		return TableSpec{}, newObjectError(opTableSpec, ref.schema, ref.table,
 			fmt.Errorf("query table metadata: %w", err))
@@ -193,7 +193,7 @@ func (i *Inspector) captureColumns(ctx context.Context, ref TableRef) ([]ColumnS
 		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
 		ORDER BY ORDINAL_POSITION`
 
-	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, ref.schema, ref.table)
 	if err != nil {
 		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
 			fmt.Errorf("query column metadata: %w", err))
@@ -274,7 +274,7 @@ func (i *Inspector) captureIndexes(ctx context.Context, ref TableRef) ([]IndexSp
 		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
 		ORDER BY INDEX_NAME, SEQ_IN_INDEX`
 
-	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, ref.schema, ref.table)
 	if err != nil {
 		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
 			fmt.Errorf("query index metadata: %w", err))
@@ -391,7 +391,7 @@ func (i *Inspector) captureCheckConstraints(
 		  AND tc.CONSTRAINT_TYPE = 'CHECK'
 		ORDER BY cc.CONSTRAINT_NAME`
 
-	rows, err := i.q.QueryContext(ctx, query, ref.schema, ref.table)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, ref.schema, ref.table)
 	if err != nil {
 		return nil, newObjectError(opTableSpec, ref.schema, ref.table,
 			fmt.Errorf("query check-constraint metadata: %w", err))
@@ -443,7 +443,7 @@ func (i *Inspector) captureForeignKeyConstraints(
 
 	rows, err := i.q.QueryContext(
 		ctx,
-		query,
+		query+limitAllRows,
 		ref.schema,
 		ref.table,
 		ref.schema,

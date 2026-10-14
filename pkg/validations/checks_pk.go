@@ -110,7 +110,7 @@ func (i *Inspector) PrimaryKeys(ctx context.Context, tables []string) ([]PKInfo,
 			args = append(args, tableTypeBase)
 		}
 
-		rows, err := i.q.QueryContext(ctx, query, args...)
+		rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 		if err != nil {
 			return nil, newObjectError(opPrimaryKeys, i.schema, "", fmt.Errorf("query metadata: %w", err))
 		}

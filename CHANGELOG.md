@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported the plugin absent on a server where it is `ACTIVE` or `DISABLED`;
   the variable facts returned an error; `GroupMembers` and `GroupMemberStats`
   could list fewer members than the group has.
+- Every catalog `SELECT` in `pkg/validations` now ends with
+  `LIMIT 18446744073709551615`, so an inherited or session `sql_select_limit`
+  can no longer truncate a fact silently. Before this, a global limit of 20
+  made `Columns` return 20 of a table's 25 columns with no error; the same cap
+  could drop trigger rows from `Triggers`, keys from `ForeignKeys`, and grant
+  and role rows from `Grants`. The bound is on the outer statement only, for
+  the narrowed statement and its unnarrowed fallback alike. The library still
+  never sets a session variable.
 
 ### Changed
 
