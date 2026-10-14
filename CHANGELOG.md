@@ -19,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TRIGGER` privilege is not established, carrying a `PrivilegeFact` with the
   exact `GrantState`. The server lists a table's triggers only to an account
   holding `TRIGGER` on that table, so an empty `Triggers` result proves the
-  table has no triggers only when this check reports nothing for it, read as
-  the same account in the same session. The check is opt-in: `Triggers` and
+  table has no trigger for the requested event only when this check reports
+  nothing for it, read as the same account in the same session. The check is opt-in: `Triggers` and
   `CheckTriggersPresent` are unchanged, and a consumer that does not call it
   gets no new protection. See `docs/COMPAT.md` entry 34.
 - `validations.PrivilegeTrigger`, appended after `PrivilegeCreate`. `Grants`

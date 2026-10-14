@@ -28,10 +28,12 @@ type TriggerInfo struct {
 // not depend on. Missing or invisible tables are absent.
 //
 // The server lists a table's triggers only to an account holding TRIGGER on
-// that table, so an empty result proves the table has no triggers only when
-// CheckTriggerVisibility reports nothing for the same tables, read as the
-// same account in the same session, and this read succeeded
-// (docs/COMPAT.md entry 34).
+// that table, so an empty result proves the table has no trigger for event
+// only when CheckTriggerVisibility reports nothing for the same tables, read
+// as the same account in the same session, and this read succeeded
+// (docs/COMPAT.md entry 34). One read covers one event: proving a table has no
+// triggers at all takes a read for each of TriggerInsert, TriggerUpdate and
+// TriggerDelete.
 //
 // Triggers is safe for concurrent use when the Inspector's Querier is safe for
 // concurrent use and tables is not mutated concurrently.

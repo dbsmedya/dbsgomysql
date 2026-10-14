@@ -91,9 +91,10 @@ a single-column key reports its `DataType`, `IsInteger`, and `Unsigned` facts.
 
 `Triggers` is the sharpest case. The server lists a table's triggers only to
 an account holding `TRIGGER` on that table, so an empty result means either
-"no triggers" or "not allowed to see them". It proves absence only when
-[`CheckTriggerVisibility`](#proving-a-table-has-no-triggers) reports nothing
-for the same tables.
+"no trigger for this event" or "not allowed to see them". It proves absence
+for that event only when
+[`CheckTriggerVisibility`](#proving-a-table-has-no-triggers-for-an-event)
+reports nothing for the same tables.
 
 Names come back in the server's exact case, and the library compares names in
 Go rather than relying on SQL predicates. `information_schema` name collations
@@ -305,7 +306,7 @@ unable to see, `GrantAbsent` requires the account's own direct `SELECT` on the
 Every otherwise-negative answer is `GrantUnconfirmed` without that sufficient
 visibility condition. See [COMPAT.md](COMPAT.md) entries 11, 12, and 25-27.
 
-### Proving a table has no triggers
+### Proving a table has no triggers for an event
 
 `CheckTriggerVisibility` reports each table whose `TRIGGER` privilege is not
 established. Run it before trusting an empty `Triggers` result, as the same
@@ -321,6 +322,11 @@ trg, err := insp.Triggers(ctx, tables, validations.TriggerDelete)
 // handle err
 findings := validations.CheckTriggersPresent(trg, validations.TriggerDelete)
 ```
+
+Each `Triggers` read covers one event. To prove a table has no triggers at
+all, read `TriggerInsert`, `TriggerUpdate` and `TriggerDelete`; one passing
+`CheckTriggerVisibility` covers all three, because `TRIGGER` is not granted
+per event.
 
 Each finding carries a `PrivilegeFact` whose `State` says why: absent,
 unconfirmed or unknown. Grant `TRIGGER` directly at schema (`shop.*`) or table
