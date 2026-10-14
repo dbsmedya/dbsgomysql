@@ -66,6 +66,11 @@ Consequences:
   it cannot distinguish nonexistence from invisibility;
 - a successful empty result proves only what that fact's documented source and
   visibility permit it to prove;
+- an empty `Triggers` result for a table proves it has no triggers only when
+  `CheckTriggerVisibility` passes for it ([COMPAT.md](COMPAT.md) entry 34);
+- a column-level grant can make `Columns` and `TableSpec` return a partial
+  column list for a visible table without error; no check in this release
+  detects it;
 - names are compared by exact Go string equality after retrieval, so a
   case-only variant does not satisfy a requested identity.
 
@@ -105,7 +110,8 @@ finished successfully.
 - `INSERT`;
 - `UPDATE`;
 - `DELETE`;
-- `CREATE`.
+- `CREATE`;
+- `TRIGGER`.
 
 It returns `GrantUnconfirmed` whenever the available metadata cannot prove
 presence or absence safely. Important uncertainty sources include:
