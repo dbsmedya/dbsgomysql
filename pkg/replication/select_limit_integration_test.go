@@ -22,6 +22,8 @@ import (
 // server caps that statement: stop and take it to the operator (spec §3.3).
 var selectLimits = []int{0, 1}
 
+const sqlShowVersionVariable = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'version'"
+
 func setSessionSelectLimit(t *testing.T, conn *sql.Conn, limit int) {
 	t.Helper()
 
@@ -103,9 +105,10 @@ func TestCompat35VariableFactsIgnoreSessionSelectLimitIntegration(t *testing.T) 
 // zero-or-one-row PLUGINS lookup would return no row, which GroupReplication
 // reads as "plugin absent" — a false answer, not an error — on the group
 // primary and on the standalone servers with the plugin ACTIVE and DISABLED.
-// The group name is read with SHOW GLOBAL VARIABLES, so this test also
-// measures that SHOW. The members and stats tables hold three rows each, more
-// than either limit.
+// The group name is read from performance_schema.global_variables, not SHOW
+// VARIABLES, which the variable caps (docs/COMPAT.md entry 35), so at limit 0
+// it must still be the configured name. The members and stats tables hold
+// three rows each, more than either limit.
 func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 	conn := pinnedConn(t, topology.Primary)
@@ -150,6 +153,10 @@ func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 			}
 			if group != wantGroup {
 				t.Errorf("GroupReplication under sql_select_limit = %d = %+v, want %+v", limit, group, wantGroup)
+			}
+			// Named on its own: the group name is the read SHOW VARIABLES lost.
+			if group.GroupName != wantGroup.GroupName {
+				t.Errorf("GroupName under sql_select_limit = %d = %q, want %q", limit, group.GroupName, wantGroup.GroupName)
 			}
 			if got := groupMemberIDs(t, inspector); !slices.Equal(got, wantMembers) {
 				t.Errorf("GroupMembers under sql_select_limit = %d = %q, want %q", limit, got, wantMembers)
@@ -210,7 +217,10 @@ func groupStatsMemberIDs(t *testing.T, inspector *replication.Inspector) []strin
 // statements the library cannot give a LIMIT, each on a fixture with more rows
 // than the limit where the statement can return several: SHOW REPLICA STATUS
 // with two channels, SHOW REPLICAS with two registered replicas, and SHOW
-// BINARY LOG STATUS (SHOW MASTER STATUS before 8.2.0) on a live source.
+// BINARY LOG STATUS (SHOW MASTER STATUS before 8.2.0) on a live source. It
+// also pins the capped side: SHOW GLOBAL VARIABLES is answered from
+// Performance Schema and returns no row at limit 0, which is why
+// GroupReplication reads performance_schema.global_variables instead.
 func TestCompat35ShowFactsUnderSessionSelectLimitIntegration(t *testing.T) {
 	topology := testsupport.ReplicationTopology(t)
 	testsupport.BootstrapReplication(t, topology)
@@ -251,6 +261,10 @@ func TestCompat35ShowFactsUnderSessionSelectLimitIntegration(t *testing.T) {
 			}
 			if status == nil || status.File != wantStatus.File {
 				t.Errorf("BinaryLogStatus under sql_select_limit = %d = %+v, want file %q", limit, status, wantStatus.File)
+			}
+			// One row matches, so the cap shows only at limit 0.
+			if got, want := countRows(t, sourceConn, sqlShowVersionVariable), min(limit, 1); got != want {
+				t.Errorf("SHOW GLOBAL VARIABLES under sql_select_limit = %d returned %d rows, want %d", limit, got, want)
 			}
 		})
 	}

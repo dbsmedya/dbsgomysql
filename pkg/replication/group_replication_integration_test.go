@@ -305,7 +305,7 @@ func assertServerError(t *testing.T, db *sql.DB, query string, number uint16) {
 	}
 }
 
-func countRows(t *testing.T, db *sql.DB, query string) int {
+func countRows(t *testing.T, db replication.Querier, query string) int {
 	t.Helper()
 
 	rows, err := db.QueryContext(t.Context(), query)
