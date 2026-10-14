@@ -281,8 +281,11 @@ images exist.
 
 ## Writing tests
 
-Write the test first, watch it fail for the right reason, then implement. A
-test that has never failed has never been shown to test anything.
+Tests are written test-driven: red, green, refactor. Library code is never
+mutated to prove a test. A failure path is exercised by changing the server the
+test runs against — a session or global variable such as
+`SET SESSION autocommit = 0`, a missing privilege, a stopped replication thread
+— and asserting the library detects it.
 
 Every entry in [COMPAT.md](COMPAT.md) needs a test that pins the documented
 behavior on every affected version. That test is what stops a future

@@ -7,13 +7,13 @@ Applies to `pkg/` and `internal/`. Repo-wide contract: [`../AGENTS.md`](../AGENT
 You are in **BUILD**. Nothing here requires the spec/plan revision protocol —
 if you need a decision that is not in your plan, ask rather than deciding it.
 
-1. **Write the test first, and watch it fail for the right reason.** A test that
-   has never failed has not been shown to test anything.
-2. Implement until it passes.
-3. `make check` — run it, read the output, paste the output.
-4. If a consumer could notice the change, record it under `CHANGELOG.md
+1. **Work test-driven** — red, green, refactor. Never mutate library code to
+   prove a test; failure paths are driven from the server — see
+   [`../tests/AGENTS.md`](../tests/AGENTS.md).
+2. `make check` — run it, read the output, paste the output.
+3. If a consumer could notice the change, record it under `CHANGELOG.md
    ## [Unreleased]` **in the same commit**.
-5. Commit, push, open the PR, **stop**.
+4. Commit, push, open the PR, **stop**.
 
 Do not pick the version, write the plan, or merge. Those are other phases.
 
