@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `pkg/replication` now ends every `SELECT` with
+  `LIMIT 18446744073709551615`, so a `sql_select_limit` inherited from the
+  server's global value, or set on the session, can no longer truncate a fact.
+  At a limit of 0 the plugin lookup returned no row and `GroupReplication`
+  reported the plugin absent on a server where it is `ACTIVE` or `DISABLED`;
+  the variable facts returned an error; `GroupMembers` and `GroupMemberStats`
+  could list fewer members than the group has.
+
+### Changed
+
+- `pkg/replication`'s documented statement text changes: the six `SELECT`
+  statements (`BinaryLogEnabled`, `GTIDStatus`, `ReplicationConfig`, the
+  `GroupReplication` plugin lookup, `GroupMembers`, `GroupMemberStats`) now end
+  with ` LIMIT 18446744073709551615`. A consumer that allow-lists the library's
+  statements in a server query log must add the suffix. The `SHOW` statements
+  are unchanged.
+
 ## [1.3.0] - 2026-10-13
 
 ### Added

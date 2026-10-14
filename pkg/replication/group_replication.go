@@ -17,7 +17,7 @@ import (
 // wildcard.
 const (
 	sqlGroupReplicationPluginStatus = "SELECT PLUGIN_STATUS FROM information_schema.PLUGINS " +
-		"WHERE PLUGIN_NAME = 'group_replication'"
+		"WHERE PLUGIN_NAME = 'group_replication'" + limitAllRows
 	sqlGroupReplicationGroupName = "SHOW GLOBAL VARIABLES " +
 		"WHERE Variable_name = 'group_replication_group_name'"
 )

@@ -14,7 +14,7 @@ const sqlGroupMemberStats = "SELECT CHANNEL_NAME, VIEW_ID, MEMBER_ID, " +
 	"COUNT_TRANSACTIONS_IN_QUEUE, COUNT_TRANSACTIONS_CHECKED, COUNT_CONFLICTS_DETECTED, " +
 	"COUNT_TRANSACTIONS_ROWS_VALIDATING, COUNT_TRANSACTIONS_REMOTE_IN_APPLIER_QUEUE, " +
 	"COUNT_TRANSACTIONS_REMOTE_APPLIED, MEMBER_ID = @@server_uuid AS IS_SELF " +
-	"FROM performance_schema.replication_group_member_stats"
+	"FROM performance_schema.replication_group_member_stats" + limitAllRows
 
 // Result columns GroupMemberStats decodes beyond those it shares with
 // GroupMembers, spelled as the server spells them.

@@ -14,7 +14,7 @@ import (
 const sqlGroupMembers = "SELECT CHANNEL_NAME, MEMBER_ID, MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, " +
 	"MEMBER_ROLE, MEMBER_VERSION, MEMBER_COMMUNICATION_STACK, " +
 	"MEMBER_ID = @@server_uuid AS IS_SELF " +
-	"FROM performance_schema.replication_group_members"
+	"FROM performance_schema.replication_group_members" + limitAllRows
 
 // Result columns of the two Performance Schema facts, spelled as the server
 // spells them. CHANNEL_NAME and MEMBER_ID are shared with GroupMemberStats.
