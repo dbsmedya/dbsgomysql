@@ -6,21 +6,22 @@ import "strconv"
 // of these values, so they are part of the compatibility contract: consumers
 // branch on them rather than on message text.
 const (
-	IDCascadeRules         = "CASCADE_RULES"
-	IDFKClosure            = "FK_CLOSURE"
-	IDFKIndexed            = "FK_INDEXED"
-	IDFKMetadataVisibility = "FK_METADATA_VISIBILITY"
-	IDInvisibleColumns     = "INVISIBLE_COLUMNS"
-	IDPKExists             = "PK_EXISTS"
-	IDPKIntegerType        = "PK_INTEGER_TYPE"
-	IDPKMatchesExpected    = "PK_MATCHES_EXPECTED"
-	IDPKNameCase           = "PK_NAME_CASE"
-	IDPKSingleColumn       = "PK_SINGLE_COLUMN"
-	IDSchemaPrivileges     = "SCHEMA_PRIVILEGES"
-	IDStorageEngine        = "STORAGE_ENGINE"
-	IDTablesExist          = "TABLES_EXIST"
-	IDTablePrivileges      = "TABLE_PRIVILEGES"
-	IDTriggersPresent      = "TRIGGERS_PRESENT"
+	IDCascadeRules              = "CASCADE_RULES"
+	IDFKClosure                 = "FK_CLOSURE"
+	IDFKIndexed                 = "FK_INDEXED"
+	IDFKMetadataVisibility      = "FK_METADATA_VISIBILITY"
+	IDInvisibleColumns          = "INVISIBLE_COLUMNS"
+	IDPKExists                  = "PK_EXISTS"
+	IDPKIntegerType             = "PK_INTEGER_TYPE"
+	IDPKMatchesExpected         = "PK_MATCHES_EXPECTED"
+	IDPKNameCase                = "PK_NAME_CASE"
+	IDPKSingleColumn            = "PK_SINGLE_COLUMN"
+	IDSchemaPrivileges          = "SCHEMA_PRIVILEGES"
+	IDStorageEngine             = "STORAGE_ENGINE"
+	IDTablesExist               = "TABLES_EXIST"
+	IDTablePrivileges           = "TABLE_PRIVILEGES"
+	IDTriggersPresent           = "TRIGGERS_PRESENT"
+	IDTriggerMetadataVisibility = "TRIGGER_METADATA_VISIBILITY"
 )
 
 // CheckStatus records whether a cataloged check is callable in this release.
@@ -95,6 +96,7 @@ func Catalog() []CheckInfo {
 		checkInfo(IDTablesExist),
 		checkInfo(IDTablePrivileges),
 		checkInfo(IDTriggersPresent),
+		checkInfo(IDTriggerMetadataVisibility),
 	}
 }
 
@@ -177,6 +179,11 @@ func checkInfo(id string) CheckInfo {
 		return CheckInfo{
 			ID: id, Rationale: "A trigger's logic is invisible to the caller; one that touches other tables produces effects outside the operation's model and outside its verification.",
 			Status: StatusImplemented, Phase: "1b",
+		}
+	case IDTriggerMetadataVisibility:
+		return CheckInfo{
+			ID: id, Rationale: "Without an established TRIGGER privilege on a table, its visibility-filtered trigger list cannot show that no triggers exist, so trigger logic can run outside the caller's operation model.",
+			Status: StatusImplemented, Phase: "v1.4.0",
 		}
 	default:
 		return CheckInfo{}

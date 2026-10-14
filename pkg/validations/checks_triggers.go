@@ -27,6 +27,12 @@ type TriggerInfo struct {
 // case-insensitive and its timing order is a pinned observation the fact does
 // not depend on. Missing or invisible tables are absent.
 //
+// The server lists a table's triggers only to an account holding TRIGGER on
+// that table, so an empty result proves the table has no triggers only when
+// CheckTriggerVisibility reports nothing for the same tables, read as the
+// same account in the same session, and this read succeeded
+// (docs/COMPAT.md entry 34).
+//
 // Triggers is safe for concurrent use when the Inspector's Querier is safe for
 // concurrent use and tables is not mutated concurrently.
 func (i *Inspector) Triggers(
@@ -124,7 +130,9 @@ func (i *Inspector) Triggers(
 // operation's model and verification. The payload is sorted by timing and then
 // trigger name. An event that names no event — TriggerEventUnknown or an
 // undeclared value — yields one finding carrying the event as Facts and no
-// Tables, because a nil result would read as passed. CheckTriggersPresent is
+// Tables, because a nil result would read as passed. A nil result proves the
+// tables have no such trigger only under the condition Triggers states: run
+// CheckTriggerVisibility for the same tables. CheckTriggersPresent is
 // safe for concurrent use when trg is not mutated concurrently.
 func CheckTriggersPresent(trg []TriggerInfo, event TriggerEvent) []Finding {
 	serverEvent, ok := event.mysqlValue()
