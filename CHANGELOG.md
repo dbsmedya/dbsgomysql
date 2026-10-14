@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SHOW GLOBAL VARIABLES`, which the variable also caps and which takes no
   `LIMIT`: at a limit of 0 `GroupName` came back empty on a configured
   member. It is now read from `performance_schema.global_variables`.
+  The four `SHOW` statements it still issues take no `LIMIT` and were
+  measured unaffected; see `docs/COMPAT.md` entry 35.
 - Every catalog `SELECT` in `pkg/validations` now ends with
   `LIMIT 18446744073709551615`, so an inherited or session `sql_select_limit`
   can no longer truncate a fact silently. Before this, a global limit of 20
