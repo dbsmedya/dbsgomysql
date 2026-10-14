@@ -4,12 +4,14 @@ import "context"
 
 // SQL read by the variable facts. Each fact issues exactly one statement, and
 // the text is part of the package's contract: a consumer auditing a server's
-// query log sees these statements and no others.
+// query log sees these statements and no others. Each ends with limitAllRows,
+// so the logged text carries that LIMIT (docs/COMPAT.md entry 35).
 const (
-	sqlBinaryLogEnabled  = "SELECT @@GLOBAL.log_bin"
-	sqlGTIDStatus        = "SELECT @@GLOBAL.gtid_mode, @@GLOBAL.gtid_executed, @@GLOBAL.gtid_purged"
+	sqlBinaryLogEnabled  = "SELECT @@GLOBAL.log_bin" + limitAllRows
+	sqlGTIDStatus        = "SELECT @@GLOBAL.gtid_mode, @@GLOBAL.gtid_executed, @@GLOBAL.gtid_purged" + limitAllRows
 	sqlReplicationConfig = "SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only, " +
-		"@@GLOBAL.server_id, @@GLOBAL.log_replica_updates, @@GLOBAL.replica_parallel_workers"
+		"@@GLOBAL.server_id, @@GLOBAL.log_replica_updates, @@GLOBAL.replica_parallel_workers" +
+		limitAllRows
 )
 
 // Result-column names, used to attribute a decode failure to the variable that

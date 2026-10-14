@@ -84,7 +84,7 @@ func (i *Inspector) Triggers(
 			args = append(args, serverEvent)
 		}
 
-		rows, err := i.q.QueryContext(ctx, query, args...)
+		rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 		if err != nil {
 			return nil, newObjectError(opTriggers, i.schema, "", fmt.Errorf("query metadata: %w", err))
 		}

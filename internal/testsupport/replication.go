@@ -151,6 +151,9 @@ func openReplicationDB(t *testing.T, role, dsn string) *sql.DB {
 func BootstrapReplication(t *testing.T, topology *ReplTopology) {
 	t.Helper()
 
+	// A second channel a killed run left behind would fail every
+	// one-channel assertion before the test that adds it could repair it.
+	removeSilentChannel(t, topology.Replica)
 	bootstrapReplica(t, topology.Replica, topology.SourceHost, "replica")
 	bootstrapReplica(t, topology.Silent, topology.SourceHost, "silent replica")
 }

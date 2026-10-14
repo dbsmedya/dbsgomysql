@@ -254,7 +254,7 @@ func TestVariableFactsSQLAndQueryCount(t *testing.T) {
 
 				return err
 			},
-			wantSQL: "SELECT @@GLOBAL.log_bin",
+			wantSQL: "SELECT @@GLOBAL.log_bin LIMIT 18446744073709551615",
 		},
 		{
 			name: "gtid status",
@@ -263,7 +263,8 @@ func TestVariableFactsSQLAndQueryCount(t *testing.T) {
 
 				return err
 			},
-			wantSQL: "SELECT @@GLOBAL.gtid_mode, @@GLOBAL.gtid_executed, @@GLOBAL.gtid_purged",
+			wantSQL: "SELECT @@GLOBAL.gtid_mode, @@GLOBAL.gtid_executed, @@GLOBAL.gtid_purged" +
+				" LIMIT 18446744073709551615",
 		},
 		{
 			name: "replication config",
@@ -273,7 +274,7 @@ func TestVariableFactsSQLAndQueryCount(t *testing.T) {
 				return err
 			},
 			wantSQL: "SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only, @@GLOBAL.server_id, " +
-				"@@GLOBAL.log_replica_updates, @@GLOBAL.replica_parallel_workers",
+				"@@GLOBAL.log_replica_updates, @@GLOBAL.replica_parallel_workers LIMIT 18446744073709551615",
 		},
 	}
 

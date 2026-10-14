@@ -64,6 +64,13 @@ first fact call as `replication.ErrNilQuerier` rather than at construction.
 Point it at the server whose state you want. A replica's channel status lives
 on the replica; the list of registered replicas lives on the source.
 
+Every `SELECT` the library issues ends with its own `LIMIT`, so a
+`sql_select_limit` inherited from the server's global value or set on the
+session cannot truncate a fact. The `SHOW` statements it issues were measured
+unaffected by the variable; `SHOW VARIABLES` is not, which is why the group
+name is not read with it (see [COMPAT.md](COMPAT.md) entry 35). Your own
+queries on the same connection are still capped by it.
+
 ## The facts
 
 Every call takes a `context.Context` first and returns `(fact, error)`.
@@ -76,7 +83,7 @@ Every call takes a `context.Context` first and returns `(fact, error)`.
 | `GTIDStatus(ctx)` | `@@GLOBAL.gtid_mode`, `gtid_executed`, `gtid_purged` | — | GTID mode and both sets |
 | `ReplicationConfig(ctx)` | five `@@GLOBAL` variables | — | read-only state, server id, applier configuration |
 | `RegisteredReplicas(ctx)` | `SHOW REPLICAS` | **`REPLICATION SLAVE`** | which replicas have registered with this source |
-| `GroupReplication(ctx)` | `information_schema.PLUGINS`, then `SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'` | — | is the Group Replication plugin active, and which group name is configured? |
+| `GroupReplication(ctx)` | `information_schema.PLUGINS`, then `performance_schema.global_variables` | — | is the Group Replication plugin active, and which group name is configured? |
 | `GroupMembers(ctx)` | `performance_schema.replication_group_members` | **`SELECT` on that table** | this member's view of its group: one `GroupMember` per member |
 | `GroupMemberStats(ctx)` | `performance_schema.replication_group_member_stats` | **`SELECT` on that table** | the certification and applier counters this member holds, one `GroupMemberStats` per member |
 
@@ -84,10 +91,13 @@ The three variable facts read global system variables, and
 `GroupReplication` needs no privilege beyond connecting either. The other
 statement-backed facts carry a documented privilege requirement, and
 `RegisteredReplicas` needs a *different* grant from the other two:
-`REPLICATION SLAVE`, not `REPLICATION CLIENT`. The two Performance Schema
-facts each need `SELECT` on their own table, which neither of those grants
-gives. An account that can read every status fact can still be refused
-there, and that refusal arrives as an error, never as an empty list.
+`REPLICATION SLAVE`, not `REPLICATION CLIENT`. `GroupMembers` and
+`GroupMemberStats` each need `SELECT` on their own Performance Schema table,
+which neither of those grants gives. An account that can read every status
+fact can still be refused there, and that refusal arrives as an error, never
+as an empty list. `GroupReplication` reads Performance Schema too, but only
+`global_variables`, which a USAGE-only account can read
+([COMPAT.md](COMPAT.md) entry 30).
 
 ```go
 channels, err := insp.ReplicaStatus(ctx)
@@ -190,6 +200,11 @@ privilege beyond connecting:
   ([COMPAT.md](COMPAT.md) entry 30). Never read
   `@@GLOBAL.group_replication_group_name` yourself: it raises error 1193
   whenever the variable is not registered.
+- **The group name comes from `performance_schema.global_variables`,** which
+  any account can read — unlike the two Performance Schema tables below — and
+  which is populated even with Performance Schema disabled. It is not read
+  with `SHOW GLOBAL VARIABLES`: a `sql_select_limit` of 0 empties that
+  statement ([COMPAT.md](COMPAT.md) entry 35).
 - **A non-empty `GroupName` proves configuration, not membership.** A server
   can carry a name and never have joined a running group. What that means for
   your job is your policy.
@@ -204,7 +219,9 @@ privilege beyond connecting:
 `GroupMembers` reads this member's view of its group, and `GroupMemberStats`
 the certification and applier counters it holds for each member. Each needs
 `SELECT` on its own Performance Schema table; `USAGE` alone is refused with
-error 1142, and that refusal is an error, never an empty slice.
+error 1142, and that refusal is an error, never an empty slice. (The
+`global_variables` table `GroupReplication` reads is the exception: it serves
+`SHOW VARIABLES`, which needs no privilege.)
 
 What the two tables hold depends on the server's state, and not always as the
 manual says ([COMPAT.md](COMPAT.md) entries 31 and 32):

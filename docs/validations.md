@@ -59,6 +59,13 @@ insp := validations.NewInspector(db, "sakila")
 make inspection observe uncommitted schema changes. A pinned connection matters
 for role-sensitive privilege facts, described below.
 
+Session settings on that connection do not shorten a fact's answer. Every
+statement the library issues carries its own `LIMIT`, so a `sql_select_limit`
+inherited from the server's global value or set on the session cannot truncate
+a catalog read (see [COMPAT.md](COMPAT.md) entry 35). That protection covers
+the library's statements only: your own queries on the same connection are
+still capped by the variable.
+
 ## Asking factual questions
 
 Every call takes a `context.Context` first.

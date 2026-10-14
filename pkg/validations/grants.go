@@ -259,7 +259,7 @@ func (i *Inspector) Grants(ctx context.Context) (Grants, error) {
 	}
 
 	var currentUser string
-	if err := i.q.QueryRowContext(ctx, "SELECT CURRENT_USER()").Scan(&currentUser); err != nil {
+	if err := i.q.QueryRowContext(ctx, "SELECT CURRENT_USER()"+limitAllRows).Scan(&currentUser); err != nil {
 		return Grants{}, newObjectError(
 			opGrants,
 			i.schema,
@@ -274,7 +274,7 @@ func (i *Inspector) Grants(ctx context.Context) (Grants, error) {
 	}
 
 	var partialRevokes int
-	if err := i.q.QueryRowContext(ctx, "SELECT @@global.partial_revokes").Scan(
+	if err := i.q.QueryRowContext(ctx, "SELECT @@global.partial_revokes"+limitAllRows).Scan(
 		&partialRevokes,
 	); err != nil {
 		return Grants{}, newObjectError(
@@ -326,7 +326,7 @@ func (i *Inspector) readEnabledRoles(ctx context.Context, fact *Grants) error {
 		SELECT ROLE_NAME, ROLE_HOST
 		FROM information_schema.ENABLED_ROLES
 		ORDER BY ROLE_NAME, ROLE_HOST`
-	rows, err := i.q.QueryContext(ctx, query)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows)
 	if err != nil {
 		return fmt.Errorf("query ENABLED_ROLES: %w", err)
 	}
@@ -354,7 +354,7 @@ func (i *Inspector) readGlobalGrants(
 	query, args := granteePredicate(`
 		SELECT GRANTEE, PRIVILEGE_TYPE
 		FROM information_schema.USER_PRIVILEGES`, grantees)
-	rows, err := i.q.QueryContext(ctx, query, args...)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 	if err != nil {
 		return fmt.Errorf("query USER_PRIVILEGES: %w", err)
 	}
@@ -396,7 +396,7 @@ func (i *Inspector) readSchemaGrants(
 	query, args := granteePredicateWithAnonymous(`
 		SELECT GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE
 		FROM information_schema.SCHEMA_PRIVILEGES`, grantees)
-	rows, err := i.q.QueryContext(ctx, query, args...)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 	if err != nil {
 		return fmt.Errorf("query SCHEMA_PRIVILEGES: %w", err)
 	}
@@ -433,7 +433,7 @@ func (i *Inspector) readTableGrants(
 	query, args := granteePredicate(`
 		SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE
 		FROM information_schema.TABLE_PRIVILEGES`, grantees)
-	rows, err := i.q.QueryContext(ctx, query, args...)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 	if err != nil {
 		return fmt.Errorf("query TABLE_PRIVILEGES: %w", err)
 	}
@@ -472,7 +472,7 @@ func (i *Inspector) readColumnGrants(
 	query, args := granteePredicate(`
 		SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE
 		FROM information_schema.COLUMN_PRIVILEGES`, grantees)
-	rows, err := i.q.QueryContext(ctx, query, args...)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 	if err != nil {
 		return fmt.Errorf("query COLUMN_PRIVILEGES: %w", err)
 	}

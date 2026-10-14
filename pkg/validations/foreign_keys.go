@@ -319,7 +319,7 @@ func (i *Inspector) foreignKeysInnoDB(
 	// The whole-server read is the price of an honest completeness proof, and
 	// it is already paid. See representable and docs/COMPAT.md entry 8 for the
 	// guard this call does not need.
-	rows, err := i.q.QueryContext(ctx, query, args...)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 	if err != nil {
 		return nil, ForeignKeyDowngradePrimaryQueryError,
 			fmt.Errorf("query InnoDB foreign-key metadata: %w", err)
@@ -578,7 +578,7 @@ func (i *Inspector) foreignKeysStandard(
 			kcu.CONSTRAINT_NAME,
 			kcu.ORDINAL_POSITION`
 
-	rows, err := i.q.QueryContext(ctx, query, args...)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query standard foreign-key metadata: %w", err)
 	}
@@ -749,7 +749,7 @@ func (i *Inspector) readFallbackIndexes(
 		WHERE ` + strings.Join(clauses, " OR ") + `
 		ORDER BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`
 
-	rows, err := i.q.QueryContext(ctx, query, args...)
+	rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 	if err != nil {
 		return fmt.Errorf("query fallback supporting indexes: %w", err)
 	}

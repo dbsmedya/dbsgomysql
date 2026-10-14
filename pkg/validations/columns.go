@@ -85,7 +85,7 @@ func (i *Inspector) Columns(ctx context.Context, tables []string) ([]TableColumn
 			args = requestedArgs
 		}
 
-		rows, err := i.q.QueryContext(ctx, query, args...)
+		rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 		if err != nil {
 			return nil, newObjectError(
 				opColumns,
@@ -212,7 +212,7 @@ func (i *Inspector) InvisibleColumns(
 			args = requestedArgs
 		}
 
-		rows, err := i.q.QueryContext(ctx, query, args...)
+		rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 		if err != nil {
 			return nil, newObjectError(
 				opInvisibleColumns,

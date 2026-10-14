@@ -16,12 +16,13 @@ import (
 // that reused them could not detect the library misspelling one.
 const (
 	testSQLPluginStatus = "SELECT PLUGIN_STATUS FROM information_schema.PLUGINS " +
-		"WHERE PLUGIN_NAME = 'group_replication'"
-	testSQLGroupName = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'"
+		"WHERE PLUGIN_NAME = 'group_replication' LIMIT 18446744073709551615"
+	testSQLGroupName = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
+		"WHERE VARIABLE_NAME = 'group_replication_group_name' LIMIT 18446744073709551615"
 
-	testMatchPlugins  = "information_schema.PLUGINS"
-	testMatchShowVars = "SHOW GLOBAL VARIABLES"
-	testGroupUUID     = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	testMatchPlugins    = "information_schema.PLUGINS"
+	testMatchGlobalVars = "performance_schema.global_variables"
+	testGroupUUID       = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 )
 
 func pluginRows(statuses ...string) testsupport.ScriptedQuery {
@@ -36,11 +37,11 @@ func pluginRows(statuses ...string) testsupport.ScriptedQuery {
 func groupNameRows(values ...driver.Value) testsupport.ScriptedQuery {
 	rows := make([][]driver.Value, 0, len(values))
 	for _, value := range values {
-		rows = append(rows, []driver.Value{[]byte("group_replication_group_name"), value})
+		rows = append(rows, []driver.Value{value})
 	}
 
 	return testsupport.ScriptedQuery{
-		Match: testMatchShowVars, Columns: []string{"Variable_name", "Value"}, Rows: rows,
+		Match: testMatchGlobalVars, Columns: []string{"VARIABLE_VALUE"}, Rows: rows,
 	}
 }
 
@@ -172,7 +173,7 @@ func TestGroupReplicationErrors(t *testing.T) {
 		{
 			name: "variable statement fails after a successful first read",
 			script: []testsupport.ScriptedQuery{
-				pluginRows("ACTIVE"), {Match: testMatchShowVars, Err: queryFailure},
+				pluginRows("ACTIVE"), {Match: testMatchGlobalVars, Err: queryFailure},
 			},
 			wantCause: queryFailure,
 		},
@@ -185,7 +186,7 @@ func TestGroupReplicationErrors(t *testing.T) {
 		{
 			name:       "two variable rows",
 			script:     []testsupport.ScriptedQuery{pluginRows("ACTIVE"), groupNameRows([]byte("a"), []byte("b"))},
-			wantColumn: "Value",
+			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errMultipleRows,
 		},
 		{
@@ -200,21 +201,21 @@ func TestGroupReplicationErrors(t *testing.T) {
 		{
 			name:       "NULL group name",
 			script:     []testsupport.ScriptedQuery{pluginRows("ACTIVE"), groupNameRows(nil)},
-			wantColumn: "Value",
+			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errUnexpectedNULL,
 		},
 		{
 			name:       "undecodable group name",
 			script:     []testsupport.ScriptedQuery{pluginRows("ACTIVE"), groupNameRows(int64(7))},
-			wantColumn: "Value",
+			wantColumn: "VARIABLE_VALUE",
 		},
 		{
-			name: "variable result missing its Value column",
+			name: "variable result missing its VARIABLE_VALUE column",
 			script: []testsupport.ScriptedQuery{
 				pluginRows("ACTIVE"),
-				{Match: testMatchShowVars, Columns: []string{"Variable_name"}},
+				{Match: testMatchGlobalVars, Columns: []string{"VARIABLE_NAME"}},
 			},
-			wantColumn: "Value",
+			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errMissingColumn,
 		},
 		{

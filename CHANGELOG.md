@@ -10,6 +10,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `pkg/replication` now ends every `SELECT` with
+  `LIMIT 18446744073709551615`, so a `sql_select_limit` inherited from the
+  server's global value, or set on the session, can no longer truncate a fact.
+  At a limit of 0 the plugin lookup returned no row and `GroupReplication`
+  reported the plugin absent on a server where it is `ACTIVE` or `DISABLED`;
+  the variable facts returned an error; `GroupMembers` and `GroupMemberStats`
+  could list fewer members than the group has. The group name was read with
+  `SHOW GLOBAL VARIABLES`, which the variable also caps and which takes no
+  `LIMIT`: at a limit of 0 `GroupName` came back empty on a configured
+  member. It is now read from `performance_schema.global_variables`.
+  The four `SHOW` statements it still issues take no `LIMIT` and were
+  measured unaffected; see `docs/COMPAT.md` entry 35.
+- Every catalog `SELECT` in `pkg/validations` now ends with
+  `LIMIT 18446744073709551615`, so an inherited or session `sql_select_limit`
+  can no longer truncate a fact silently. Before this, a global limit of 20
+  made `Columns` return 20 of a table's 25 columns with no error; the same cap
+  could drop trigger rows from `Triggers`, keys from `ForeignKeys`, and grant
+  and role rows from `Grants`. The bound is on the outer statement only, for
+  the narrowed statement and its unnarrowed fallback alike. The library still
+  never sets a session variable.
+
+### Changed
+
+- `pkg/replication`'s documented statement text changes: the six `SELECT`
+  statements (`BinaryLogEnabled`, `GTIDStatus`, `ReplicationConfig`, the
+  `GroupReplication` plugin lookup, `GroupMembers`, `GroupMemberStats`) now end
+  with ` LIMIT 18446744073709551615`. A consumer that allow-lists the library's
+  statements in a server query log must add the suffix. The group-name read
+  changes from `SHOW GLOBAL VARIABLES WHERE Variable_name =
+  'group_replication_group_name'` to `SELECT VARIABLE_VALUE FROM
+  performance_schema.global_variables WHERE VARIABLE_NAME =
+  'group_replication_group_name' LIMIT 18446744073709551615`; it answers
+  every plugin state as before and still needs no privilege beyond
+  connecting. The remaining `SHOW` statements are unchanged.
+
 ## [1.3.0] - 2026-10-13
 
 ### Added

@@ -1513,19 +1513,37 @@ the variable alone. With the plugin `ACTIVE` and no name set, the statement
 returns one row with an empty value.
 
 **Handling:** `GroupReplication` reads the plugin's status from
-`information_schema.PLUGINS` as well as the variable, never `@@GLOBAL`, and
-reports absence as a state. Both statements need no privilege beyond
-connecting. Delivered in **v1.3.0**, pinned by
+`information_schema.PLUGINS` and the variable from
+`performance_schema.global_variables`, never `@@GLOBAL`, and reports absence
+as a state. The table answers every state as `SHOW GLOBAL VARIABLES` does —
+one row with the name, one row with an empty value, or none — and, unlike
+that statement, takes a `LIMIT` (entry 35). Both statements need no privilege
+beyond connecting. Delivered in **v1.3.0**; the variable read moved to the
+table in **v1.4.0**. Pinned by
 [`TestCompat30GroupReplicationPluginStatesIntegration`](../pkg/replication/group_replication_integration_test.go)
-on all four states, each read by a USAGE-only account.
+on all four states, each read by a USAGE-only account; on the cluster member
+it reads a non-empty group name, so a refused read fails it.
 
-**Reference:** Refman 8.0, 8.4 and 9.7, "SHOW VARIABLES Statement", identical
-("This statement does not require any privilege. It requires only the ability
-to connect to the server"); Refman 8.0, 8.4 and 9.7, "The INFORMATION_SCHEMA
-PLUGINS Table", identical (`PLUGIN_STATUS` is "one of ACTIVE, INACTIVE,
-DISABLED, DELETING, or DELETED"). Error 1193 `ER_UNKNOWN_SYSTEM_VARIABLE`,
-SQLSTATE HY000 (MySQL 8.0, 8.4 and 9.7 Error Message References). The
-DISABLED behavior is measured, not documented (2026-10-12, all six servers).
+**Reference:** live behavior goes beyond the documentation. Refman 8.4,
+"Performance Schema General Table Characteristics": "To retrieve from
+performance_schema tables, you must have the SELECT privilege." Yet a
+USAGE-only account read `global_variables` on Oracle 8.0.46, 8.4.11, 9.7.1 and
+Percona 8.0.46-37, 8.4.11-11, 9.7.1-1 (2026-10-14), with Performance Schema on
+and off. The manual gives the tables' purpose — refman 8.0, 8.4 and 9.7,
+"Performance Schema System Variables", identical: they are populated even
+when Performance Schema is disabled "to permit the results for the SHOW
+VARIABLES and SHOW STATUS statements to be drawn from those tables", and
+"SHOW VARIABLES Statement" says that statement "does not require any
+privilege" — and names one gate on them, refman 8.4 "Performance Schema
+System Variable Tables": "The SENSITIVE_VARIABLES_OBSERVER privilege is
+required to view the values of sensitive system variables in these tables";
+`group_replication_group_name` is not one. The library relies on the
+measurement and the pin, not on the manual. Refman 8.0, 8.4 and 9.7, "The
+INFORMATION_SCHEMA PLUGINS Table", identical (`PLUGIN_STATUS` is "one of
+ACTIVE, INACTIVE, DISABLED, DELETING, or DELETED"). Error 1193
+`ER_UNKNOWN_SYSTEM_VARIABLE`, SQLSTATE HY000 (MySQL 8.0, 8.4 and 9.7 Error
+Message References). The DISABLED behavior is measured, not documented
+(2026-10-12, all six servers).
 
 ## 31. `replication_group_members` reports a row without a running group ✅
 
@@ -1626,6 +1644,70 @@ between the donor and the joining member"; Refman 8.4, "Connections for
 Distributed Recovery": over that channel "the joining member acts as the
 replica and the existing member acts as the source". The registration-history
 contract is entry 22's.
+
+---
+
+## 35. An inherited `sql_select_limit` truncates catalog reads, `SHOW VARIABLES` included ✅
+
+**Affected:** every supported version, Oracle and Percona.
+
+**Symptom:** a global `sql_select_limit` is inherited by every new session and
+caps each `SELECT` that has no `LIMIT` of its own — the server returns the
+first rows and no error. A fact reading `information_schema`, Performance
+Schema or a system variable that way reports a truncated answer as a complete
+one: fewer columns, triggers, keys or grant rows than exist, and at a limit of
+0 no row at all, which a zero-or-one-row read such as the Group Replication
+plugin lookup takes for "absent". `SHOW GLOBAL VARIABLES` and
+`SHOW GLOBAL STATUS` are capped the same way — no row at a limit of 0, at most
+N at N — and take no `LIMIT` to override it. `SHOW REPLICA STATUS`, `SHOW REPLICAS`,
+`SHOW BINARY LOG STATUS` and `SHOW MASTER STATUS` are not capped: each returned
+every row at limits 0 and 1, with more rows than the limit where the statement
+can return several.
+
+**Handling:** every `SELECT` either package issues ends with
+`LIMIT 18446744073709551615`, the variable's own maximum, appended after the
+statement's final `WHERE` or `ORDER BY` and after the narrowed or unnarrowed
+form is chosen. Inner and derived queries are left alone. The library never
+sets or reads the session variable. `GroupReplication` reads the group name
+from `performance_schema.global_variables` rather than with
+`SHOW GLOBAL VARIABLES`, which at a limit of 0 returned no row and an empty
+`GroupName` for a configured member; the table answers every plugin state as
+the `SHOW` did, a USAGE-only account reads it (entry 30), and it is populated
+with Performance Schema disabled. The four `SHOW` statements `pkg/replication`
+still issues are unaffected and unchanged. Pinned by
+[`TestEverySelectEndsWithMaximumLimit`](../pkg/validations/select_limit_test.go)
+(every fact, narrowed and unnarrowed),
+[`TestCompat35FactsIgnoreSessionSelectLimitIntegration`](../pkg/validations/select_limit_integration_test.go),
+[`TestCompat35StandardForeignKeysIgnoreSessionSelectLimitIntegration`](../pkg/validations/select_limit_integration_test.go),
+[`TestCompat35FactsIgnoreInheritedGlobalSelectLimitIntegration`](../pkg/validations/select_limit_integration_test.go),
+[`TestCompat35GrantsWithRolesIgnoreSessionSelectLimitIntegration`](../pkg/validations/select_limit_integration_test.go),
+[`TestCompat35VariableFactsIgnoreSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go),
+[`TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go)
+(the group name at limit 0)
+and
+[`TestCompat35ShowFactsUnderSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go)
+(the four `SHOW` statements unaffected; `SHOW GLOBAL VARIABLES` capped).
+Measured on Oracle 8.0.46, 8.4.11, 9.7.1 and Percona 8.0.46-37, 8.4.11-11,
+9.7.1-1 (2026-10-14). With Performance Schema disabled the group-name read
+is documented (below) and was measured on all six servers on 2026-10-14; it
+is not pinned, because no fixture runs with Performance Schema off.
+
+**Reference:** refman 8.0, 8.4 and 9.7, "Server System Variables",
+`sql_select_limit`: "The maximum number of rows to return from SELECT
+statements", and "If a SELECT has a LIMIT clause, the LIMIT takes precedence
+over the value of sql_select_limit." Refman 8.0, 8.4 and 9.7, "Performance
+Schema System Variables", identical: "Even when the Performance Schema is
+disabled, it continues to populate the global_variables, session_variables,
+global_status, and session_status tables. This occurs as necessary to permit
+the results for the SHOW VARIABLES and SHOW STATUS statements to be drawn from
+those tables." The manual does not say that `SHOW` statements are subject to
+the variable; the measurement is the evidence. Refman 8.4, "Performance Schema
+General Table Characteristics", says retrieving from Performance Schema tables
+needs `SELECT`; for `global_variables` a USAGE-only account succeeded on every
+server measured, and entry 30's pin holds the library to that. The syntax
+sections "SHOW REPLICA STATUS Statement", "SHOW REPLICAS Statement", "SHOW
+VARIABLES Statement", "SHOW BINARY LOG STATUS Statement" and (8.0) "SHOW
+MASTER STATUS Statement" offer no `LIMIT` clause.
 
 ---
 

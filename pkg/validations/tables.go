@@ -64,7 +64,7 @@ func (i *Inspector) Tables(ctx context.Context, tables []string) ([]TableInfo, e
 			args = requestedArgs
 		}
 
-		rows, err := i.q.QueryContext(ctx, query, args...)
+		rows, err := i.q.QueryContext(ctx, query+limitAllRows, args...)
 		if err != nil {
 			return nil, newObjectError(opTables, i.schema, "", fmt.Errorf("query metadata: %w", err))
 		}
