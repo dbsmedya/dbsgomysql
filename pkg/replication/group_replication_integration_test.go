@@ -34,18 +34,23 @@ const (
 		"WHERE VARIABLE_NAME = 'group_replication_group_name'"
 	grSQLRecoveryConnection = "SELECT SERVICE_STATE FROM performance_schema.replication_connection_status " +
 		"WHERE CHANNEL_NAME = 'group_replication_recovery'"
-	grSQLExecuted     = "SELECT @@GLOBAL.gtid_executed"
-	grSQLWaitFor      = "SELECT WAIT_FOR_EXECUTED_GTID_SET(?, 60)"
-	grSQLShowReplicas = "SHOW REPLICAS"
+	grSQLExecuted           = "SELECT @@GLOBAL.gtid_executed"
+	grSQLWaitFor            = "SELECT WAIT_FOR_EXECUTED_GTID_SET(?, 60)"
+	grSQLShowReplicas       = "SHOW REPLICAS"
+	grSQLConfiguredChannels = "SELECT CHANNEL_NAME, HOST FROM performance_schema.replication_connection_configuration"
 
 	// Server error numbers these pins assert, from the MySQL error reference.
 	erUnknownSystemVariable = 1193 // ER_UNKNOWN_SYSTEM_VARIABLE
 	erReplicaChannelOp      = 3139 // SHOW REPLICA STATUS refused for group_replication_applier
 
-	grExtChannel = testsupport.ExtChannel
-	grPluginOn   = "ACTIVE"
-	grPluginOff  = "DISABLED"
-	grThreadYes  = "Yes"
+	grExtChannel      = testsupport.ExtChannel
+	grRecoveryChannel = "group_replication_recovery"
+	// grRecoveryPlaceholderHost is the HOST a joined member's recovery channel
+	// carries between recoveries: a six-character string, not SQL NULL.
+	grRecoveryPlaceholderHost = "<NULL>"
+	grPluginOn                = "ACTIVE"
+	grPluginOff               = "DISABLED"
+	grThreadYes               = "Yes"
 )
 
 // TestCompat30GroupReplicationPluginStatesIntegration pins COMPAT entry 30 and the
@@ -111,15 +116,27 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 
 // TestCompat29ReplicaStatusOnGroupMembersIntegration pins the healthy half of COMPAT entry
 // 29: no member's SHOW REPLICA STATUS lists a Group Replication channel,
-// although the manual says only the applier channel is excluded.
+// although the manual says only the applier channel is excluded, and FOR
+// CHANNEL 'group_replication_recovery' returns a row only on a member whose
+// recovery channel has a source host: not on the member that bootstrapped the
+// group.
 func TestCompat29ReplicaStatusOnGroupMembersIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
-	for role, db := range map[string]*sql.DB{
-		"primary": topology.Primary, "secondary": topology.Secondary, "rejoiner": topology.Rejoiner,
+	// The secondary and the rejoiner joined through distributed recovery; the
+	// primary bootstrapped the group and never did.
+	for _, member := range []struct {
+		role             string
+		db               *sql.DB
+		wantRecoveryRows int
+	}{
+		{"primary", topology.Primary, 0},
+		{"secondary", topology.Secondary, 1},
+		{"rejoiner", topology.Rejoiner, 1},
 	} {
-		assertNoReplicaChannels(t, role, db)
-		assertServerError(t, db, grSQLApplierChannelStatus, erReplicaChannelOp)
+		assertNoReplicaChannels(t, member.role, member.db)
+		assertServerError(t, member.db, grSQLApplierChannelStatus, erReplicaChannelOp)
+		assertRecoveryChannelRows(t, member.role, member.db, member.wantRecoveryRows)
 	}
 }
 
@@ -308,6 +325,67 @@ func assertNoReplicaChannels(t *testing.T, role string, db *sql.DB) {
 	if rows := countRows(t, db, grSQLShowReplicaStatus); rows != 0 {
 		t.Errorf("SHOW REPLICA STATUS on the %s: %d rows, want 0", role, rows)
 	}
+}
+
+// assertRecoveryChannelRows pins what SHOW REPLICA STATUS FOR CHANNEL
+// 'group_replication_recovery' returns on a healthy member: one row exactly
+// when Performance Schema configures that channel with a non-empty source host,
+// otherwise no row and no error. want is the count this member must show, so
+// both sides of that rule are exercised.
+func assertRecoveryChannelRows(t *testing.T, role string, db *sql.DB, want int) {
+	t.Helper()
+
+	hosts := configuredChannelHosts(t, db)
+	if _, ok := hosts[grApplierChannel]; !ok {
+		t.Errorf("Performance Schema on the %s lists %v, want %s among them", role, hosts, grApplierChannel)
+	}
+	host, configured := hosts[grRecoveryChannel]
+	byHost := 0
+	if configured && host != "" {
+		byHost = 1
+	}
+	if byHost != want {
+		t.Errorf("the %s's recovery channel: configured %t with host %q; want a configured host: %t",
+			role, configured, host, want == 1)
+	}
+	if want == 1 && host != grRecoveryPlaceholderHost {
+		t.Errorf("the %s's recovery channel host = %q, want the placeholder string %q", role, host, grRecoveryPlaceholderHost)
+	}
+	if rows := countRows(t, db, grSQLRecoveryChannelStatus); rows != byHost {
+		t.Errorf("%s on the %s: %d rows, want %d (recovery channel configured %t, host %q)",
+			grSQLRecoveryChannelStatus, role, rows, byHost, configured, host)
+	}
+}
+
+// configuredChannelHosts maps each channel in
+// performance_schema.replication_connection_configuration to its HOST, with a
+// NULL host read as "".
+func configuredChannelHosts(t *testing.T, db *sql.DB) map[string]string {
+	t.Helper()
+
+	ctx, cancel := statementContext(t)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, grSQLConfiguredChannels)
+	if err != nil {
+		t.Fatalf("%s: %v", grSQLConfiguredChannels, err)
+	}
+	defer rows.Close()
+
+	hosts := map[string]string{}
+	for rows.Next() {
+		var channel string
+		var host sql.NullString
+		if err := rows.Scan(&channel, &host); err != nil {
+			t.Fatalf("scan %s: %v", grSQLConfiguredChannels, err)
+		}
+		hosts[channel] = host.String
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate %s: %v", grSQLConfiguredChannels, err)
+	}
+
+	return hosts
 }
 
 func assertServerError(t *testing.T, db *sql.DB, query string, number uint16) {
