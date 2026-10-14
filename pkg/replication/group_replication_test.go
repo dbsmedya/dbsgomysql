@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
@@ -322,6 +323,57 @@ func TestGroupReplicationCanceledContext(t *testing.T) {
 		t.Fatalf("GroupReplication() on a canceled context = %#v, %v; want context.Canceled", got, err)
 	}
 
+	var opErr *OpError
+	if !errors.As(err, &opErr) || opErr.Op != "group_replication" {
+		t.Errorf("error %v, want *OpError with Op group_replication", err)
+	}
+}
+
+// cancelBeforeSecondQuery is a Querier that cancels the caller's context when
+// the second statement arrives, after the first statement's rows were read and
+// closed: the cancellation falls strictly between a two-read fact's reads.
+type cancelBeforeSecondQuery struct {
+	db      *sql.DB
+	cancel  context.CancelFunc
+	queries int
+}
+
+func (q *cancelBeforeSecondQuery) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	q.queries++
+	if q.queries == 2 {
+		q.cancel()
+	}
+
+	return q.db.QueryContext(ctx, query, args...)
+}
+
+func (q *cancelBeforeSecondQuery) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return q.db.QueryRowContext(ctx, query, args...)
+}
+
+// TestGroupReplicationCanceledBetweenStatements pins that a context canceled
+// after the plugin read and before the variable read fails the whole fact:
+// both reads must succeed, never a half-filled value.
+func TestGroupReplicationCanceledBetweenStatements(t *testing.T) {
+	t.Parallel()
+
+	db := testsupport.OpenScriptedDB(pluginRows("ACTIVE"), groupNameRows([]byte(testGroupUUID)))
+	defer db.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	querier := &cancelBeforeSecondQuery{db: db, cancel: cancel}
+
+	got, err := NewInspector(querier).GroupReplication(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("GroupReplication() canceled between statements = %#v, %v; want context.Canceled", got, err)
+	}
+	if got != (GroupReplication{}) {
+		t.Errorf("GroupReplication() = %#v alongside its error, want the zero value", got)
+	}
+	if querier.queries != 2 {
+		t.Errorf("issued %d statements, want 2: the cancellation must reach the second read", querier.queries)
+	}
 	var opErr *OpError
 	if !errors.As(err, &opErr) || opErr.Op != "group_replication" {
 		t.Errorf("error %v, want *OpError with Op group_replication", err)

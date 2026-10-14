@@ -21,6 +21,7 @@ const (
 	envGRExtDSN       = "DBSGOMYSQL_TEST_GR_EXT_DSN"
 	envGRExtHost      = "DBSGOMYSQL_TEST_GR_EXT_HOST"
 	envRequireGR      = "DBSGOMYSQL_TEST_REQUIRE_GROUP_REPLICATION"
+	envMySQLDSN       = "DBSGOMYSQL_TEST_DSN"
 )
 
 const (
@@ -33,6 +34,7 @@ const (
 	MemberOnline     = "ONLINE"
 	MemberOffline    = "OFFLINE"
 	MemberRecovering = "RECOVERING"
+	MemberError      = "ERROR"
 
 	// ExtChannel is the asynchronous channel tests may create on the group
 	// primary, replicating from the Ext server.
@@ -41,6 +43,7 @@ const (
 	sqlSelfMemberState = "SELECT MEMBER_STATE FROM performance_schema.replication_group_members " +
 		"WHERE MEMBER_ID = @@server_uuid"
 	sqlStartGroupReplication = "START GROUP_REPLICATION"
+	sqlStopGroupReplication  = "STOP GROUP_REPLICATION"
 	sqlServerUUID            = "SELECT @@server_uuid"
 	sqlExtChannelConfigured  = "SELECT COUNT(*) FROM performance_schema.replication_connection_configuration " +
 		"WHERE CHANNEL_NAME = '" + ExtChannel + "'"
@@ -137,6 +140,18 @@ func removeExtChannel(t *testing.T, topology *GRTopology) {
 	}
 }
 
+// GroupReplicationStandalone is MySQLDatabase for a Group Replication test:
+// the standalone server stands for the plugin-not-installed state, so under
+// DBSGOMYSQL_TEST_REQUIRE_GROUP_REPLICATION=1 a missing DBSGOMYSQL_TEST_DSN
+// fails the test instead of skipping that state.
+func GroupReplicationStandalone(t *testing.T, prefix string) (db *sql.DB, schema string) {
+	t.Helper()
+
+	requiredGREnv(t, envMySQLDSN)
+
+	return MySQLDatabase(t, prefix)
+}
+
 func requiredGREnv(t *testing.T, name string) string {
 	t.Helper()
 
@@ -153,31 +168,42 @@ func requiredGREnv(t *testing.T, name string) string {
 	return ""
 }
 
+// teardownInstruction is how a test that cannot repair the topology says so.
+const teardownInstruction = "run `docker compose ... down -v` and start the topology again"
+
 // EnsureGroupOnline is convergent: a secondary or rejoiner left OFFLINE by an
-// earlier test is started again, and every path ends by proving all three
-// members ONLINE. The primary is never restarted — re-forming a group is the
-// bootstrap's job — so a primary that is not ONLINE fails the test with the
-// teardown instruction.
+// earlier test is started again, one in ERROR is stopped and started again,
+// and every path ends by proving all three members ONLINE. The primary is
+// never restarted — re-forming a group is the bootstrap's job — so a primary
+// that is not ONLINE fails the test with the teardown instruction, as does a
+// member the restart does not bring back ONLINE.
 func EnsureGroupOnline(t *testing.T, topology *GRTopology) {
 	t.Helper()
 
 	if state := MemberState(t, topology.Primary); state != MemberOnline {
-		t.Fatalf("group primary is %q, not ONLINE: run `docker compose ... down -v` and start the topology again", state)
+		t.Fatalf("group primary is %q, not ONLINE: %s", state, teardownInstruction)
 	}
 
 	for _, member := range []struct {
 		role string
 		db   *sql.DB
 	}{{"group secondary", topology.Secondary}, {"group rejoiner", topology.Rejoiner}} {
-		if MemberState(t, member.db) == MemberOffline {
+		var restart []string
+		switch MemberState(t, member.db) {
+		case MemberOffline:
+			restart = []string{sqlStartGroupReplication}
+		case MemberError:
+			restart = []string{sqlStopGroupReplication, sqlStartGroupReplication}
+		}
+		for _, statement := range restart {
 			ctx, cancel := cleanupSafeContext(t, GroupReplicationWaitDeadline)
-			_, err := member.db.ExecContext(ctx, sqlStartGroupReplication)
+			_, err := member.db.ExecContext(ctx, statement)
 			cancel()
 			if err != nil {
-				t.Fatalf("restart Group Replication on the %s: %v", member.role, err)
+				t.Fatalf("%s on the %s: %v: %s", statement, member.role, err, teardownInstruction)
 			}
 		}
-		WaitMemberState(t, member.db, MemberOnline)
+		waitMemberState(t, member.db, MemberOnline, "the "+member.role+" did not return: "+teardownInstruction)
 	}
 }
 
@@ -206,11 +232,25 @@ func MemberState(t *testing.T, db *sql.DB) string {
 func WaitMemberState(t *testing.T, db *sql.DB, want string) {
 	t.Helper()
 
+	waitMemberState(t, db, want, "")
+}
+
+// waitMemberState is WaitMemberState with hint appended to its failure, and it
+// stops early on ERROR when waiting for ONLINE: a member in ERROR does not
+// leave it on its own, so waiting out the deadline would only delay the hint.
+func waitMemberState(t *testing.T, db *sql.DB, want, hint string) {
+	t.Helper()
+
 	ctx, cancel := cleanupSafeContext(t, GroupReplicationWaitDeadline)
 	defer cancel()
 
 	ticker := time.NewTicker(replicationPollInterval)
 	defer ticker.Stop()
+
+	suffix := ""
+	if hint != "" {
+		suffix = "; " + hint
+	}
 
 	last := ""
 	for {
@@ -218,9 +258,12 @@ func WaitMemberState(t *testing.T, db *sql.DB, want string) {
 		if last == want {
 			return
 		}
+		if want == MemberOnline && last == MemberError {
+			t.Fatalf("member state is %q, want %q%s", last, want, suffix)
+		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("member state is %q after %s, want %q", last, GroupReplicationWaitDeadline, want)
+			t.Fatalf("member state is %q after %s, want %q%s", last, GroupReplicationWaitDeadline, want, suffix)
 		case <-ticker.C:
 		}
 	}

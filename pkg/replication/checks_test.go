@@ -366,9 +366,6 @@ func TestCheckSecondsBehindSourceWithin(t *testing.T) {
 	})
 }
 
-// TestJobLoopRecipeComposition pins the documented gate: an unconfigured
-// server must never pass it. REPLICATION_CONFIGURED is what makes an empty
-// snapshot fail, since the per-channel checks have nothing to report.
 // TestReplicationConfiguredNamesAsynchronousChannels pins D8's wording: on a
 // Group Replication member with no asynchronous channel the check fires,
 // so neither its message nor its rationale may say the server has no
@@ -397,6 +394,9 @@ func TestReplicationConfiguredNamesAsynchronousChannels(t *testing.T) {
 	}
 }
 
+// TestJobLoopRecipeComposition pins the documented gate: an unconfigured
+// server must never pass it. REPLICATION_CONFIGURED is what makes an empty
+// snapshot fail, since the per-channel checks have nothing to report.
 func TestJobLoopRecipeComposition(t *testing.T) {
 	t.Parallel()
 

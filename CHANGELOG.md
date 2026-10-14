@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE`'s finding summary for a view with
+  no row identified as this server now reads "No row of this server's group
+  view is identified as this server": an 8.0 or 8.4 server that never started
+  Group Replication does report a row of its own, just an anonymous one.
+  Message text is not part of the compatibility contract.
+- `docs/replication.md` says that `GroupMembers` and `GroupMemberStats` decode
+  errors name the member (`member <uuid>: ` in the cause), and that both facts
+  return one value per row, normally one per member.
+- `docs/COMPAT.md` entry 29 no longer says that
+  `SHOW REPLICA STATUS FOR CHANNEL 'group_replication_recovery'` returns the
+  channel's row on every member. It returns one row only where Performance
+  Schema configures that channel with a non-empty host, otherwise no row and
+  no error. In the measured MySQL Shell group, the two members that joined
+  through recovery returned one row; the member that bootstrapped it, never
+  since rejoined, returned none, and on 8.0 Performance Schema did not list
+  its recovery channel at all. Measured on 8.0, 8.4 and 9.7, Oracle and
+  Percona. The library does not issue that statement.
+
 ## [1.4.0] - 2026-10-14
 
 ### Added

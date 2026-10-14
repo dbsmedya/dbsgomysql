@@ -400,3 +400,23 @@ func TestGroupMemberStatsErrorNamesMember(t *testing.T) {
 		t.Errorf("error %v does not wrap errValueOutOfRange", err)
 	}
 }
+
+// TestGroupMemberStatsMemberIDFailureNamesNoMember pins that a failure of
+// MEMBER_ID itself names no member, even when an earlier row decoded one.
+func TestGroupMemberStatsMemberIDFailureNamesNoMember(t *testing.T) {
+	t.Parallel()
+
+	first := groupMemberStatsRow(testViewID, testMemberA, int64(1))
+	second := groupMemberStatsRow(testViewID, testMemberB, int64(0))
+	second[2] = nil
+	db := scriptGroupMemberStats(t, groupMemberStatsColumns(), [][]driver.Value{first, second})
+
+	_, err := NewInspector(db).GroupMemberStats(t.Context())
+	assertOpError(t, err, "group_member_stats", testApplierChannel, "MEMBER_ID")
+	if strings.Contains(err.Error(), "member ") {
+		t.Errorf("error %q names a member, want none: MEMBER_ID itself failed", err)
+	}
+	if !errors.Is(err, errUnexpectedNULL) {
+		t.Errorf("error %v does not wrap errUnexpectedNULL", err)
+	}
+}

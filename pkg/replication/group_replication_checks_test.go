@@ -153,7 +153,8 @@ func TestCheckGroupReplicationMembersOnline(t *testing.T) {
 }
 
 // TestGroupReplicationQueueChecks runs both queue checks through the bound
-// cases spec §6 names: narrowing must never turn a large queue into a pass.
+// cases: -1, 0, equal, MaxInt64, and MaxInt64+1 and MaxUint64 queues.
+// Narrowing must never turn a large queue into a pass.
 func TestGroupReplicationQueueChecks(t *testing.T) {
 	t.Parallel()
 
