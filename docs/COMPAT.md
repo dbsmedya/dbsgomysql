@@ -1647,6 +1647,64 @@ contract is entry 22's.
 
 ---
 
+## 34. Trigger metadata is visible only with `TRIGGER` on the table ✅
+
+**Affected:** every supported version, Oracle and Percona.
+
+**Symptom:** `information_schema.TRIGGERS` lists a table's triggers only to an
+account holding `TRIGGER` on that table. Without it, `Triggers` returns no
+rows for a table that has triggers — the same answer as for a table that has
+none — and `CheckTriggersPresent` passes. Measured per account:
+
+| Account | Trigger rows visible |
+|---|---|
+| `SELECT`, `INSERT`, `DELETE` on the schema; `SELECT` only; `PROCESS` only | none |
+| `TRIGGER` on one table | that table's, never a sibling's in the same read |
+| `TRIGGER` on one table and no `SELECT` anywhere | that table's |
+| `TRIGGER` on the schema, or global `TRIGGER` | all |
+| `TRIGGER` held through a role, direct or nested | all while the role is active; none in a session where it is not (with `activate_all_roles_on_login` OFF and `mandatory_roles` empty, the defaults) |
+| the trigger's definer, after losing `TRIGGER` | none |
+| global `TRIGGER` under partial revokes, with `TRIGGER` revoked on another schema | all in this schema; none in the revoked one |
+
+**Handling:** `CheckTriggerVisibility` reports each requested table whose
+`TRIGGER` state is not `GrantPresent`, resolved by the same rules as every
+table privilege. A pass is sufficient, not necessary: a role-held `TRIGGER`
+and a global one under partial revokes make the rows visible on the server,
+yet the check reports them unconfirmed, because `Grants` cannot prove either.
+A column `SELECT` grant does not weaken a `TRIGGER` answer. Pinned by
+[`TestCompat34WithoutTriggerPrivilegeIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+[`TestCompat34TableTriggerGrantIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+[`TestCompat34SchemaTriggerGrantIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+[`TestCompat34TriggerWithoutSelectIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+[`TestCompat34GlobalTriggerIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+[`TestCompat34GlobalTriggerUnderPartialRevokesIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+[`TestCompat34RoleHeldTriggerIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+[`TestCompat34DefinerWithoutTriggerIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+[`TestCompat34ReadOnlyPrivilegesDoNotProveIntegration`](../pkg/validations/trigger_visibility_integration_test.go)
+and
+[`TestCompat34ProvableAbsenceIntegration`](../pkg/validations/trigger_visibility_integration_test.go),
+with the unit contract in
+[`TestCheckTriggerVisibility`](../pkg/validations/trigger_visibility_test.go).
+Measured on Oracle 8.0.46, 8.4.11, 9.7.1 and Percona 8.0.46-37, 8.4.11-11,
+9.7.1-1 (2026-10-14).
+
+**Reference:** refman 8.0, 8.4 and 9.7, "The INFORMATION_SCHEMA TRIGGERS
+Table", identical: "To see information about a table's triggers, you must have
+the TRIGGER privilege for the table." "SHOW TRIGGERS Statement": it "returns
+results only for databases and tables for which you have the TRIGGER
+privilege". "Static Privilege Descriptions": `TRIGGER` "Enables trigger
+operations. You must have this privilege for a table to create, drop, execute,
+or display triggers for that table", so granting it for visibility grants
+those too; and "trigger execution requires that the user who defined the
+trigger still have the TRIGGER privilege for the table" (also "CREATE TRIGGER
+Statement"), which is why the definer case runs on a table of its own. "GRANT
+Statement", "Column Privileges": "The permissible priv_type values for a
+column (that is, when you use a column_list clause) are INSERT, REFERENCES,
+SELECT, and UPDATE", so `TRIGGER` has no column scope. The role, definer and
+partial-revoke visibility rows are measured, not documented.
+
+---
+
 ## 35. An inherited `sql_select_limit` truncates catalog reads, `SHOW VARIABLES` included ✅
 
 **Affected:** every supported version, Oracle and Percona.

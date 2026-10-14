@@ -17,9 +17,11 @@ type Finding struct {
 	// its schema is in Facts as ForeignKey.ChildSchema, and is the requested
 	// schema for a same-schema child outside the target set. The FK_CLOSURE
 	// finding for incomplete visibility instead lists the requested targets,
-	// with the MetadataVisibility value in Facts. For TABLE_PRIVILEGES it echoes
-	// the caller's requested spelling, since the check never reads a server row
-	// for the table; TestPrivilegeChecksTotalStateTable pins that exception.
+	// with the MetadataVisibility value in Facts. For TABLE_PRIVILEGES and
+	// TRIGGER_METADATA_VISIBILITY it echoes the caller's requested spelling,
+	// since neither check reads a server row for the table;
+	// TestPrivilegeChecksTotalStateTable and TestCheckTriggerVisibility pin
+	// that exception.
 	Tables []string `json:"tables"`
 	// Facts is the typed payload that caused the finding. It is nil only for a
 	// missing table.

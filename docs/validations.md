@@ -89,6 +89,13 @@ base tables; a requested view is absent from its result, so it never reaches
 `CheckPKExists`. `PKInfo.Columns` retains exact case and primary-key order, and
 a single-column key reports its `DataType`, `IsInteger`, and `Unsigned` facts.
 
+`Triggers` is the sharpest case. The server lists a table's triggers only to
+an account holding `TRIGGER` on that table, so an empty result means either
+"no trigger for this event" or "not allowed to see them". It proves absence
+for that event only when
+[`CheckTriggerVisibility`](#proving-a-table-has-no-triggers-for-an-event)
+reports nothing for the same tables.
+
 Names come back in the server's exact case, and the library compares names in
 Go rather than relying on SQL predicates. `information_schema` name collations
 vary by category and configuration: some are binary while others fold case.
@@ -299,6 +306,37 @@ unable to see, `GrantAbsent` requires the account's own direct `SELECT` on the
 Every otherwise-negative answer is `GrantUnconfirmed` without that sufficient
 visibility condition. See [COMPAT.md](COMPAT.md) entries 11, 12, and 25-27.
 
+### Proving a table has no triggers for an event
+
+`CheckTriggerVisibility` reports each table whose `TRIGGER` privilege is not
+established. Run it before trusting an empty `Triggers` result, as the same
+account in the same session:
+
+```go
+grants, err := insp.Grants(ctx) // insp bound to a pinned *sql.Conn
+// handle err
+if f := validations.CheckTriggerVisibility(grants, schema, tables); len(f) > 0 {
+    // not proven: refuse, or apply your own policy
+}
+trg, err := insp.Triggers(ctx, tables, validations.TriggerDelete)
+// handle err
+findings := validations.CheckTriggersPresent(trg, validations.TriggerDelete)
+```
+
+Each `Triggers` read covers one event. To prove a table has no triggers at
+all, read `TriggerInsert`, `TriggerUpdate` and `TriggerDelete`; one passing
+`CheckTriggerVisibility` covers all three, because `TRIGGER` is not granted
+per event.
+
+Each finding carries a `PrivilegeFact` whose `State` says why: absent,
+unconfirmed or unknown. Grant `TRIGGER` directly at schema (`shop.*`) or table
+scope. A role-held `TRIGGER` makes the rows visible to the server, but stays
+unconfirmed here like every role-dependent answer. A pass proves visibility,
+not that the table exists or that the trigger read succeeded; a later `REVOKE`
+or DDL is not covered. `TRIGGER` also lets the account create and drop
+triggers on the table, and no read-only privilege exposes trigger rows
+([COMPAT.md](COMPAT.md) entry 34).
+
 ## Table specifications and diffs
 
 Capture and comparison are separate layers. `Inspector.TableSpec` reads one
@@ -466,6 +504,8 @@ findings = append(findings, validations.CheckStorageEngine(tableFacts, "")...)
 findings = append(findings, validations.CheckInvisibleColumns(invisible)...)
 findings = append(findings,
     validations.CheckTriggersPresent(deleteTriggers, validations.TriggerDelete)...)
+findings = append(findings,
+    validations.CheckTriggerVisibility(grants, "sakila", tables)...)
 findings = append(findings, validations.CheckPKExists(pks)...)
 findings = append(findings, validations.CheckPKSingleColumn(pks)...)
 findings = append(findings, validations.CheckPKMatchesExpected(pks, expected)...)

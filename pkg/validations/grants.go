@@ -17,9 +17,10 @@ const (
 	// Spelled here rather than borrowed from the trigger-event constants: the
 	// two vocabularies coincide today, but a rename on the trigger side must not
 	// change which PRIVILEGE_TYPE rows this fact recognizes.
-	privilegeInsertName = "INSERT"
-	privilegeUpdateName = "UPDATE"
-	privilegeDeleteName = "DELETE"
+	privilegeInsertName  = "INSERT"
+	privilegeUpdateName  = "UPDATE"
+	privilegeDeleteName  = "DELETE"
+	privilegeTriggerName = "TRIGGER"
 )
 
 type querierAffinity uint8
@@ -115,6 +116,10 @@ const (
 	PrivilegeDelete
 	// PrivilegeCreate is MySQL's CREATE privilege.
 	PrivilegeCreate
+	// PrivilegeTrigger is MySQL's TRIGGER privilege. The server lists a
+	// table's triggers only to an account holding it on that table; it also
+	// permits creating and dropping triggers there. It has no column scope.
+	PrivilegeTrigger
 )
 
 // String returns the upper-case MySQL spelling of the privilege.
@@ -134,13 +139,15 @@ func (p Privilege) String() string {
 		return privilegeDeleteName
 	case PrivilegeCreate:
 		return privilegeCreateName
+	case PrivilegeTrigger:
+		return privilegeTriggerName
 	default:
 		return "Privilege(" + strconv.Itoa(int(p)) + ")"
 	}
 }
 
 func (p Privilege) valid() bool {
-	return p >= PrivilegeSelect && p <= PrivilegeCreate
+	return p >= PrivilegeSelect && p <= PrivilegeTrigger
 }
 
 func privilegeFromString(value string) (Privilege, bool) {
@@ -155,6 +162,8 @@ func privilegeFromString(value string) (Privilege, bool) {
 		return PrivilegeDelete, true
 	case privilegeCreateName:
 		return PrivilegeCreate, true
+	case privilegeTriggerName:
+		return PrivilegeTrigger, true
 	default:
 		return PrivilegeUnknown, false
 	}

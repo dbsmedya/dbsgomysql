@@ -32,6 +32,7 @@ var specCatalogIDs = []string{
 	"TABLES_EXIST",
 	"TABLE_PRIVILEGES",
 	"TRIGGERS_PRESENT",
+	"TRIGGER_METADATA_VISIBILITY",
 }
 
 func TestCatalog(t *testing.T) {
