@@ -30,7 +30,9 @@ const (
 	grSQLApplierChannelStatus  = "SHOW REPLICA STATUS FOR CHANNEL 'group_replication_applier'"
 	grSQLGroupNameVariable     = "SELECT @@GLOBAL.group_replication_group_name"
 	grSQLShowGroupName         = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'"
-	grSQLRecoveryConnection    = "SELECT SERVICE_STATE FROM performance_schema.replication_connection_status " +
+	grSQLTableGroupName        = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
+		"WHERE VARIABLE_NAME = 'group_replication_group_name'"
+	grSQLRecoveryConnection = "SELECT SERVICE_STATE FROM performance_schema.replication_connection_status " +
 		"WHERE CHANNEL_NAME = 'group_replication_recovery'"
 	grSQLExecuted     = "SELECT @@GLOBAL.gtid_executed"
 	grSQLWaitFor      = "SELECT WAIT_FOR_EXECUTED_GTID_SET(?, 60)"
@@ -58,6 +60,7 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 		usage := testsupport.MySQLDBAs(t, account)
 
 		assertGroupReplication(t, usage, replication.GroupReplication{})
+		assertGroupNameRows(t, usage, 0, "an absent plugin's variable")
 		assertServerError(t, usage, grSQLGroupNameVariable, erUnknownSystemVariable)
 	})
 
@@ -66,9 +69,7 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 		usage := testsupport.MySQLDBAsOn(t, topology.DisabledDSN, account)
 
 		assertGroupReplication(t, usage, replication.GroupReplication{PluginStatus: grPluginOff})
-		if rows := countRows(t, usage, grSQLShowGroupName); rows != 0 {
-			t.Errorf("a DISABLED plugin's variable: %d rows, want 0 (it hides the variable)", rows)
-		}
+		assertGroupNameRows(t, usage, 0, "a DISABLED plugin's variable (it hides the variable)")
 		assertServerError(t, usage, grSQLGroupNameVariable, erUnknownSystemVariable)
 	})
 
@@ -80,9 +81,7 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 		// The fact reads "" from one row with an empty value here, and from
 		// zero rows on the two states above; only the raw count tells them
 		// apart.
-		if rows := countRows(t, usage, grSQLShowGroupName); rows != 1 {
-			t.Errorf("an ACTIVE, unnamed plugin's variable: %d rows, want 1 (registered, empty)", rows)
-		}
+		assertGroupNameRows(t, usage, 1, "an ACTIVE, unnamed plugin's variable (registered, empty)")
 	})
 
 	t.Run("cluster member", func(t *testing.T) {
@@ -348,6 +347,20 @@ func countRows(t *testing.T, db replication.Querier, query string) int {
 	}
 
 	return n
+}
+
+// assertGroupNameRows requires want rows for the group-name variable from both
+// performance_schema.global_variables, which the fact reads, and SHOW GLOBAL
+// VARIABLES, which COMPAT entry 30 describes: the table answers every plugin
+// state as the statement does.
+func assertGroupNameRows(t *testing.T, db replication.Querier, want int, state string) {
+	t.Helper()
+
+	for _, query := range []string{grSQLTableGroupName, grSQLShowGroupName} {
+		if rows := countRows(t, db, query); rows != want {
+			t.Errorf("%s: %q returned %d rows, want %d", state, query, rows, want)
+		}
+	}
 }
 
 func registers(t *testing.T, db *sql.DB, replicaUUID string) bool {
