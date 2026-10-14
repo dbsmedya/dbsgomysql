@@ -22,11 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return one value per row, normally one per member.
 - `docs/COMPAT.md` entry 29 no longer says that
   `SHOW REPLICA STATUS FOR CHANNEL 'group_replication_recovery'` returns the
-  channel's row on every member. It returns one row only on a member that
-  joined through distributed recovery; on the member that bootstrapped the
-  group it returns no row and no error, and Performance Schema may not list
-  that member's recovery channel at all. Measured on 8.0, 8.4 and 9.7, Oracle
-  and Percona. The library does not issue that statement.
+  channel's row on every member. It returns one row only where Performance
+  Schema configures that channel with a non-empty host, otherwise no row and
+  no error. In the measured MySQL Shell group, the two members that joined
+  through recovery returned one row; the member that bootstrapped it, never
+  since rejoined, returned none, and on 8.0 Performance Schema did not list
+  its recovery channel at all. Measured on 8.0, 8.4 and 9.7, Oracle and
+  Percona. The library does not issue that statement.
 
 ## [1.4.0] - 2026-10-14
 

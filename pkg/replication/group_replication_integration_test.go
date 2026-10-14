@@ -118,13 +118,15 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 // 29: no member's SHOW REPLICA STATUS lists a Group Replication channel,
 // although the manual says only the applier channel is excluded, and FOR
 // CHANNEL 'group_replication_recovery' returns a row only on a member whose
-// recovery channel has a source host: not on the member that bootstrapped the
-// group.
+// recovery channel has a source host, which in this topology is not the member
+// that bootstrapped the group.
 func TestCompat29ReplicaStatusOnGroupMembersIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
-	// The secondary and the rejoiner joined through distributed recovery; the
-	// primary bootstrapped the group and never did.
+	// The expected counts are this topology's history, not a rule about roles:
+	// the secondary and the rejoiner joined through distributed recovery, and
+	// the primary bootstrapped the group and never rejoined (EnsureGroupOnline
+	// never restarts it).
 	for _, member := range []struct {
 		role             string
 		db               *sql.DB

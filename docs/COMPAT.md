@@ -1472,18 +1472,19 @@ channel "except the group_replication_applier channel"; measured, it omits
 `group_replication_recovery` as well.
 
 **Symptom:** on a healthy primary or secondary the statement returns no rows,
-although Performance Schema lists `group_replication_applier` on every member
-and `group_replication_recovery` on every member that joined through
-distributed recovery. It still returns no rows while the member is
-`RECOVERING` with its recovery connection and applier `ON`.
-`FOR CHANNEL 'group_replication_applier'` is refused with error 3139.
-`FOR CHANNEL 'group_replication_recovery'` returns one row only where that
-channel has a source host configured: on a member that joined through
-distributed recovery, whose host is the placeholder string `<NULL>` (not SQL
-`NULL`). On the member that bootstrapped the group it returns no row and no
-error, whether Performance Schema lists that member's recovery channel with an
-empty host (8.4, 9.7) or not at all (8.0). An ordinary asynchronous channel on
-a member is listed as usual.
+although Performance Schema lists `group_replication_applier` on every member.
+It still returns no rows while the member is `RECOVERING` with its recovery
+connection and applier `ON`. `FOR CHANNEL 'group_replication_applier'` is refused with error 3139.
+`FOR CHANNEL 'group_replication_recovery'` returns one row only where
+Performance Schema configures that channel with a non-empty source host;
+otherwise it returns no row and no error. In the measured group, formed with
+MySQL Shell, the two members that joined incrementally carried the placeholder
+host `<NULL>` (a string, not SQL `NULL`) and returned one row. The member that
+bootstrapped the group, and had never since joined through recovery, returned
+no row: its recovery channel had an empty host (8.4, 9.7) or was absent from
+Performance Schema (8.0). These observations describe that group's history;
+they are not a rule about a member's role or about which member bootstrapped a
+group. An ordinary asynchronous channel on a member is listed as usual.
 
 **Handling:** none needed — `ReplicaStatus` keeps its single statement and
 reports asynchronous channels only, so `REPLICATION_CONFIGURED` fires on a
@@ -1507,9 +1508,12 @@ performed on channel '%s'" (MySQL 8.0, 8.4 and 9.7 Error Message References;
 in 8.0 the symbol replaced `ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED` in 8.0.33).
 The recovery channel's row on each healthy member was measured on Oracle
 8.0.46, 8.4.11, 9.7.1 and Percona 8.0.46-37, 8.4.11-11, 9.7.1-1 (2026-10-14),
-on a group formed with MySQL Shell: one row on both members that joined, none
-on the bootstrapping member, whose recovery channel was absent from Performance
-Schema on 8.0 and present with an empty host on 8.4 and 9.7. The manual does
+on a group formed with MySQL Shell (one member bootstraps, two join with
+incremental recovery), before and after the test suite's rejoin cycles: one
+row on both joined members, none on the bootstrapping member, whose recovery
+channel was absent from Performance Schema on 8.0 and present with an empty
+host on 8.4 and 9.7. A bootstrapping member that later rejoins through
+recovery was not measured. The manual does
 not say when the statement returns an empty set for a channel.
 
 ## 30. Group Replication variables exist only while the plugin is ACTIVE ✅
