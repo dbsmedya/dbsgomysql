@@ -174,8 +174,9 @@ observe the other end of a channel.
   `ON`), so a new server state is a finding, not a silent pass.
 - On a Group Replication member, `ReplicaStatus` lists no group channel, and
   `RegisteredReplicas` on a donor can list members that recovered from it;
-  `GroupReplication`'s group name proves configuration, not membership
-  (entries 29, 30, 33).
+  `GroupReplication`'s group name proves configuration, not membership, and
+  its transaction size limit is the queried server's own setting, which other
+  members need not share (entries 29, 30, 33).
 - `GroupMembers` is one member's view, not the group's configured size, and
   `GroupMemberStats` reports a row of zeros on a server that is not in a
   running group; the two are separate reads, so the queue checks pass a

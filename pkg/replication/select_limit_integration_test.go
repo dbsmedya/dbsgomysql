@@ -96,8 +96,8 @@ func TestCompat35VariableFactsIgnoreSessionSelectLimitIntegration(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GroupReplication on a server without the plugin under sql_select_limit = 0: %v", err)
 	}
-	if group.PluginStatus != "" || group.GroupName != "" {
-		t.Errorf("GroupReplication on a server without the plugin = %+v, want both fields empty", group)
+	if group != (replication.GroupReplication{}) {
+		t.Errorf("GroupReplication on a server without the plugin = %+v, want the zero value", group)
 	}
 }
 
@@ -105,10 +105,11 @@ func TestCompat35VariableFactsIgnoreSessionSelectLimitIntegration(t *testing.T) 
 // zero-or-one-row PLUGINS lookup would return no row, which GroupReplication
 // reads as "plugin absent" — a false answer, not an error — on the group
 // primary and on the standalone servers with the plugin ACTIVE and DISABLED.
-// The group name is read from performance_schema.global_variables, not SHOW
-// VARIABLES, which the variable caps (docs/COMPAT.md entry 35), so at limit 0
-// it must still be the configured name. The members and stats tables hold
-// three rows each, more than either limit.
+// The group name and the transaction size limit are read from
+// performance_schema.global_variables, not SHOW VARIABLES, which the variable
+// caps (docs/COMPAT.md entry 35), so at limit 0 they must still be the
+// configured values. The members and stats tables hold three rows each, more
+// than either limit.
 func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 	conn := pinnedConn(t, topology.Primary)
@@ -118,24 +119,31 @@ func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GroupReplication: %v", err)
 	}
-	if wantGroup.PluginStatus != "ACTIVE" || wantGroup.GroupName == "" {
-		t.Fatalf("baseline GroupReplication = %+v, want ACTIVE with a group name", wantGroup)
+	if wantGroup.PluginStatus != "ACTIVE" || wantGroup.GroupName == "" || !wantGroup.TransactionSizeLimitKnown {
+		t.Fatalf("baseline GroupReplication = %+v, want ACTIVE with a group name and a known limit", wantGroup)
 	}
 	// The standalone servers carry the plugin ACTIVE and DISABLED with no
-	// group: a lookup that lost its row would read DISABLED as absent.
+	// group: a lookup that lost its row would read DISABLED as absent, and a
+	// limit read that lost its row would read the ACTIVE server's limit as
+	// unknown.
 	standalone := []struct {
-		name string
-		conn *sql.Conn
-		want string
+		name     string
+		conn     *sql.Conn
+		want     string
+		known    bool
+		baseline replication.GroupReplication
 	}{
-		{"plugin-installed server", pinnedConn(t, topology.Installed), "ACTIVE"},
-		{"plugin-disabled server", pinnedConn(t, topology.Disabled), "DISABLED"},
+		{name: "plugin-installed server", conn: pinnedConn(t, topology.Installed), want: "ACTIVE", known: true},
+		{name: "plugin-disabled server", conn: pinnedConn(t, topology.Disabled), want: "DISABLED", known: false},
 	}
-	for _, server := range standalone {
+	for index := range standalone {
+		server := &standalone[index]
 		group, err := replication.NewInspector(server.conn).GroupReplication(t.Context())
-		if err != nil || group.PluginStatus != server.want {
-			t.Fatalf("baseline GroupReplication on the %s = %+v, %v; want %s", server.name, group, err, server.want)
+		if err != nil || group.PluginStatus != server.want || group.TransactionSizeLimitKnown != server.known {
+			t.Fatalf("baseline GroupReplication on the %s = %+v, %v; want %s with the limit known: %t",
+				server.name, group, err, server.want, server.known)
 		}
+		server.baseline = group
 	}
 	wantMembers := groupMemberIDs(t, inspector)
 	wantStats := groupStatsMemberIDs(t, inspector)
@@ -154,9 +162,15 @@ func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 			if group != wantGroup {
 				t.Errorf("GroupReplication under sql_select_limit = %d = %+v, want %+v", limit, group, wantGroup)
 			}
-			// Named on its own: the group name is the read SHOW VARIABLES lost.
+			// Named on their own: these are the reads SHOW VARIABLES would lose.
 			if group.GroupName != wantGroup.GroupName {
 				t.Errorf("GroupName under sql_select_limit = %d = %q, want %q", limit, group.GroupName, wantGroup.GroupName)
+			}
+			if group.TransactionSizeLimit != wantGroup.TransactionSizeLimit ||
+				group.TransactionSizeLimitKnown != wantGroup.TransactionSizeLimitKnown {
+				t.Errorf("transaction size limit under sql_select_limit = %d = %d (known %t), want %d (known %t)",
+					limit, group.TransactionSizeLimit, group.TransactionSizeLimitKnown,
+					wantGroup.TransactionSizeLimit, wantGroup.TransactionSizeLimitKnown)
 			}
 			if got := groupMemberIDs(t, inspector); !slices.Equal(got, wantMembers) {
 				t.Errorf("GroupMembers under sql_select_limit = %d = %q, want %q", limit, got, wantMembers)
@@ -170,9 +184,9 @@ func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 				if err != nil {
 					t.Fatalf("GroupReplication on the %s: %v", server.name, err)
 				}
-				if group.PluginStatus != server.want {
-					t.Errorf("GroupReplication on the %s under sql_select_limit = %d reports %q, want %q",
-						server.name, limit, group.PluginStatus, server.want)
+				if group != server.baseline {
+					t.Errorf("GroupReplication on the %s under sql_select_limit = %d = %+v, want %+v",
+						server.name, limit, group, server.baseline)
 				}
 			}
 		})

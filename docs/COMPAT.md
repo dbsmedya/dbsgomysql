@@ -1527,19 +1527,32 @@ installed but `DISABLED` (`--loose-group-replication=OFF`),
 returns no rows and `SELECT @@GLOBAL.group_replication_group_name` raises
 `ER_UNKNOWN_SYSTEM_VARIABLE` (1193). The two states are indistinguishable from
 the variable alone. With the plugin `ACTIVE` and no name set, the statement
-returns one row with an empty value.
+returns one row with an empty value. `group_replication_transaction_size_limit`
+follows the plugin the same way: no row and error 1193 in both states, and
+one row carrying the server's value, as plain decimal text, whenever the
+plugin is `ACTIVE`, whether or not the server is configured for a group. Its
+row disappears with `UNINSTALL PLUGIN` and returns with `INSTALL PLUGIN`.
 
 **Handling:** `GroupReplication` reads the plugin's status from
-`information_schema.PLUGINS` and the variable from
+`information_schema.PLUGINS` and both variables from
 `performance_schema.global_variables`, never `@@GLOBAL`, and reports absence
 as a state. The table answers every state as `SHOW GLOBAL VARIABLES` does —
-one row with the name, one row with an empty value, or none — and, unlike
-that statement, takes a `LIMIT` (entry 35). Both statements need no privilege
-beyond connecting. Delivered in **v1.3.0**; the variable read moved to the
-table in **v1.4.0**. Pinned by
+one row with the value, one row with an empty value, or none — and, unlike
+that statement, takes a `LIMIT` (entry 35). No row for the transaction size
+limit leaves `TransactionSizeLimitKnown` false and `TransactionSizeLimit` 0,
+so an unregistered variable is never reported as "no limit"; a row sets
+`TransactionSizeLimitKnown` and the value in bytes, where 0 is the manual's
+"no limit". The three statements need no privilege beyond connecting.
+Delivered in **v1.3.0**; the variable read moved to the table in **v1.4.0**;
+the transaction size limit was added in **v1.5.0**. Pinned by
 [`TestCompat30GroupReplicationPluginStatesIntegration`](../pkg/replication/group_replication_integration_test.go)
 on all four states, each read by a USAGE-only account; on the cluster member
-it reads a non-empty group name, so a refused read fails it.
+it reads a non-empty group name, so a refused read fails it. On the two
+`ACTIVE` states it requires the limit that root reads with `@@GLOBAL` on the
+same server, never a default, and on the other two no row and error 1193 for
+it. [`TestGroupReplicationTransactionSizeLimitFollowsServerIntegration`](../pkg/replication/group_replication_integration_test.go)
+sets the limit to 0, 1 and 2147483647 on the standalone `ACTIVE` server and
+requires the fact to report each.
 
 **Reference:** live behavior goes beyond the documentation. Refman 8.4,
 "Performance Schema General Table Characteristics": "To retrieve from
@@ -1561,6 +1574,23 @@ ACTIVE, INACTIVE, DISABLED, DELETING, or DELETED"). Error 1193
 `ER_UNKNOWN_SYSTEM_VARIABLE`, SQLSTATE HY000 (MySQL 8.0, 8.4 and 9.7 Error
 Message References). The DISABLED behavior is measured, not documented
 (2026-10-12, all six servers).
+
+Refman 8.0, 8.4 and 9.7, "Group Replication Variables", identical:
+`group_replication_transaction_size_limit` is global and dynamic, an integer
+from 0 to 2147483647 bytes with default 150000000; it "configures the maximum
+transaction size in bytes which the replication group accepts"; "When this
+system variable is set to 0 there is no limit to the size of transactions the
+group accepts"; it "should have the same value on all group members", and a
+change "takes effect immediately on the group member, and applies from the
+next transaction started on that member". Refman 8.0, 8.4 and 9.7, "Limits on
+Transaction Size": with this limit, message compression and message
+fragmentation all set to zero, the applier's `replica_max_allowed_packet` (at
+most 1 GB) and the group communication engine's 4294967295 bytes still bound
+a message. The library reports the value and applies none of these bounds,
+the documented maximum included. That the variable is registered only while
+the plugin is `ACTIVE`, the USAGE-only read of its row, and the read with
+Performance Schema off are measured, not documented, on Oracle 8.0.46,
+8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-14).
 
 ## 31. `replication_group_members` reports a row without a running group ✅
 
@@ -1746,10 +1776,11 @@ can return several.
 statement's final `WHERE` or `ORDER BY` and after the narrowed or unnarrowed
 form is chosen. Inner and derived queries are left alone. The library never
 sets or reads the session variable. `GroupReplication` reads the group name
-from `performance_schema.global_variables` rather than with
-`SHOW GLOBAL VARIABLES`, which at a limit of 0 returned no row and an empty
-`GroupName` for a configured member; the table answers every plugin state as
-the `SHOW` did, a USAGE-only account reads it (entry 30), and it is populated
+and the transaction size limit from `performance_schema.global_variables`
+rather than with `SHOW GLOBAL VARIABLES`, which at a limit of 0 returned no
+row and an empty `GroupName` for a configured member; the table answers
+every plugin state as the `SHOW` did, a USAGE-only account reads it
+(entry 30), and it is populated
 with Performance Schema disabled. The four `SHOW` statements `pkg/replication`
 still issues are unaffected and unchanged. Pinned by
 [`TestEverySelectEndsWithMaximumLimit`](../pkg/validations/select_limit_test.go)
@@ -1760,14 +1791,18 @@ still issues are unaffected and unchanged. Pinned by
 [`TestCompat35GrantsWithRolesIgnoreSessionSelectLimitIntegration`](../pkg/validations/select_limit_integration_test.go),
 [`TestCompat35VariableFactsIgnoreSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go),
 [`TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go)
-(the group name at limit 0)
+(the group name and the transaction size limit at limit 0, on the primary and
+on both standalone servers)
 and
 [`TestCompat35ShowFactsUnderSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go)
 (the four `SHOW` statements unaffected; `SHOW GLOBAL VARIABLES` capped).
 Measured on Oracle 8.0.46, 8.4.11, 9.7.1 and Percona 8.0.46-37, 8.4.11-11,
 9.7.1-1 (2026-10-14). With Performance Schema disabled the group-name read
 is documented (below) and was measured on all six servers on 2026-10-14; it
-is not pinned, because no fixture runs with Performance Schema off.
+is not pinned, because no fixture runs with Performance Schema off. The
+transaction-size-limit read with Performance Schema disabled was measured on
+Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 on
+2026-11-14 and is not pinned either.
 
 **Reference:** refman 8.0, 8.4 and 9.7, "Server System Variables",
 `sql_select_limit`: "The maximum number of rows to return from SELECT
