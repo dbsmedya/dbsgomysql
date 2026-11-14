@@ -10,7 +10,8 @@ import (
 )
 
 // TestSmokeGroupReplication exercises the GroupReplication fact once against a
-// live cluster member: the plugin is ACTIVE and a group name is configured.
+// live cluster member: the plugin is ACTIVE, a group name is configured, and
+// the transaction size limit is known.
 func TestSmokeGroupReplication(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
@@ -18,8 +19,8 @@ func TestSmokeGroupReplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GroupReplication on the primary: %v", err)
 	}
-	if got.PluginStatus != "ACTIVE" || got.GroupName == "" {
-		t.Errorf("GroupReplication on the primary = %#v, want ACTIVE with a group name", got)
+	if got.PluginStatus != "ACTIVE" || got.GroupName == "" || !got.TransactionSizeLimitKnown {
+		t.Errorf("GroupReplication on the primary = %#v, want ACTIVE with a group name and a known limit", got)
 	}
 }
 

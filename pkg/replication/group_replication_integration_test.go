@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -21,7 +22,9 @@ import (
 // These tests pin docs/COMPAT.md entries 29, 30, and 33 and the async facts'
 // behavior on Group Replication members, against the topology of
 // tests/docker/compose_group_replication.yaml. None calls t.Parallel: the
-// cluster is shared and two of them change its membership or its channels.
+// servers are shared, two of the tests change the cluster's membership or its
+// channels, and one changes the standalone ACTIVE server's transaction size
+// limit.
 
 // Statements spelled independently of the library's constants.
 const (
@@ -32,6 +35,11 @@ const (
 	grSQLShowGroupName         = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'"
 	grSQLTableGroupName        = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
 		"WHERE VARIABLE_NAME = 'group_replication_group_name'"
+	grSQLSizeLimitVariable = "SELECT @@GLOBAL.group_replication_transaction_size_limit"
+	grSQLShowSizeLimit     = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_transaction_size_limit'"
+	grSQLTableSizeLimit    = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
+		"WHERE VARIABLE_NAME = 'group_replication_transaction_size_limit'"
+	grSQLSetSizeLimit       = "SET GLOBAL group_replication_transaction_size_limit = "
 	grSQLRecoveryConnection = "SELECT SERVICE_STATE FROM performance_schema.replication_connection_status " +
 		"WHERE CHANNEL_NAME = 'group_replication_recovery'"
 	grSQLExecuted           = "SELECT @@GLOBAL.gtid_executed"
@@ -55,7 +63,9 @@ const (
 
 // TestCompat30GroupReplicationPluginStatesIntegration pins COMPAT entry 30 and the
 // GroupReplication fact on all four server states, each read by a USAGE-only
-// account.
+// account. The expected transaction size limit is what root reads with
+// @@GLOBAL on the same server, never a default written here: the library does
+// not depend on the server's default.
 func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
@@ -66,7 +76,9 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 
 		assertGroupReplication(t, usage, replication.GroupReplication{})
 		assertGroupNameRows(t, usage, 0, "an absent plugin's variable")
+		assertSizeLimitRows(t, usage, 0, "an absent plugin's limit")
 		assertServerError(t, usage, grSQLGroupNameVariable, erUnknownSystemVariable)
+		assertServerError(t, usage, grSQLSizeLimitVariable, erUnknownSystemVariable)
 	})
 
 	t.Run("disabled", func(t *testing.T) {
@@ -75,18 +87,24 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 
 		assertGroupReplication(t, usage, replication.GroupReplication{PluginStatus: grPluginOff})
 		assertGroupNameRows(t, usage, 0, "a DISABLED plugin's variable (it hides the variable)")
+		assertSizeLimitRows(t, usage, 0, "a DISABLED plugin's limit (it hides the variable)")
 		assertServerError(t, usage, grSQLGroupNameVariable, erUnknownSystemVariable)
+		assertServerError(t, usage, grSQLSizeLimitVariable, erUnknownSystemVariable)
 	})
 
 	t.Run("installed, never configured", func(t *testing.T) {
+		limit := globalSizeLimit(t, topology.Installed)
 		account := testsupport.CreateMySQLAccount(t, topology.Installed, "grinstalled")
 		usage := testsupport.MySQLDBAsOn(t, topology.InstalledDSN, account)
 
-		assertGroupReplication(t, usage, replication.GroupReplication{PluginStatus: grPluginOn})
+		assertGroupReplication(t, usage, replication.GroupReplication{
+			PluginStatus: grPluginOn, TransactionSizeLimit: limit, TransactionSizeLimitKnown: true,
+		})
 		// The fact reads "" from one row with an empty value here, and from
 		// zero rows on the two states above; only the raw count tells them
 		// apart.
 		assertGroupNameRows(t, usage, 1, "an ACTIVE, unnamed plugin's variable (registered, empty)")
+		assertSizeLimitRows(t, usage, 1, "an ACTIVE plugin's limit (registered)")
 	})
 
 	t.Run("cluster member", func(t *testing.T) {
@@ -98,20 +116,59 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 			t.Fatal("the cluster's group name is empty")
 		}
 
+		limit := globalSizeLimit(t, topology.Primary)
 		account := testsupport.CreateMySQLAccount(t, topology.Primary, "grmember")
 		usage := testsupport.MySQLDBAsOn(t, topology.PrimaryDSN, account)
-		assertGroupReplication(t, usage, replication.GroupReplication{PluginStatus: grPluginOn, GroupName: name})
+		assertGroupReplication(t, usage, replication.GroupReplication{
+			PluginStatus: grPluginOn, GroupName: name,
+			TransactionSizeLimit: limit, TransactionSizeLimitKnown: true,
+		})
+		assertSizeLimitRows(t, usage, 1, "a member's limit")
 
+		// Each member reports its own limit; nothing here assumes they agree.
 		for role, db := range map[string]*sql.DB{"secondary": topology.Secondary, "rejoiner": topology.Rejoiner} {
+			want := replication.GroupReplication{
+				PluginStatus: grPluginOn, GroupName: name,
+				TransactionSizeLimit: globalSizeLimit(t, db), TransactionSizeLimitKnown: true,
+			}
 			got, err := replication.NewInspector(db).GroupReplication(t.Context())
 			if err != nil {
 				t.Fatalf("GroupReplication on the %s: %v", role, err)
 			}
-			if got.PluginStatus != grPluginOn || got.GroupName != name {
-				t.Errorf("GroupReplication on the %s = %#v, want ACTIVE with %q", role, got, name)
+			if got != want {
+				t.Errorf("GroupReplication on the %s = %#v, want %#v", role, got, want)
 			}
 		}
 	})
+}
+
+// TestGroupReplicationTransactionSizeLimitFollowsServerIntegration sets the
+// limit on the standalone ACTIVE server, which is in no group, and requires
+// the fact, read by a USAGE-only account, to report each value: 0, which the
+// manual documents as no limit, 1, and the documented maximum. It never
+// changes a cluster member, where a small limit would reject other tests'
+// transactions.
+func TestGroupReplicationTransactionSizeLimitFollowsServerIntegration(t *testing.T) {
+	topology := testsupport.GroupReplicationTopology(t)
+
+	account := testsupport.CreateMySQLAccount(t, topology.Installed, "grlimit")
+	usage := testsupport.MySQLDBAsOn(t, topology.InstalledDSN, account)
+
+	// Registered after the account and before the first change: cleanups run
+	// last-in first-out, so the original limit is back before the account is
+	// dropped, and a failure below still restores it.
+	original := globalSizeLimit(t, topology.Installed)
+	t.Cleanup(func() { setSizeLimit(t, topology.Installed, original) })
+
+	for _, limit := range []uint64{0, 1, 2147483647} {
+		setSizeLimit(t, topology.Installed, limit)
+		if got := globalSizeLimit(t, topology.Installed); got != limit {
+			t.Fatalf("@@GLOBAL reads %d after setting %d", got, limit)
+		}
+		assertGroupReplication(t, usage, replication.GroupReplication{
+			PluginStatus: grPluginOn, TransactionSizeLimit: limit, TransactionSizeLimitKnown: true,
+		})
+	}
 }
 
 // TestCompat29ReplicaStatusOnGroupMembersIntegration pins the healthy half of COMPAT entry
@@ -441,6 +498,45 @@ func assertGroupNameRows(t *testing.T, db replication.Querier, want int, state s
 			t.Errorf("%s: %q returned %d rows, want %d", state, query, rows, want)
 		}
 	}
+}
+
+// assertSizeLimitRows is assertGroupNameRows for
+// group_replication_transaction_size_limit: the table the fact reads and SHOW
+// GLOBAL VARIABLES must both return want rows. It is what tells a known limit
+// of 0 from an unregistered variable, which the fact also reports as 0.
+func assertSizeLimitRows(t *testing.T, db replication.Querier, want int, state string) {
+	t.Helper()
+
+	for _, query := range []string{grSQLTableSizeLimit, grSQLShowSizeLimit} {
+		if rows := countRows(t, db, query); rows != want {
+			t.Errorf("%s: %q returned %d rows, want %d", state, query, rows, want)
+		}
+	}
+}
+
+// globalSizeLimit reads group_replication_transaction_size_limit with
+// @@GLOBAL, a spelling independent of the table the fact reads. Call it only
+// on a server where the variable is registered.
+func globalSizeLimit(t *testing.T, db *sql.DB) uint64 {
+	t.Helper()
+
+	ctx, cancel := statementContext(t)
+	defer cancel()
+
+	var limit uint64
+	if err := db.QueryRowContext(ctx, grSQLSizeLimitVariable).Scan(&limit); err != nil {
+		t.Fatalf("%q: %v", grSQLSizeLimitVariable, err)
+	}
+
+	return limit
+}
+
+// setSizeLimit changes group_replication_transaction_size_limit with SET
+// GLOBAL, never SET PERSIST, so a server restart forgets it.
+func setSizeLimit(t *testing.T, db *sql.DB, limit uint64) {
+	t.Helper()
+
+	execOn(t, db, grSQLSetSizeLimit+strconv.FormatUint(limit, 10))
 }
 
 func registers(t *testing.T, db *sql.DB, replicaUUID string) bool {

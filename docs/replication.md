@@ -67,8 +67,9 @@ on the replica; the list of registered replicas lives on the source.
 Every `SELECT` the library issues ends with its own `LIMIT`, so a
 `sql_select_limit` inherited from the server's global value or set on the
 session cannot truncate a fact. The `SHOW` statements it issues were measured
-unaffected by the variable; `SHOW VARIABLES` is not, which is why the group
-name is not read with it (see [COMPAT.md](COMPAT.md) entry 35). Your own
+unaffected by the variable; `SHOW VARIABLES` is not, which is why neither
+Group Replication variable is read with it (see [COMPAT.md](COMPAT.md) entry
+35). Your own
 queries on the same connection are still capped by it.
 
 ## The facts
@@ -83,7 +84,7 @@ Every call takes a `context.Context` first and returns `(fact, error)`.
 | `GTIDStatus(ctx)` | `@@GLOBAL.gtid_mode`, `gtid_executed`, `gtid_purged` | — | GTID mode and both sets |
 | `ReplicationConfig(ctx)` | five `@@GLOBAL` variables | — | read-only state, server id, applier configuration |
 | `RegisteredReplicas(ctx)` | `SHOW REPLICAS` | **`REPLICATION SLAVE`** | which replicas have registered with this source |
-| `GroupReplication(ctx)` | `information_schema.PLUGINS`, then `performance_schema.global_variables` | — | is the Group Replication plugin active, and which group name is configured? |
+| `GroupReplication(ctx)` | `information_schema.PLUGINS`, then `performance_schema.global_variables` twice | — | is the Group Replication plugin active, which group name is configured, and what transaction size limit? |
 | `GroupMembers(ctx)` | `performance_schema.replication_group_members` | **`SELECT` on that table** | this member's view of its group: one `GroupMember` per row, normally one per member |
 | `GroupMemberStats(ctx)` | `performance_schema.replication_group_member_stats` | **`SELECT` on that table** | the certification and applier counters this member holds, one `GroupMemberStats` per row, normally one per member |
 
@@ -182,34 +183,60 @@ that settles it.
 
 ### Is this server configured for a group?
 
-`GroupReplication` answers two questions with two statements, and needs no
-privilege beyond connecting:
+`GroupReplication` answers three questions with three statements, and needs
+no privilege beyond connecting:
 
-| Server state | `PluginStatus` | `GroupName` |
-|---|---|---|
-| plugin not installed | `""` | `""` |
-| plugin installed but `DISABLED` | `"DISABLED"` | `""` |
-| plugin `ACTIVE`, no group name set | `"ACTIVE"` | `""` |
-| configured member, in any member state | `"ACTIVE"` | the group's UUID |
+| Server state | `PluginStatus` | `GroupName` | `TransactionSizeLimit` | `TransactionSizeLimitKnown` |
+|---|---|---|---|---|
+| plugin not installed | `""` | `""` | `0` | `false` |
+| plugin installed but `DISABLED` | `"DISABLED"` | `""` | `0` | `false` |
+| plugin `ACTIVE`, no group name set | `"ACTIVE"` | `""` | the server's limit | `true` |
+| configured member, in any member state | `"ACTIVE"` | the group's UUID | the member's limit | `true` |
 
 - **Absence is a state, never an error.** An error always means the read
   failed: transport, privilege, more than one row, a `NULL`, or an
-  undecodable value. Both statements must succeed; you never get half a fact.
-- **A `DISABLED` plugin hides the group-name variable** exactly as a missing
-  plugin does, which is why the fact reads the plugin's own status
+  undecodable value. All three statements must succeed; you never get half a
+  fact. A failure of the limit read says so: its cause begins
+  `variable group_replication_transaction_size_limit: `.
+- **A `DISABLED` plugin hides both variables** exactly as a missing plugin
+  does, which is why the fact reads the plugin's own status
   ([COMPAT.md](COMPAT.md) entry 30). Never read
-  `@@GLOBAL.group_replication_group_name` yourself: it raises error 1193
-  whenever the variable is not registered.
-- **The group name comes from `performance_schema.global_variables`,** which
+  `@@GLOBAL.group_replication_group_name` or
+  `@@GLOBAL.group_replication_transaction_size_limit` yourself: each raises
+  error 1193 whenever the variable is not registered.
+- **Both variables come from `performance_schema.global_variables`,** which
   any account can read — unlike the two Performance Schema tables below — and
-  which is populated even with Performance Schema disabled. It is not read
+  which is populated even with Performance Schema disabled. They are not read
   with `SHOW GLOBAL VARIABLES`: a `sql_select_limit` of 0 empties that
   statement ([COMPAT.md](COMPAT.md) entry 35).
 - **A non-empty `GroupName` proves configuration, not membership.** A server
   can carry a name and never have joined a running group. What that means for
   your job is your policy.
-- **The two fields are not one snapshot.** Each reports what its own statement
-  saw; a plugin installed between them can show `PluginStatus ""` with a name.
+- **Read `TransactionSizeLimitKnown` before `TransactionSizeLimit`.** Known
+  `false` means the variable is not registered: the number is 0 and means
+  nothing, never "no limit". Known `true` with 0 means the server sets no
+  limit through this variable. The two limit columns above were measured with
+  the plugin not installed, `DISABLED`, `ACTIVE` on a standalone server, and
+  on `ONLINE` members; whatever the status, `TransactionSizeLimitKnown`
+  reports whether the server returned the variable's row.
+- **The limit is in bytes, and 0 lifts only this limit.** A known 0 does not
+  mean a transaction of any size is accepted. The manual's "Limits on
+  Transaction Size" gives 4294967295 bytes as a hard limit on a message a
+  member originates and transmits to the group. When this limit, message
+  compression and message fragmentation are all set to zero, it gives the
+  receiving member's `replica_max_allowed_packet` (at most 1 GB) as the limit
+  on a message its applier thread handles. The library reports the number
+  the server sent and applies no bound, not even the documented maximum of
+  2147483647.
+- **The limit is the queried server's own setting.** The manual says it
+  should be the same on every member, and members can differ while it is
+  being changed; to know whether yours agree, read each member. A known limit
+  proves configuration, not enforcement: the manual describes it as the
+  largest transaction the group accepts, and a server that is not in a running
+  group reports its value all the same.
+- **The fields are not one snapshot.** Each reports what its own statement
+  saw; a plugin installed between them can show `PluginStatus ""` with a name
+  or a known limit.
 - Values are spelled as the server sent them; `PluginStatus` may be any
   documented status (`ACTIVE`, `INACTIVE`, `DISABLED`, `DELETING`, `DELETED`)
   or one this release does not know.

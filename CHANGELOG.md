@@ -10,6 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-15
+
+### Added
+
+- `replication.GroupReplication` gains `TransactionSizeLimit` (`uint64`,
+  JSON `transaction_size_limit`) and `TransactionSizeLimitKnown` (`bool`,
+  JSON `transaction_size_limit_known`): the server's
+  `group_replication_transaction_size_limit` in bytes, read from
+  `performance_schema.global_variables` like the group name, with no privilege
+  beyond connecting. `TransactionSizeLimitKnown` is true only when the server
+  returned the variable's row, which it does while the plugin is `ACTIVE`;
+  when it is false the limit is unknown and `TransactionSizeLimit` is 0, never
+  "no limit". A known 0 is the server's "no limit". The value is the queried
+  server's own setting, reported as sent, with no bound applied. The zero
+  value of `GroupReplication` is still the answer for a server without the
+  plugin. Measured on 8.0, 8.4 and 9.7, Oracle and Percona, in four states
+  (the plugin not installed, `DISABLED`, `ACTIVE` on a standalone server, and
+  `ACTIVE` on group members) and under `sql_select_limit`; see
+  `docs/COMPAT.md` entries 30 and 35.
+- Upgrade notes: a `GroupReplication` built with an unkeyed composite literal
+  no longer compiles. A whole-struct comparison with a value that sets only
+  `PluginStatus` and `GroupName` is now false on every server where the plugin
+  is `ACTIVE`, because the limit is filled in there; compare the fields you
+  mean. Comparing with `GroupReplication{}` still identifies a server without
+  the plugin.
+
 ### Changed
 
 - `GROUP_REPLICATION_LOCAL_MEMBER_ONLINE`'s finding summary for a view with
@@ -29,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   since rejoined, returned none, and on 8.0 Performance Schema did not list
   its recovery channel at all. Measured on 8.0, 8.4 and 9.7, Oracle and
   Percona. The library does not issue that statement.
+- `GroupReplication` issues a third statement after its two unchanged ones:
+  `SELECT VARIABLE_VALUE FROM performance_schema.global_variables WHERE
+  VARIABLE_NAME = 'group_replication_transaction_size_limit' LIMIT
+  18446744073709551615`. A consumer that allow-lists the library's statements
+  in a server query log must add it. A failure of that read carries
+  `variable group_replication_transaction_size_limit: ` at the front of the
+  `OpError`'s cause; the two earlier reads' errors are unchanged.
 
 ## [1.4.0] - 2026-10-14
 
@@ -1050,7 +1083,8 @@ The new `pkg/validations` API is part of the `v0.x` line and may change before
   `U+000D` and `U+0020` — and accepts NBSP, `U+3000`, and leading space
   characters, which MySQL preserves.
 
-[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/dbsmedya/dbsgomysql/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/dbsmedya/dbsgomysql/compare/v1.2.0...v1.2.1
