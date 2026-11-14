@@ -1590,7 +1590,9 @@ a message. The library reports the value and applies none of these bounds,
 the documented maximum included. That the variable is registered only while
 the plugin is `ACTIVE`, the USAGE-only read of its row, and the read with
 Performance Schema off are measured, not documented, on Oracle 8.0.46,
-8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-14).
+8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-14). The
+transaction-size-limit pins ran on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona
+8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-15).
 
 ## 31. `replication_group_members` reports a row without a running group ✅
 
@@ -1802,7 +1804,9 @@ is documented (below) and was measured on all six servers on 2026-10-14; it
 is not pinned, because no fixture runs with Performance Schema off. The
 transaction-size-limit read with Performance Schema disabled was measured on
 Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 on
-2026-11-14 and is not pinned either.
+2026-11-14 and is not pinned either. The transaction-size-limit pins ran on
+Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
+(2026-11-15).
 
 **Reference:** refman 8.0, 8.4 and 9.7, "Server System Variables",
 `sql_select_limit`: "The maximum number of rows to return from SELECT
