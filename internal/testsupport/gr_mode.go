@@ -61,6 +61,20 @@ type GroupModeChange struct {
 	members  []modeMember
 	gr1UUID  string
 	restored bool
+
+	// persisted is what Restore issued to restore persisted rows.
+	persisted []PersistedRestore
+}
+
+// PersistedRestore is one statement Restore issued to put a member's persisted
+// rows back: the member as the helper names it ("primary" is gr1, "secondary"
+// gr2, "rejoiner" gr3), the member's own MEMBER_STATE read immediately before
+// the statement, and the statement. Restore records it once the statement has
+// succeeded.
+type PersistedRestore struct {
+	Member    string
+	State     string
+	Statement string
 }
 
 type modeMember struct {
@@ -165,7 +179,9 @@ func (c *GroupModeChange) waitOnlineMode(t *testing.T, want string) {
 // any state the helper's own steps or a test's STOP GROUP_REPLICATION leave:
 // it switches the group back to single-primary with gr1 primary, repairs and
 // restarts any member that is not ONLINE, then restores each member's
-// persisted rows as captured and verifies the runtime values and the rows.
+// persisted rows as captured, recording each statement (RestoredPersisted),
+// and verifies the runtime values and the rows. A call after the first issues
+// nothing.
 func (c *GroupModeChange) Restore(t *testing.T) {
 	t.Helper()
 
@@ -195,11 +211,20 @@ func (c *GroupModeChange) Restore(t *testing.T) {
 	for _, member := range c.members {
 		current := ReadMemberModeState(t, member.db)
 		for _, statement := range PersistedRestoreStatements(member.baseline.Persisted, current.Persisted) {
+			state := MemberState(t, member.db)
 			execGR(t, member.db, statement)
+			c.persisted = append(c.persisted, PersistedRestore{Member: member.role, State: state, Statement: statement})
 		}
 	}
 
 	c.verify(t)
+}
+
+// RestoredPersisted returns the statements Restore issued to restore persisted
+// rows, in the order it issued them: none before Restore has run, or when no
+// member's rows differed from its baseline.
+func (c *GroupModeChange) RestoredPersisted() []PersistedRestore {
+	return slices.Clone(c.persisted)
 }
 
 // rejoin brings a member that is not ONLINE back: one in ERROR is stopped

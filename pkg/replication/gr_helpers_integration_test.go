@@ -5,6 +5,7 @@ package replication_test
 import (
 	"database/sql"
 	"maps"
+	"slices"
 	"testing"
 
 	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
@@ -49,7 +50,10 @@ func TestGroupModeChangeRestoresFromStoppedMemberIntegration(t *testing.T) {
 // must then set gr3's checks and mode with SET GLOBAL before gr3 can rejoin,
 // and restore its persisted rows on the running member: SET PERSIST_ONLY where
 // the baseline has a row, RESET PERSIST IF EXISTS where it has none. The test
-// logs which statements that is on this server.
+// predicts gr3's two statements from the stopped member, then requires the
+// record Restore keeps of what it issued (RestoredPersisted) to hold exactly
+// those for gr3, each issued with gr3 ONLINE, and logs that record. The second
+// Restore must issue nothing.
 func TestGroupModeChangeRestoresStoppedMultiPrimaryMemberIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 	change := testsupport.StartGroupModeChange(t, topology)
@@ -67,15 +71,34 @@ func TestGroupModeChangeRestoresStoppedMultiPrimaryMemberIntegration(t *testing.
 				name, stopped.Runtime[name])
 		}
 	}
-	statements := testsupport.PersistedRestoreStatements(baseline.Persisted, stopped.Persisted)
-	if len(statements) != 2 {
-		t.Fatalf("gr3's persisted restore is %q, want two statements: the switch persists the mode and the checks",
-			statements)
+	predicted := testsupport.PersistedRestoreStatements(baseline.Persisted, stopped.Persisted)
+	if len(predicted) != 2 {
+		t.Fatalf("gr3's persisted restore, predicted while it is stopped, is %q, want two statements: "+
+			"the switch persists the mode and the checks", predicted)
 	}
-	t.Logf("gr3's persisted restore, issued on the running member: %q", statements)
 
 	change.Restore(t)
+	restored := change.RestoredPersisted()
+	t.Logf("the persisted restore Restore issued: %+v", restored)
+	var onGR3 []string
+	for _, issued := range restored {
+		if issued.Member != "rejoiner" {
+			continue
+		}
+		if issued.State != testsupport.MemberOnline {
+			t.Errorf("Restore issued %q with gr3 %q, want %s", issued.Statement, issued.State, testsupport.MemberOnline)
+		}
+		onGR3 = append(onGR3, issued.Statement)
+	}
+	if !slices.Equal(onGR3, predicted) {
+		t.Errorf("Restore issued %q on gr3, want the two statements predicted while it was stopped, %q",
+			onGR3, predicted)
+	}
+
 	change.Restore(t)
+	if again := change.RestoredPersisted(); !slices.Equal(again, restored) {
+		t.Errorf("after the second Restore the record is %+v, want it unchanged: %+v", again, restored)
+	}
 
 	assertModeChangeRestored(t, topology, change)
 }
