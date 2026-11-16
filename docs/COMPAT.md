@@ -1685,7 +1685,10 @@ the plugin is `ACTIVE`, the USAGE-only read of its row, and the read with
 Performance Schema off are measured, not documented, on Oracle 8.0.46,
 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-14). The
 transaction-size-limit pins ran on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona
-8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-15).
+8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-15). The v1.6.0 pins — the mode, the
+plugin-state differential, the uninstall and reinstall, and the consistency
+rows — ran on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12,
+9.7.2-3 (2026-11-16).
 
 **Upkeep:** when a series joins the matrix, re-read the server sites the rule
 and the envelope rest on: `test_plugin_options`, `plugin_del`,
@@ -1928,7 +1931,8 @@ Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
 (2026-11-15). The `SHOW PLUGINS` cap, the mode rows and the session
 consistency row at limit 0, each with and without the `LIMIT`, were measured
 on the same six servers (2026-11-15); the global consistency row at limit 0
-was not measured separately and is pinned.
+was not measured separately and is pinned. The v1.6.0 pins ran on Oracle
+8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-16).
 
 **Reference:** refman 8.0, 8.4 and 9.7, "Server System Variables",
 `sql_select_limit`: "The maximum number of rows to return from SELECT
@@ -2053,7 +2057,9 @@ mysql-8.0.46, mysql-8.4.13, mysql-9.7.4 and Percona-Server-8.0.46-37
 `group_replication_trans_begin`,
 `plugin/group_replication/src/observer_trans.cc`); Percona 8.4 and 9.7 rest on
 the measurement. The driver behavior is go-sql-driver v1.10.0's, measured and
-read in its `connection.go`; no other driver was measured.
+read in its `connection.go`; no other driver was measured. The pins ran on
+Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
+(2026-11-16).
 
 ## 37. While Group Replication runs, `group_replication_single_primary_mode` changes only by a group action ✅
 
@@ -2115,7 +2121,9 @@ Replication runs, that a stopped member keeps its values and is refused, the
 persisting, and the timing are measured, not documented, on Oracle 8.0.46,
 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-15). That a
 restart after the `SET GLOBAL` repair would apply the old mode again is
-inferred from what persisting is for; no member was restarted.
+inferred from what persisting is for; no member was restarted. The pins ran
+on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
+(2026-11-16).
 
 ## 38. A newly elected primary is read-only until its backlog is applied; the manual says both ✅
 
@@ -2151,7 +2159,8 @@ this one observation.
 **Reference:** documented, and contradicted by the server in part: the two
 passages above, refman 8.4 and 9.7, and "Changes in MySQL 8.0.14". Measured on
 Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
-(2026-11-15).
+(2026-11-15). The pins ran on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona
+8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-16).
 
 ---
 
