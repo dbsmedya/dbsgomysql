@@ -283,8 +283,8 @@ name's row and four when it does not:
   them to tell the modes apart: the server refuses single-primary with the
   checks on, and every switch sets them with the mode.
 - **The fields are not one snapshot.** Each reports what its own statement
-  saw; a plugin installed between them can show a name, a known limit or a
-  known mode beside a `PluginStatus` other than `ACTIVE`.
+  saw; a plugin installed between them can show a known limit or a known
+  mode beside a `PluginStatus` other than `ACTIVE`.
 - Values are spelled as the server sent them; `PluginStatus` may be any
   documented status (`ACTIVE`, `INACTIVE`, `DISABLED`, `DELETING`, `DELETED`)
   or one this release does not know.
