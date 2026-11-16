@@ -8,7 +8,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"maps"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -212,7 +211,8 @@ func TestGroupConsistencyOnDriverConnContractAIntegration(t *testing.T) {
 // TestGroupConsistencyOnDriverConnContractBIntegration is contract (b): with
 // autocommit on and with it off, a session carrying values only this test
 // knows is left exactly as found: every session variable but the two the
-// server advances by itself (sessionAdvancing) is unchanged; the fact reports
+// server advances by itself (sessionAdvancing) is unchanged, and every change,
+// addition or removal fails (sessionVariableChanges); the fact reports
 // the session's own value; no transaction is open; and the connection still
 // answers. The control shows that SET TRANSACTION READ ONLY does detect an
 // open transaction: after a table read under autocommit = 0 it fails with
@@ -252,17 +252,8 @@ func TestGroupConsistencyOnDriverConnContractBIntegration(t *testing.T) {
 			if got.SessionConsistency != "AFTER" || !got.SessionConsistencyKnown {
 				t.Errorf("GroupConsistencyOnDriverConn = %#v, want the session's own AFTER", got)
 			}
-			if after := sessionVariables(t, conn); !maps.Equal(after, before) {
-				for name, value := range before {
-					if after[name] != value {
-						t.Errorf("session variable %s = %q after the call, %q before", name, after[name], value)
-					}
-				}
-				for name := range after {
-					if _, ok := before[name]; !ok {
-						t.Errorf("session variable %s appeared after the call", name)
-					}
-				}
+			for _, change := range sessionVariableChanges(before, sessionVariables(t, conn)) {
+				t.Errorf("session variable %s", change)
 			}
 			if err := execConnErr(t, conn, "SET TRANSACTION READ ONLY"); err != nil {
 				t.Errorf("SET TRANSACTION READ ONLY after the call: %v, want success: a transaction is open", err)
