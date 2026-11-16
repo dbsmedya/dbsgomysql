@@ -9,6 +9,11 @@ import (
 // ErrNilQuerier means an Inspector was constructed without a connection.
 var ErrNilQuerier = errors.New("replication: nil Querier")
 
+// ErrNilConn means GroupConsistencyOnDriverConn was called without a driver
+// connection, untyped or a typed nil. It arrives wrapped in an *OpError, so
+// test for it with errors.Is.
+var ErrNilConn = errors.New("replication: nil driver connection")
+
 // OpError reports a failed replication fact read. Channel and Column are empty
 // when attribution to a single channel or result column is impossible. Err is
 // the underlying cause and is never nil for errors returned by this package.
@@ -17,8 +22,8 @@ var ErrNilQuerier = errors.New("replication: nil Querier")
 // provided callers do not mutate its exported fields.
 type OpError struct {
 	// Op names the facts operation that failed: "binary_log_enabled",
-	// "binary_log_status", "group_member_stats", "group_members",
-	// "group_replication", "gtid_status", "replica_status",
+	// "binary_log_status", "group_consistency", "group_member_stats",
+	// "group_members", "group_replication", "gtid_status", "replica_status",
 	// "registered_replicas", or "replication_config". One
 	// value per fact method, so a new fact is visibly missing from this list
 	// until it is added.

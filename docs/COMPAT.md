@@ -1516,43 +1516,117 @@ host on 8.4 and 9.7. A bootstrapping member that later rejoins through
 recovery was not measured. The manual does
 not say when the statement returns an empty set for a channel.
 
-## 30. Group Replication variables exist only while the plugin is ACTIVE ✅
+## 30. The Group Replication plugin's variables are returned while it is ACTIVE; `group_replication_consistency` always ✅
 
 **Affected:** every supported version, Oracle and Percona.
 
-**Symptom:** `group_replication_*` system variables are registered only while
-the plugin is `ACTIVE`. With the plugin not installed, and equally with it
-installed but `DISABLED` (`--loose-group-replication=OFF`),
+**Symptom:** the plugin's own system variables —
+`group_replication_group_name`, `group_replication_transaction_size_limit` and
+`group_replication_single_primary_mode` among them — have a row in
+`performance_schema.global_variables` only while the server returns them,
+which on every measured server was exactly while the plugin was `ACTIVE`.
+With the plugin not installed, and equally with it installed but `DISABLED`
+(`--loose-group-replication=OFF`),
 `SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_group_name'`
 returns no rows and `SELECT @@GLOBAL.group_replication_group_name` raises
 `ER_UNKNOWN_SYSTEM_VARIABLE` (1193). The two states are indistinguishable from
 the variable alone. With the plugin `ACTIVE` and no name set, the statement
 returns one row with an empty value. `group_replication_transaction_size_limit`
-follows the plugin the same way: no row and error 1193 in both states, and
-one row carrying the server's value, as plain decimal text, whenever the
-plugin is `ACTIVE`, whether or not the server is configured for a group. Its
-row disappears with `UNINSTALL PLUGIN` and returns with `INSTALL PLUGIN`.
+and `group_replication_single_primary_mode` follow the plugin the same way: no
+row and error 1193 in both states, and one row whenever the plugin is
+`ACTIVE`, whether or not the server is configured for a group — the limit as
+plain decimal text, the mode as `ON` or `OFF` (`@@GLOBAL` reads it as `1` or
+`0`). Their rows disappear with `UNINSTALL PLUGIN` and return with
+`INSTALL PLUGIN`.
 
-**Handling:** `GroupReplication` reads the plugin's status from
-`information_schema.PLUGINS` and both variables from
-`performance_schema.global_variables`, never `@@GLOBAL`, and reports absence
-as a state. The table answers every state as `SHOW GLOBAL VARIABLES` does —
-one row with the value, one row with an empty value, or none — and, unlike
-that statement, takes a `LIMIT` (entry 35). No row for the transaction size
-limit leaves `TransactionSizeLimitKnown` false and `TransactionSizeLimit` 0,
-so an unregistered variable is never reported as "no limit"; a row sets
-`TransactionSizeLimitKnown` and the value in bytes, where 0 is the manual's
-"no limit". The three statements need no privilege beyond connecting.
+`group_replication_consistency` is not one of them. It is a server system
+variable: `global_variables` and `session_variables` return its row, and
+`@@GLOBAL` and `@@SESSION` read it, with the plugin absent, `DISABLED`,
+`ACTIVE` and never started, and `ACTIVE` on a member, and its row stays
+through an `UNINSTALL PLUGIN` and `INSTALL PLUGIN`. Before v1.6.0 this entry
+said every `group_replication_*` variable was registered only while the plugin
+was `ACTIVE`; that was wrong for this one.
+
+A plugin variable's registration and its row are different things. The
+variables are registered when the plugin is loaded, not when it is
+initialized; a `DISABLED` plugin never registers them; they are removed after
+the plugin is deinitialized. So registration spans `INACTIVE`, `ACTIVE`,
+`DELETING` and `DELETED`. The row is narrower: the server returns a plugin
+variable's row while the plugin is `ACTIVE`, and also while the variable is
+registered but its plugin pointer is not yet set — from `INSTALL PLUGIN`'s
+registration until initialization completes, or, for a failed install, until
+its cleanup finally removes the variables, which can be deferred past the
+statement. It returns no row when the plugin is `DISABLED` or absent, and,
+once initialization has completed, none while the plugin is not `ACTIVE`.
+
+**Handling:** `GroupReplication` and `GroupConsistency` read every variable
+from `performance_schema.global_variables`, and the session's
+`group_replication_consistency` from `performance_schema.session_variables`,
+never with `@@`, and report absence as a state. Each statement takes a `LIMIT`
+(entry 35). No row for the transaction size limit or the mode leaves its Known
+flag false and the value empty or 0, so an unregistered variable is never
+reported as "no limit" or as a mode; a row sets the flag and the value as the
+server spelled it, where a limit of 0 is the manual's "no limit".
+
+`PluginStatus`, in both facts, is `ACTIVE` exactly when the server returns the
+`group_replication_group_name` row; otherwise it is the `PLUGIN_STATUS` of
+`information_schema.PLUGINS`, read last and only then, or empty when that has
+no row. The probe must be a variable the plugin itself defines:
+`group_name` is `MYSQL_SYSVAR_STR(group_name, …)` in
+`plugin/group_replication/src/plugin.cc`, while `group_replication_consistency`
+is the server's `Sys_group_replication_consistency` in `sql/sys_vars.cc` on all
+three series and would report every server `ACTIVE`.
+
+The derivation has one divergence, stated as an envelope so that a further
+rare path inside it is not a defect. While the plugin's variables are
+registered but its initialization has not completed — from
+`INSTALL PLUGIN group_replication` until initialization completes, or until a
+failed install's variables are finally removed, which can be after the
+statement — `PluginStatus` reads `ACTIVE` where the server lists `INACTIVE`,
+`DELETING` or `DELETED`. No short bound is claimed: the window can span a whole
+synchronous group join and can outlast the `INSTALL` statement, and every read
+in such a state takes this branch. What stays exact: once initialization has
+completed, a hidden row means the plugin is not `ACTIVE`, and an initialized
+plugin's teardown is reported with its raw status. Paths found so far, given
+as examples and not as an exhaustive list: the `INSTALL` path from
+`plugin_add` through the `mysql.plugin` row write and the init callback; a
+runtime `INSTALL` with `group_replication_start_on_boot = ON`, where the group
+join happens inside initialization, before the pointer is set; a failed
+install's cleanup through `reap_plugins`, `plugin_deinitialize` and
+`plugin_del`; and a failed install's `DELETED` plugin kept from being reaped by
+observer references retained under
+`replication_optimize_for_static_plugin_config`. A path found later inside the
+envelope is not a defect; a wrong answer from a plugin whose initialization has
+completed, or a held statement while the group name's row is returned, would
+be. The statements need no privilege beyond connecting.
+
 Delivered in **v1.3.0**; the variable read moved to the table in **v1.4.0**;
-the transaction size limit was added in **v1.5.0**. Pinned by
+the transaction size limit was added in **v1.5.0**; the mode, `GroupConsistency`
+and the derivation of `PluginStatus` from the group name's row in **v1.6.0**.
+Pinned by
 [`TestCompat30GroupReplicationPluginStatesIntegration`](../pkg/replication/group_replication_integration_test.go)
 on all four states, each read by a USAGE-only account; on the cluster member
 it reads a non-empty group name, so a refused read fails it. On the two
-`ACTIVE` states it requires the limit that root reads with `@@GLOBAL` on the
-same server, never a default, and on the other two no row and error 1193 for
-it. [`TestGroupReplicationTransactionSizeLimitFollowsServerIntegration`](../pkg/replication/group_replication_integration_test.go)
+`ACTIVE` states it requires the limit and the mode that root reads with
+`@@GLOBAL` on the same server, never a default, and on the other two no row and
+error 1193 for each variable. In every state it also requires both facts'
+`PluginStatus` to equal the account's own direct `information_schema.PLUGINS`
+read, with the group name's row absent exactly on the absent and `DISABLED`
+servers: the tripwire for a series that moves `group_name` into the server, as
+happened to `group_replication_consistency`.
+[`TestGroupReplicationTransactionSizeLimitFollowsServerIntegration`](../pkg/replication/group_replication_integration_test.go)
 sets the limit to 0, 1 and 2147483647 on the standalone `ACTIVE` server and
-requires the fact to report each.
+requires the fact to report each;
+[`TestGroupReplicationSinglePrimaryModeFollowsServerIntegration`](../pkg/replication/group_replication_integration_test.go)
+sets the mode `OFF` and back there.
+[`TestCompat30PluginUninstallInstallIntegration`](../pkg/replication/group_replication_integration_test.go)
+uninstalls and reinstalls the plugin on that server and requires `""` and then
+`ACTIVE` from both facts, each equal to the direct read.
+[`TestGroupConsistencyStatesIntegration`](../pkg/replication/group_consistency_integration_test.go)
+requires the consistency rows in every state. The divergent states, and
+`INACTIVE`, `DELETING` and `DELETED` in an initialized plugin's teardown,
+were not run and are not pinned; they cannot be pinned deterministically from
+outside a debug build.
 
 **Reference:** live behavior goes beyond the documentation. Refman 8.4,
 "Performance Schema General Table Characteristics": "To retrieve from
@@ -1570,10 +1644,29 @@ required to view the values of sensitive system variables in these tables";
 `group_replication_group_name` is not one. The library relies on the
 measurement and the pin, not on the manual. Refman 8.0, 8.4 and 9.7, "The
 INFORMATION_SCHEMA PLUGINS Table", identical (`PLUGIN_STATUS` is "one of
-ACTIVE, INACTIVE, DISABLED, DELETING, or DELETED"). Error 1193
-`ER_UNKNOWN_SYSTEM_VARIABLE`, SQLSTATE HY000 (MySQL 8.0, 8.4 and 9.7 Error
-Message References). The DISABLED behavior is measured, not documented
-(2026-10-12, all six servers).
+ACTIVE, INACTIVE, DISABLED, DELETING, or DELETED"); the manual gives none of
+the five a meaning. Error 1193 `ER_UNKNOWN_SYSTEM_VARIABLE`, SQLSTATE HY000
+(MySQL 8.0, 8.4 and 9.7 Error Message References). The DISABLED behavior is
+measured, not documented (2026-10-12, all six servers).
+
+Refman 8.0, 8.4 and 9.7, "Group Replication Variables":
+`group_replication_consistency` is "a server system variable rather than a
+Group Replication plugin-specific variable"; it was added in 8.0.14 ("Changes
+in MySQL 8.0.14", WL #11123). That its row is present without the plugin is
+measured, not documented. On the plugin's own variables the manual is silent
+about the lifecycle: refman 8.4, "Using System Variables", says plugin
+variables "are exposed when the plugin is installed", and no more. The rule
+in the **Symptom** and the divergence in the **Handling** are the server source,
+read and not run, at mysql-8.0.46, mysql-8.4.13, mysql-9.7.4 and
+Percona-Server-8.0.46-37 (Percona 8.4 and 9.7 source not read). Measured, and
+consistent with it, on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37,
+8.4.11-12, 9.7.2-3 (2026-11-15): no row for the plugin's variables with the
+plugin absent or `DISABLED`, a row when it is `ACTIVE`; after
+`UNINSTALL PLUGIN` on a server whose plugin is `ACTIVE` and never started, no
+`information_schema.PLUGINS` row, no `SHOW PLUGINS` row and no row for
+`group_name` or `single_primary_mode`, and all of them back as `ACTIVE` after
+`INSTALL PLUGIN`; `group_replication_consistency`'s row throughout. `INACTIVE`,
+`DELETING` and `DELETED` were not observed.
 
 Refman 8.0, 8.4 and 9.7, "Group Replication Variables", identical:
 `group_replication_transaction_size_limit` is global and dynamic, an integer
@@ -1592,7 +1685,21 @@ the plugin is `ACTIVE`, the USAGE-only read of its row, and the read with
 Performance Schema off are measured, not documented, on Oracle 8.0.46,
 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-14). The
 transaction-size-limit pins ran on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona
-8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-15).
+8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-15). The v1.6.0 pins — the mode, the
+plugin-state differential, the uninstall and reinstall, and the consistency
+rows — ran on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12,
+9.7.2-3 (2026-11-16).
+
+**Upkeep:** when a series joins the matrix, re-read the server sites the rule
+and the envelope rest on: `test_plugin_options`, `plugin_del`,
+`plugin_initialize`, `mysql_install_plugin`, `reap_plugins`,
+`plugin_deinitialize` and `intern_plugin_lock` (`sql/sql_plugin.cc`);
+`visit_plugin_variable` (`sql/set_var.cc`); `Delegate::add_observer` /
+`acquire_plugin_ref_count` and the `trans_begin` dispatch
+(`Trans_delegate::trans_begin` through `FOREACH_OBSERVER_ERROR_OUT`,
+`sql/rpl_handler.cc`); and `group_replication_trans_begin`
+(`plugin/group_replication/src/observer_trans.cc`). The list is what the
+envelope rests on, not a proof that no other path exists.
 
 ## 31. `replication_group_members` reports a row without a running group ✅
 
@@ -1768,7 +1875,11 @@ one: fewer columns, triggers, keys or grant rows than exist, and at a limit of
 0 no row at all, which a zero-or-one-row read such as the Group Replication
 plugin lookup takes for "absent". `SHOW GLOBAL VARIABLES` and
 `SHOW GLOBAL STATUS` are capped the same way — no row at a limit of 0, at most
-N at N — and take no `LIMIT` to override it. `SHOW REPLICA STATUS`, `SHOW REPLICAS`,
+N at N — and take no `LIMIT` to override it. So is `SHOW PLUGINS`: 0, 1, 5 and
+20 rows at limits 0, 1, 5 and 20, of 48 to 50 uncapped on 8.0 and 8.4 and 46
+to 48 on 9.7, with the `group_replication` row at position 49 (8.0, 8.4) or 47
+(9.7); under any lower limit an `ACTIVE` plugin has no row there, and the
+statement takes no `LIMIT`, `LIKE` or `WHERE`. `SHOW REPLICA STATUS`, `SHOW REPLICAS`,
 `SHOW BINARY LOG STATUS` and `SHOW MASTER STATUS` are not capped: each returned
 every row at limits 0 and 1, with more rows than the limit where the statement
 can return several.
@@ -1777,14 +1888,18 @@ can return several.
 `LIMIT 18446744073709551615`, the variable's own maximum, appended after the
 statement's final `WHERE` or `ORDER BY` and after the narrowed or unnarrowed
 form is chosen. Inner and derived queries are left alone. The library never
-sets or reads the session variable. `GroupReplication` reads the group name
-and the transaction size limit from `performance_schema.global_variables`
-rather than with `SHOW GLOBAL VARIABLES`, which at a limit of 0 returned no
-row and an empty `GroupName` for a configured member; the table answers
-every plugin state as the `SHOW` did, a USAGE-only account reads it
-(entry 30), and it is populated
-with Performance Schema disabled. The four `SHOW` statements `pkg/replication`
-still issues are unaffected and unchanged. Pinned by
+sets or reads the session variable. `GroupReplication` reads the group name,
+the transaction size limit and the single-primary mode, and `GroupConsistency`
+the global `group_replication_consistency`, from
+`performance_schema.global_variables`, and `GroupConsistency` reads the
+session's value from `performance_schema.session_variables`, rather than with
+`SHOW GLOBAL VARIABLES` or `SHOW SESSION VARIABLES`, which at a limit of 0
+returned no row and an empty `GroupName` for a configured member; the tables
+answer every plugin state as the `SHOW` did, a USAGE-only account reads them
+(entry 30), and they are populated
+with Performance Schema disabled. The library issues no `SHOW PLUGINS`. The
+four `SHOW` statements `pkg/replication` still issues are unaffected and
+unchanged. Pinned by
 [`TestEverySelectEndsWithMaximumLimit`](../pkg/validations/select_limit_test.go)
 (every fact, narrowed and unnarrowed),
 [`TestCompat35FactsIgnoreSessionSelectLimitIntegration`](../pkg/validations/select_limit_integration_test.go),
@@ -1793,8 +1908,15 @@ still issues are unaffected and unchanged. Pinned by
 [`TestCompat35GrantsWithRolesIgnoreSessionSelectLimitIntegration`](../pkg/validations/select_limit_integration_test.go),
 [`TestCompat35VariableFactsIgnoreSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go),
 [`TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go)
-(the group name and the transaction size limit at limit 0, on the primary and
-on both standalone servers)
+(the whole `GroupReplication` and `GroupConsistency` at limits 0 and 1, on the
+primary and on both standalone servers, and `GroupConsistency` on the source
+without the plugin),
+[`TestGroupConsistencyStatesIntegration`](../pkg/replication/group_consistency_integration_test.go)
+(the whole `GroupConsistency` at limit 0 in every plugin state, through the
+`Inspector` and the driver function),
+[`TestCompat35GroupFactsForUsageAccountUnderSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go)
+(the whole `GroupReplication` and `GroupConsistency` at limits 0 and 1, read
+by a USAGE-only account in every plugin state and on both members)
 and
 [`TestCompat35ShowFactsUnderSessionSelectLimitIntegration`](../pkg/replication/select_limit_integration_test.go)
 (the four `SHOW` statements unaffected; `SHOW GLOBAL VARIABLES` capped).
@@ -1806,7 +1928,11 @@ transaction-size-limit read with Performance Schema disabled was measured on
 Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 on
 2026-11-14 and is not pinned either. The transaction-size-limit pins ran on
 Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
-(2026-11-15).
+(2026-11-15). The `SHOW PLUGINS` cap, the mode rows and the session
+consistency row at limit 0, each with and without the `LIMIT`, were measured
+on the same six servers (2026-11-15); the global consistency row at limit 0
+was not measured separately and is pinned. The v1.6.0 pins ran on Oracle
+8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-16).
 
 **Reference:** refman 8.0, 8.4 and 9.7, "Server System Variables",
 `sql_select_limit`: "The maximum number of rows to return from SELECT
@@ -1823,7 +1949,218 @@ needs `SELECT`; for `global_variables` a USAGE-only account succeeded on every
 server measured, and entry 30's pin holds the library to that. The syntax
 sections "SHOW REPLICA STATUS Statement", "SHOW REPLICAS Statement", "SHOW
 VARIABLES Statement", "SHOW BINARY LOG STATUS Statement" and (8.0) "SHOW
-MASTER STATUS Statement" offer no `LIMIT` clause.
+MASTER STATUS Statement" offer no `LIMIT` clause, and refman 8.4, "SHOW
+PLUGINS Statement", offers no `LIMIT`, `LIKE` or `WHERE`. That
+`sql_select_limit` caps `SHOW PLUGINS` is not documented: the variable is
+described for `SELECT` statements.
+
+## 36. On a newly elected primary under a fence, `GroupReplication`'s v1.5.0 `information_schema.PLUGINS` read and `START TRANSACTION` are held; the replication facts' `performance_schema`, `@@` and listed `SHOW` reads are not ✅
+
+**Affected:** every supported version, Oracle and Percona; the manual words
+the permitted-statement list per series.
+
+**Symptom:** when a member becomes primary while its applier still has a
+backlog, a session whose `group_replication_consistency` is
+`BEFORE_ON_PRIMARY_FAILOVER`, `AFTER` or `BEFORE_AND_AFTER` has its statements
+held until the backlog is applied, unless the statement is one the manual
+permits. A held statement ends with 3781 `ER_GR_HOLD_WAIT_TIMEOUT` once
+`wait_timeout` passes under `BEFORE_ON_PRIMARY_FAILOVER` and `AFTER`, and with
+3797 `ER_GRP_TRX_CONSISTENCY_BEFORE` under `BEFORE` and `BEFORE_AND_AFTER`.
+Measured held: a table read, the v1.5.0 `GroupReplication`'s
+`information_schema.PLUGINS` read, and `START TRANSACTION` and
+`START TRANSACTION READ ONLY`, each alone. Measured passing, in about 0.05 s:
+every `performance_schema` read the replication facts issue, their `@@GLOBAL`
+reads, `SHOW REPLICA STATUS`, `SHOW REPLICAS`, whichever of
+`SHOW BINARY LOG STATUS` and `SHOW MASTER STATUS` the series accepts,
+`SHOW PLUGINS` and `SELECT 1`. The same with `autocommit = 0`. Under session
+`BEFORE` on a lagging secondary — not a fence, the `BEFORE` wait — the
+`information_schema.PLUGINS` read is held too, with 3797, and the same reads
+pass. The hold needs Group Replication running: on a server whose plugin is
+`ACTIVE` and never started, and on the new primary once its backlog is
+applied, `information_schema.PLUGINS` under a fencing value is answered at
+once.
+
+**Handling:** from v1.6.0 every replication fact passes a fence.
+`GroupReplication` and `GroupConsistency` read `information_schema.PLUGINS`
+only when the group name's row is not returned (entry 30); with the row they
+issue only `performance_schema` reads, which never reach the hook that holds a
+statement. The residual, stated conservatively: when the row is not returned,
+both facts issue the `information_schema.PLUGINS` read, which is a statement a
+fence can hold. On the measured topology the row was absent only where Group
+Replication was not running. The source shows plugin-teardown interleavings —
+an `UNINSTALL`, or a failed `INSTALL`, especially with
+`replication_optimize_for_static_plugin_config` keeping a Group Replication
+observer callable — in which that read might reach the plugin's
+transaction-begin observer while a `BEFORE`-class session is fenced; there it
+can wait, and then returns the raw status or an error, never a wrong answer.
+Not measured. In ordinary dispatch the observer is reached only through the
+plugin-lock gate, which admits only a plugin that is ready or uninitialized;
+static-plugin dispatch uses the retained reference. Not reachable by a new
+`INSTALL` or `UNINSTALL` on a fenced primary: each needs a `mysql.plugin`
+write before the plugin is initialized or its state is touched, and
+`super_read_only` refuses that write — measured as 1290
+`ER_OPTION_PREVENTS_STATEMENT` for `UNINSTALL` on a running secondary, and
+inferred for the fenced primary, which also has `super_read_only = 1`
+(entry 38).
+
+A `*sql.Tx` cannot be begun on a fenced primary, because `START TRANSACTION`
+is itself held; statements inside a transaction opened before the election
+were not measured. A consumer that cancels a held read: with go-sql-driver
+v1.10.0 a context deadline ends a held `QueryContext` at the deadline with
+`context.DeadlineExceeded`, after which the driver has invalidated the
+connection (`driver.ErrBadConn` on its next use) and the server thread stays
+held until the hold ends or its `wait_timeout` passes. The library returns the
+driver's error wrapped and never closes the connection.
+
+Pinned by
+[`TestCompat36FencedPrimaryIntegration`](../pkg/replication/fence_integration_test.go):
+the test-support fence holds the secondary's applier with `LOCK TABLES … READ`,
+commits a write on the primary, elects the secondary with
+`group_replication_set_as_primary`, and requires it `PRIMARY` with
+`super_read_only = 1`. Then, in fresh sessions with `wait_timeout` 5 and the
+fencing value once set on the session and once inherited from the global,
+every replication fact must return within 20 s with sane values, between held
+controls — a table read and the `information_schema.PLUGINS` read, each 3781 —
+so the test cannot pass with the fence down; and a held table read through the
+driver function's one-statement reader must end at a 1 s deadline with
+`context.DeadlineExceeded` wrapped in an `*OpError`.
+[`TestCompat36UninstallRefusedOnSecondaryIntegration`](../pkg/replication/group_replication_integration_test.go)
+pins the 1290 on a running secondary. The `AFTER`, `BEFORE` and
+`BEFORE_AND_AFTER` columns, `START TRANSACTION` and the lagging-secondary case
+are measured, not pinned.
+
+**Reference:** refman 8.0, 8.4 and 9.7, "Configuring Transaction Consistency
+Guarantees", "Permitted Queries Under Consistency Rules": `SHOW` statements
+that depend only on status and configuration (`SHOW PLUGINS` named), `SET`,
+`DO` without tables or loadable functions, `EMPTY`, `USE`, `SELECT` on
+`performance_schema` and `sys`, `SELECT` on `information_schema.PROCESSLIST`
+only, `SELECT` without tables or loadable functions, `STOP GROUP_REPLICATION`,
+`SHUTDOWN` and `RESET PERSIST`. The three lists agree in every category and
+differ in one statement: 8.0 names `SHOW MASTER STATUS` where 8.4 and 9.7 name
+`SHOW BINARY LOG STATUS`. 8.0 dates the restricted `SHOW` list to 8.0.27
+("Changes in MySQL 8.0.27", Bug #33082509: "now only SHOW statements that do
+not depend on data (only on status or configuration) are exempt"), below this
+library's 8.0.40 floor. `information_schema.PROCESSLIST` is the only
+`information_schema` table named. Refman 8.4, "Impact of Consistency on
+Primary Election": a held statement ends with `ER_GR_HOLD_WAIT_TIMEOUT` once
+`wait_timeout` passes. Errors 3781 `ER_GR_HOLD_WAIT_TIMEOUT`, 3797
+`ER_GRP_TRX_CONSISTENCY_BEFORE` and 1290 `ER_OPTION_PREVENTS_STATEMENT`
+(MySQL 8.4 Error Message Reference). Which statements pass, the 3781/3797
+split, `START TRANSACTION` and the lagging-secondary case are measured, in 244
+cells identical on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37,
+8.4.11-12, 9.7.2-3 (2026-11-15); `UNINSTALL` on the fenced primary was not
+run. Where the hold is, why a `performance_schema` read never reaches it, the
+plugin-lock gate and the residual are the server source, read and not run, at
+mysql-8.0.46, mysql-8.4.13, mysql-9.7.4 and Percona-Server-8.0.46-37
+(`launch_hook_trans_begin` and `Trans_delegate::trans_begin`,
+`sql/rpl_handler.cc`; `intern_plugin_lock`, `sql/sql_plugin.cc`;
+`group_replication_trans_begin`,
+`plugin/group_replication/src/observer_trans.cc`); Percona 8.4 and 9.7 rest on
+the measurement. The driver behavior is go-sql-driver v1.10.0's, measured and
+read in its `connection.go`; no other driver was measured. The pins ran on
+Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
+(2026-11-16).
+
+## 37. While Group Replication runs, `group_replication_single_primary_mode` changes only by a group action ✅
+
+**Affected:** every supported version, Oracle and Percona.
+
+**Symptom:** on a member running Group Replication,
+`SET GLOBAL group_replication_single_primary_mode` and
+`SET GLOBAL group_replication_enforce_update_everywhere_checks` are refused
+with 3093 and the message "Please use the
+group_replication_switch_to_single_primary_mode([member_uuid]) OR
+group_replication_switch_to_multi_primary_mode() UDF". The functions
+`group_replication_switch_to_multi_primary_mode()` and
+`group_replication_switch_to_single_primary_mode()` change the mode on every
+`ONLINE` member, set `group_replication_enforce_update_everywhere_checks` `ON`
+and `OFF` respectively, and persist both variables on every member they reach.
+Each `ONLINE` member's value changed with the function: polled about every
+52 ms, the last sample with the old value came 11 to 53 ms before the function
+returned and the first with the new value at most 41 ms after it. A member
+whose Group Replication is stopped during a switch keeps its old values; its
+`START GROUP_REPLICATION` then fails with 3092 and its error log carries
+MY-011529 ("The member configuration is not compatible with the group
+configuration"). It joins once its values match the group's: after the group
+switches back, or after `SET GLOBAL` of both variables on it (the update
+checks first when going to single-primary). `SET GLOBAL` does not persist, so
+after that repair the member's persisted values still hold the old mode. No
+member was observed `ONLINE` with a mode different from its own variable. With
+the plugin `ACTIVE` and Group Replication not started, both variables are
+settable, except that the server refuses the update checks `ON` while the mode
+is `ON`, and the mode `ON` while the checks are `ON` (1231 both ways).
+
+**Handling:** `GroupReplication.SinglePrimaryMode` reports the queried server's
+value as it sends it, never reconciled with another member's. On an `ONLINE`
+member that is the group's mode; on a stopped member, or a server in no group,
+it is that server's own configured value, and "known" means configured, not in
+force. Read it as the mode in force only together with the member's own
+`ONLINE` row from `GroupMembers`. The library issues no `SET` and calls no
+switch function. Pinned by
+[`TestCompat37GroupModeSwitchIntegration`](../pkg/replication/group_replication_integration_test.go):
+it switches the group to multi-primary and back with the functions and
+requires every `ONLINE` member to report the group's mode after each; then a
+member stopped before a switch keeps and reports its own value while the
+others report the group's; the test-support mode helper restores
+single-primary with the first member primary, every member `ONLINE` and every
+member's persisted rows as captured, and verifies them.
+[`TestGroupReplicationSinglePrimaryModeFollowsServerIntegration`](../pkg/replication/group_replication_integration_test.go)
+sets the mode `OFF` and back on the server whose plugin is `ACTIVE` and never
+started. The 3093 and 3092 refusals, the 1231 constraint and the timing are
+measured, not pinned.
+
+**Reference:** refman 8.4, "Group Replication Variables": the mode is a
+group-wide setting; refman 8.4, "Changing to Single-Primary Mode": the switch
+to single-primary sets `group_replication_enforce_update_everywhere_checks`
+`OFF`. MySQL 8.4 Error Message Reference: 3092 `ER_GROUP_REPLICATION_CONFIGURATION`,
+3093 `ER_GROUP_REPLICATION_RUNNING` (its listed message is "The START
+GROUP_REPLICATION command failed since the group is already running"; the
+server sends the text above under the same number), 1231
+`ER_WRONG_VALUE_FOR_VAR`. That a `SET GLOBAL` is refused only while Group
+Replication runs, that a stopped member keeps its values and is refused, the
+persisting, and the timing are measured, not documented, on Oracle 8.0.46,
+8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-15). That a
+restart after the `SET GLOBAL` repair would apply the old mode again is
+inferred from what persisting is for; no member was restarted. The pins ran
+on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
+(2026-11-16).
+
+## 38. A newly elected primary is read-only until its backlog is applied; the manual says both ✅
+
+**Affected:** every supported version, Oracle and Percona.
+
+**Symptom:** after `group_replication_set_as_primary` elects a member whose
+applier still has a backlog, the member reports itself `PRIMARY` in
+`replication_group_members` with `super_read_only = 1` until the backlog is
+applied, and an `EVENTUAL` session there reads data without the backlog's
+rows. In the same state its own `COUNT_TRANSACTIONS_REMOTE_IN_APPLIER_QUEUE`
+in `replication_group_member_stats` read 1 while a worker held the
+transaction, on every server measured. These are observed values only.
+
+The manual contradicts itself. Refman 8.4, "Configuring Transaction
+Consistency Guarantees", says `EVENTUAL` lets the new primary "accept new
+read-only and read/write transactions before the previous primary transactions
+are all applied". Refman 8.4 and 9.7, "Group Replication Variables", for
+`group_replication_consistency`'s `EVENTUAL`, says read/write transactions
+"are not allowed", and "Changes in MySQL 8.0.14" says writes "fail during this
+period because it is has super_read_only mode enabled". The server matches the
+second reading.
+
+**Handling:** no fact changes. `ReplicationConfig` reports `SuperReadOnly` as
+the server sends it; read it with the member's own role from `GroupMembers` to
+tell a new primary that is still applying its backlog. Pinned by
+[`TestCompat36FencedPrimaryIntegration`](../pkg/replication/fence_integration_test.go):
+the test-support fence requires `super_read_only = 1` on the new primary once
+it reports `PRIMARY`, and `ReplicationConfig` on the fenced primary must report
+`SuperReadOnly` true. The stale `EVENTUAL` read and the queue counter are
+measured, not pinned, and the queue facts' documentation does not change on
+this one observation.
+
+**Reference:** documented, and contradicted by the server in part: the two
+passages above, refman 8.4 and 9.7, and "Changes in MySQL 8.0.14". Measured on
+Oracle 8.0.46, 8.4.13, 9.7.4 and Percona 8.0.46-37, 8.4.11-12, 9.7.2-3
+(2026-11-15). The pins ran on Oracle 8.0.46, 8.4.13, 9.7.4 and Percona
+8.0.46-37, 8.4.11-12, 9.7.2-3 (2026-11-16).
 
 ---
 

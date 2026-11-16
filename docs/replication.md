@@ -1,6 +1,6 @@
 # pkg/replication — Consumer Guide
 
-> **Status:** nine facts and all nine catalog checks are implemented. Track
+> **Status:** ten facts and all nine catalog checks are implemented. Track
 > shipped changes in [CHANGELOG.md](../CHANGELOG.md).
 
 `pkg/replication` has two layers built on one connection:
@@ -64,11 +64,17 @@ first fact call as `replication.ErrNilQuerier` rather than at construction.
 Point it at the server whose state you want. A replica's channel status lives
 on the replica; the list of registered replicas lives on the source.
 
+One function reads from a driver connection instead of an `Inspector`:
+`GroupConsistencyOnDriverConn`, for a caller that must read before
+`database/sql` hands the connection out (see
+[Reading on one session, and from a driver connection](#reading-on-one-session-and-from-a-driver-connection)).
+It still opens, configures and closes nothing.
+
 Every `SELECT` the library issues ends with its own `LIMIT`, so a
 `sql_select_limit` inherited from the server's global value or set on the
 session cannot truncate a fact. The `SHOW` statements it issues were measured
-unaffected by the variable; `SHOW VARIABLES` is not, which is why neither
-Group Replication variable is read with it (see [COMPAT.md](COMPAT.md) entry
+unaffected by the variable; `SHOW VARIABLES` is not, which is why no Group
+Replication variable is read with it (see [COMPAT.md](COMPAT.md) entry
 35). Your own
 queries on the same connection are still capped by it.
 
@@ -84,20 +90,23 @@ Every call takes a `context.Context` first and returns `(fact, error)`.
 | `GTIDStatus(ctx)` | `@@GLOBAL.gtid_mode`, `gtid_executed`, `gtid_purged` | — | GTID mode and both sets |
 | `ReplicationConfig(ctx)` | five `@@GLOBAL` variables | — | read-only state, server id, applier configuration |
 | `RegisteredReplicas(ctx)` | `SHOW REPLICAS` | **`REPLICATION SLAVE`** | which replicas have registered with this source |
-| `GroupReplication(ctx)` | `information_schema.PLUGINS`, then `performance_schema.global_variables` twice | — | is the Group Replication plugin active, which group name is configured, and what transaction size limit? |
+| `GroupReplication(ctx)` | `performance_schema.global_variables` three times, then `information_schema.PLUGINS` only without the group name's row | — | is the Group Replication plugin active, which group name is configured, what transaction size limit, and which mode? |
+| `GroupConsistency(ctx)` | `performance_schema.global_variables` twice and `session_variables` once, then `information_schema.PLUGINS` only without the group name's row | — | the plugin's state, and `group_replication_consistency` for the session read on and for the server |
 | `GroupMembers(ctx)` | `performance_schema.replication_group_members` | **`SELECT` on that table** | this member's view of its group: one `GroupMember` per row, normally one per member |
 | `GroupMemberStats(ctx)` | `performance_schema.replication_group_member_stats` | **`SELECT` on that table** | the certification and applier counters this member holds, one `GroupMemberStats` per row, normally one per member |
 
 The three variable facts read global system variables, and
-`GroupReplication` needs no privilege beyond connecting either. The other
+`GroupReplication` and `GroupConsistency` need no privilege beyond connecting
+either. The other
 statement-backed facts carry a documented privilege requirement, and
 `RegisteredReplicas` needs a *different* grant from `ReplicaStatus` and
 `BinaryLogStatus`: `REPLICATION SLAVE`, not `REPLICATION CLIENT`.
 `GroupMembers` and `GroupMemberStats` each need `SELECT` on their own
 Performance Schema table, which neither of those grants gives. An account that
 can read every status fact can still be refused there, and that refusal arrives
-as an error, never as an empty list. `GroupReplication` reads Performance
-Schema too, but only `global_variables`, which a USAGE-only account can read
+as an error, never as an empty list. `GroupReplication` and `GroupConsistency`
+read Performance Schema too, but only `global_variables` and
+`session_variables`, which a USAGE-only account can read
 ([COMPAT.md](COMPAT.md) entry 30).
 
 ```go
@@ -108,6 +117,7 @@ gtid, err := insp.GTIDStatus(ctx)
 config, err := insp.ReplicationConfig(ctx)
 replicas, err := insp.RegisteredReplicas(ctx)
 gr, err := insp.GroupReplication(ctx)
+consistency, err := insp.GroupConsistency(ctx)
 members, err := insp.GroupMembers(ctx)
 stats, err := insp.GroupMemberStats(ctx)
 ```
@@ -183,32 +193,50 @@ that settles it.
 
 ### Is this server configured for a group?
 
-`GroupReplication` answers three questions with three statements, and needs
-no privilege beyond connecting:
+`GroupReplication` answers four questions, needs no privilege beyond
+connecting, and issues three statements when the server returns the group
+name's row and four when it does not:
 
-| Server state | `PluginStatus` | `GroupName` | `TransactionSizeLimit` | `TransactionSizeLimitKnown` |
+| Server state | `PluginStatus` | `GroupName` | `TransactionSizeLimit` (`Known`) | `SinglePrimaryMode` (`Known`) |
 |---|---|---|---|---|
-| plugin not installed | `""` | `""` | `0` | `false` |
-| plugin installed but `DISABLED` | `"DISABLED"` | `""` | `0` | `false` |
-| plugin `ACTIVE`, no group name set | `"ACTIVE"` | `""` | the server's limit | `true` |
-| configured member, in any member state | `"ACTIVE"` | the group's UUID | the member's limit | `true` |
+| plugin not installed | `""` | `""` | `0` (`false`) | `""` (`false`) |
+| plugin installed but `DISABLED` | `"DISABLED"` | `""` | `0` (`false`) | `""` (`false`) |
+| plugin `ACTIVE`, no group name set | `"ACTIVE"` | `""` | the server's limit (`true`) | the configured value, `ON` by default (`true`) |
+| `ONLINE` member | `"ACTIVE"` | the group's UUID | the member's limit (`true`) | the group's mode (`true`) |
+| member with Group Replication stopped | `"ACTIVE"` | the group's UUID | the member's limit (`true`) | the member's own value, which may differ from the group's (`true`) |
 
 - **Absence is a state, never an error.** An error always means the read
   failed: transport, privilege, more than one row, a `NULL`, or an
-  undecodable value. All three statements must succeed; you never get half a
-  fact. A failure of the limit read says so: its cause begins
-  `variable group_replication_transaction_size_limit: `.
-- **A `DISABLED` plugin hides both variables** exactly as a missing plugin
-  does, which is why the fact reads the plugin's own status
+  undecodable value. Every statement the fact issues must succeed; you never
+  get half a fact. A failure of the limit read says so: its cause begins
+  `variable group_replication_transaction_size_limit: `; a failure of the mode
+  read begins `variable group_replication_single_primary_mode: `.
+- **`PluginStatus` is `ACTIVE` exactly when the server returns the group
+  name's row.** The fact reads the group name, the limit and the mode from
+  `performance_schema.global_variables` first, and reads
+  `information_schema.PLUGINS` last and only when the group name's row was not
+  returned, reporting its status, or `""` with no row. So with the plugin
+  `ACTIVE` every statement reads `performance_schema`, and a fence on a newly
+  elected primary holds none of them (see [Under a fence](#under-a-fence)).
+  The answer is the server's own listing in every state but one window: while
+  the plugin's variables are registered but its initialization has not
+  completed — from `INSTALL PLUGIN group_replication` until initialization
+  completes, or until a failed install's variables are finally removed, which
+  can be after the statement — `PluginStatus` reads `ACTIVE` where the server
+  lists `INACTIVE`, `DELETING` or `DELETED`. No short bound applies
+  ([COMPAT.md](COMPAT.md) entry 30).
+- **A `DISABLED` plugin hides all three variables** exactly as a missing
+  plugin does, which is why the fact then reads the plugin's own status
   ([COMPAT.md](COMPAT.md) entry 30). Never read
-  `@@GLOBAL.group_replication_group_name` or
-  `@@GLOBAL.group_replication_transaction_size_limit` yourself: each raises
+  `@@GLOBAL.group_replication_group_name`,
+  `@@GLOBAL.group_replication_transaction_size_limit` or
+  `@@GLOBAL.group_replication_single_primary_mode` yourself: each raises
   error 1193 whenever the variable is not registered.
-- **Both variables come from `performance_schema.global_variables`,** which
+- **Every variable comes from `performance_schema.global_variables`,** which
   any account can read — unlike the two Performance Schema tables below — and
-  which is populated even with Performance Schema disabled. They are not read
-  with `SHOW GLOBAL VARIABLES`: a `sql_select_limit` of 0 empties that
-  statement ([COMPAT.md](COMPAT.md) entry 35).
+  which is populated even with Performance Schema disabled. None is read with
+  `SHOW GLOBAL VARIABLES`: a `sql_select_limit` of 0 empties that statement
+  ([COMPAT.md](COMPAT.md) entry 35).
 - **A non-empty `GroupName` proves configuration, not membership.** A server
   can carry a name and never have joined a running group. What that means for
   your job is your policy.
@@ -234,12 +262,155 @@ no privilege beyond connecting:
   proves configuration, not enforcement: the manual describes it as the
   largest transaction the group accepts, and a server that is not in a running
   group reports its value all the same.
+- **`SinglePrimaryMode` is `ON` for single-primary and `OFF` for
+  multi-primary,** as `performance_schema.global_variables` spells it; any
+  other text is reported as sent. Read `SinglePrimaryModeKnown` first: `false`
+  means the variable's row was not returned, and the mode is unknown.
+- **On an `ONLINE` member the mode is the group's.** While Group Replication
+  runs, `SET GLOBAL` of the mode is refused and only the group's switch
+  functions change it, on every `ONLINE` member within milliseconds of the
+  function returning, together with the update-everywhere checks
+  ([COMPAT.md](COMPAT.md) entry 37).
+- **A member stopped during a switch keeps its own value,** and is refused
+  when it tries to rejoin while its value differs from the group's; it rejoins
+  once the values match. No member was observed `ONLINE` with a mode different
+  from its own. So read the mode as the one in force only together with the
+  member's own `ONLINE` row from `GroupMembers`.
+- **With the plugin `ACTIVE` and Group Replication never started, "known"
+  means configured, not in force:** there is no group, and the value can be
+  changed freely.
+- **The update-everywhere checks are not reported.** No measured state needed
+  them to tell the modes apart: the server refuses single-primary with the
+  checks on, and every switch sets them with the mode.
 - **The fields are not one snapshot.** Each reports what its own statement
-  saw; a plugin installed between them can show `PluginStatus ""` with a name
-  or a known limit.
+  saw; a plugin installed between them can show a known limit or a known
+  mode beside a `PluginStatus` other than `ACTIVE`.
 - Values are spelled as the server sent them; `PluginStatus` may be any
   documented status (`ACTIVE`, `INACTIVE`, `DISABLED`, `DELETING`, `DELETED`)
   or one this release does not know.
+
+### Reading on one session, and from a driver connection
+
+`GroupConsistency` reports, for the session it is read on, the plugin's state
+and that session's `group_replication_consistency`, beside the server's
+global value. `PluginStatus` is derived exactly as `GroupReplication`'s, by the
+same statements. The session and global values come from
+`performance_schema.session_variables` and `global_variables`, each with a
+Known flag that is false only when the server returned no row, which no
+measured server did in any state:
+
+| Session | 8.0 (`SessionConsistency`, `GlobalConsistency`) | 8.4 and 9.7 |
+|---|---|---|
+| fresh | (`EVENTUAL`, `EVENTUAL`) | (`BEFORE_ON_PRIMARY_FAILOVER`, `BEFORE_ON_PRIMARY_FAILOVER`) |
+| after `SET SESSION group_replication_consistency = X` | (X, the global unchanged) | (X, the global unchanged) |
+
+That is the server's default; a server or member configured otherwise reports
+its own values. The plugin's state changes neither value:
+`group_replication_consistency` is a server variable, so a server without the
+plugin reports it like any other. The fact never infers one field from
+another.
+
+**Which session.** With a `*sql.Conn` as the `Querier`, every statement runs on
+that connection's session, so the session value is that session's. With a
+`*sql.DB`, each statement may draw a different pooled session, and the session
+value is some pooled session's: pass a `*sql.Conn` when the session matters. A
+`*sql.Tx` is one session too, but on a fenced primary a transaction cannot be
+begun (see [Under a fence](#under-a-fence)). A session with `autocommit = 0`
+reads the fact as one with it on, and the fact leaves no transaction open.
+
+**From a driver connection.** A consumer that has to fence or refuse a
+physical connection inside its `driver.Connector`, before `database/sql` hands
+it out, has only the driver connection there. `GroupConsistencyOnDriverConn`
+reads the same fact on it:
+
+```go
+func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
+    conn, err := c.base.Connect(ctx)
+    if err != nil {
+        return nil, err
+    }
+    queryer, ok := conn.(driver.QueryerContext)
+    if !ok {
+        conn.Close()
+        return nil, errNoQueryContext // what this means is your decision
+    }
+    consistency, err := replication.GroupConsistencyOnDriverConn(ctx, queryer)
+    if err != nil {
+        conn.Close() // closing a connection whose read failed is yours
+        return nil, err
+    }
+    // ... your policy on consistency ...
+    return conn, nil
+}
+```
+
+It takes `driver.QueryerContext`, the one method it calls, and keeps three
+promises about the connection:
+
+- **It reads through this connection or not at all.** Every statement is
+  issued as `conn.QueryContext`. It opens no connection, holds no reference to
+  `conn` after it returns, and runs nothing elsewhere.
+- **It leaves the connection as it found it.** Every result is closed before
+  the next statement is issued and before it returns, on success and on every
+  error path; with go-sql-driver this is also what keeps the connection valid.
+  It never calls `Prepare`, `Begin`, `BeginTx`, `ExecContext`, `ResetSession`
+  or `Close`, issues no `SET`, and issues only `SELECT`s on
+  `performance_schema` and, only without the group name's row,
+  `information_schema`; none leaves a transaction open, with `autocommit` on or
+  off.
+- **The context reaches the driver.** Every statement receives your `ctx`,
+  unwrapped, so a deadline or a cancellation ends a read the server holds.
+  After a cancelled read the driver may have invalidated the connection
+  (go-sql-driver v1.10.0 returns `driver.ErrBadConn` on its next use), and the
+  server thread can stay held until the hold ends or its `wait_timeout` passes.
+
+Every statement is a constant passed with `nil` arguments. A `driver.ErrSkip`
+comes back wrapped in an `*OpError`, never bare, so it is never taken as "fall
+back"; `errors.Is` still finds it. A nil connection, untyped or a typed nil,
+returns an `*OpError` wrapping `replication.ErrNilConn`. What stays yours:
+applying your DSN settings before the call, closing a connection whose read
+failed or was cancelled, any `SET`, and deciding what a connection without
+`QueryContext` means.
+
+### Under a fence
+
+On a newly elected primary that is still applying its backlog, a session whose
+`group_replication_consistency` is `BEFORE_ON_PRIMARY_FAILOVER`, `AFTER` or
+`BEFORE_AND_AFTER` has most statements held until the backlog is applied, and
+a held statement ends with error 3781 (or 3797 under `BEFORE` and
+`BEFORE_AND_AFTER`) once `wait_timeout` passes ([COMPAT.md](COMPAT.md) entry
+36). The replication facts were measured on such a primary on every supported
+series:
+
+| Fact | Statement | On a fenced primary |
+|---|---|---|
+| `ReplicaStatus` | `SHOW REPLICA STATUS` | passes |
+| `BinaryLogEnabled` | `@@GLOBAL.log_bin` | passes |
+| `BinaryLogStatus` | `SHOW BINARY LOG STATUS`, or `SHOW MASTER STATUS` on 8.0 | passes |
+| `GTIDStatus` | `@@GLOBAL` variables | passes |
+| `ReplicationConfig` | `@@GLOBAL` variables | passes, and reports `SuperReadOnly` true |
+| `RegisteredReplicas` | `SHOW REPLICAS` | passes |
+| `GroupMembers` | `performance_schema.replication_group_members` | passes |
+| `GroupMemberStats` | `performance_schema.replication_group_member_stats` | passes |
+| `GroupReplication` | `performance_schema.global_variables` | passes |
+| `GroupConsistency`, and `GroupConsistencyOnDriverConn` | `performance_schema` tables | passes |
+
+- **Every fact passes.** `GroupReplication` and `GroupConsistency` read
+  `information_schema.PLUGINS`, a statement a fence holds, only when the group
+  name's row is not returned. On the measured servers that happened only where
+  Group Replication was not running, and there nothing is held. The source
+  shows rare plugin-teardown interleavings in which that read might be held
+  while the server lists the plugin as being removed; it then waits, and
+  returns the raw status or an error, never a wrong answer. Not measured
+  ([COMPAT.md](COMPAT.md) entry 36).
+- **A `*sql.Tx` cannot be begun there:** `START TRANSACTION` is itself held.
+  Read the facts through a `*sql.DB` or a `*sql.Conn`. Statements inside a
+  transaction opened before the election were not measured.
+- **The new primary is read-only until its backlog is applied,** whatever the
+  manual's two passages say ([COMPAT.md](COMPAT.md) entry 38).
+  `ReplicationConfig` reports it as `SuperReadOnly`.
+- **Your own statements are held as usual.** Only the library's statements
+  were measured; a table read in the same session is held.
 
 ### Who is in the group, and how far behind are they?
 

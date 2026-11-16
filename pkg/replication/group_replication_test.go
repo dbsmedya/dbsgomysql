@@ -16,7 +16,7 @@ import (
 	"github.com/dbsmedya/dbsgomysql/internal/testsupport"
 )
 
-// The three statements, spelled independently of the library's constants. A pin
+// The four statements, spelled independently of the library's constants. A pin
 // that reused them could not detect the library misspelling one.
 const (
 	testSQLPluginStatus = "SELECT PLUGIN_STATUS FROM information_schema.PLUGINS " +
@@ -25,18 +25,27 @@ const (
 		"WHERE VARIABLE_NAME = 'group_replication_group_name' LIMIT 18446744073709551615"
 	testSQLSizeLimit = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
 		"WHERE VARIABLE_NAME = 'group_replication_transaction_size_limit' LIMIT 18446744073709551615"
+	testSQLSinglePrimaryMode = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
+		"WHERE VARIABLE_NAME = 'group_replication_single_primary_mode' LIMIT 18446744073709551615"
 
-	// Both variable reads name performance_schema.global_variables, and the
-	// scripted driver answers a statement from the first rule whose Match it
-	// contains, so each variable rule matches its variable's quoted name.
+	// The variable reads all name performance_schema.global_variables, and
+	// the scripted driver answers a statement from the first rule whose Match
+	// it contains, so each variable rule matches its variable's quoted name.
 	testMatchPlugins   = "information_schema.PLUGINS"
 	testMatchGroupName = "'group_replication_group_name'"
 	testMatchSizeLimit = "'group_replication_transaction_size_limit'"
+	testMatchMode      = "'group_replication_single_primary_mode'"
 	testGroupUUID      = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	testDefaultLimit   = "150000000"
 
-	// testSizeLimitCause opens the cause of every failure of the third read.
+	// The mode's two documented values, as performance_schema spells them.
+	testModeOn  = "ON"
+	testModeOff = "OFF"
+
+	// testSizeLimitCause and testModeCause open the cause of every failure of
+	// the limit read and of the mode read.
 	testSizeLimitCause = "variable group_replication_transaction_size_limit: "
+	testModeCause      = "variable group_replication_single_primary_mode: "
 )
 
 func pluginRows(statuses ...string) testsupport.ScriptedQuery {
@@ -65,17 +74,31 @@ func sizeLimitRows(values ...driver.Value) testsupport.ScriptedQuery {
 	return variableRows(testMatchSizeLimit, values...)
 }
 
-// memberScript is a configured member whose third read returns limit as its
-// one row.
+func modeRows(values ...driver.Value) testsupport.ScriptedQuery {
+	return variableRows(testMatchMode, values...)
+}
+
+// memberScript is a configured single-primary member whose limit read returns
+// limit as its one row. It scripts no plugin row: with the group name's row
+// returned the fact must not read information_schema.PLUGINS, and if it did
+// it would read no row and report "" instead of ACTIVE.
 func memberScript(limit driver.Value) []testsupport.ScriptedQuery {
 	return []testsupport.ScriptedQuery{
-		pluginRows("ACTIVE"), groupNameRows([]byte(testGroupUUID)), sizeLimitRows(limit),
+		groupNameRows([]byte(testGroupUUID)), sizeLimitRows(limit), modeRows([]byte(testModeOn)),
 	}
 }
 
+// absentScript is a server without the plugin: no row for any variable, and
+// no plugin row.
+func absentScript() []testsupport.ScriptedQuery {
+	return []testsupport.ScriptedQuery{groupNameRows(), sizeLimitRows(), modeRows(), pluginRows()}
+}
+
 // TestGroupReplicationStates pins the server states the fact reports
-// (docs/COMPAT.md entry 30): absence and DISABLED are states, never errors,
-// and the limit is known exactly when the server returned its row.
+// (docs/COMPAT.md entry 30): absence and DISABLED are states, never errors;
+// PluginStatus is ACTIVE exactly when the group name's row is returned and
+// otherwise the plugin table's status; the limit and the mode are known
+// exactly when the server returned their rows.
 func TestGroupReplicationStates(t *testing.T) {
 	t.Parallel()
 
@@ -83,6 +106,7 @@ func TestGroupReplicationStates(t *testing.T) {
 		return GroupReplication{
 			PluginStatus: "ACTIVE", GroupName: testGroupUUID,
 			TransactionSizeLimit: limit, TransactionSizeLimitKnown: true,
+			SinglePrimaryMode: testModeOn, SinglePrimaryModeKnown: true,
 		}
 	}
 
@@ -93,21 +117,22 @@ func TestGroupReplicationStates(t *testing.T) {
 	}{
 		{
 			name:   "plugin not installed",
-			script: []testsupport.ScriptedQuery{pluginRows(), groupNameRows(), sizeLimitRows()},
+			script: absentScript(),
 			want:   GroupReplication{},
 		},
 		{
-			name:   "plugin disabled hides both variables",
-			script: []testsupport.ScriptedQuery{pluginRows("DISABLED"), groupNameRows(), sizeLimitRows()},
+			name:   "plugin disabled hides every variable",
+			script: []testsupport.ScriptedQuery{groupNameRows(), sizeLimitRows(), modeRows(), pluginRows("DISABLED")},
 			want:   GroupReplication{PluginStatus: "DISABLED"},
 		},
 		{
 			name: "plugin active, name unset",
 			script: []testsupport.ScriptedQuery{
-				pluginRows("ACTIVE"), groupNameRows([]byte("")), sizeLimitRows([]byte(testDefaultLimit)),
+				groupNameRows([]byte("")), sizeLimitRows([]byte(testDefaultLimit)), modeRows([]byte(testModeOn)),
 			},
 			want: GroupReplication{
 				PluginStatus: "ACTIVE", TransactionSizeLimit: 150000000, TransactionSizeLimitKnown: true,
+				SinglePrimaryMode: testModeOn, SinglePrimaryModeKnown: true,
 			},
 		},
 		{
@@ -116,8 +141,38 @@ func TestGroupReplicationStates(t *testing.T) {
 			want:   member(150000000),
 		},
 		{
-			// The pair the two fields exist for: the text "0" is a known
-			// limit of none, and zero rows (the first two cases) is an
+			// Option D: the group name's row is what reports ACTIVE. A
+			// plugin row saying otherwise is never read.
+			name: "the group name's row reports ACTIVE without reading the plugin table",
+			script: append(memberScript([]byte(testDefaultLimit)),
+				pluginRows("DISABLED")),
+			want: member(150000000),
+		},
+		{
+			name: "multi-primary member",
+			script: []testsupport.ScriptedQuery{
+				groupNameRows([]byte(testGroupUUID)), sizeLimitRows([]byte(testDefaultLimit)), modeRows([]byte(testModeOff)),
+			},
+			want: GroupReplication{
+				PluginStatus: "ACTIVE", GroupName: testGroupUUID,
+				TransactionSizeLimit: 150000000, TransactionSizeLimitKnown: true,
+				SinglePrimaryMode: testModeOff, SinglePrimaryModeKnown: true,
+			},
+		},
+		{
+			name: "an unfamiliar mode spelling is reported as sent",
+			script: []testsupport.ScriptedQuery{
+				groupNameRows([]byte(testGroupUUID)), sizeLimitRows([]byte(testDefaultLimit)), modeRows([]byte("1")),
+			},
+			want: GroupReplication{
+				PluginStatus: "ACTIVE", GroupName: testGroupUUID,
+				TransactionSizeLimit: 150000000, TransactionSizeLimitKnown: true,
+				SinglePrimaryMode: "1", SinglePrimaryModeKnown: true,
+			},
+		},
+		{
+			// The pair the two limit fields exist for: the text "0" is a
+			// known limit of none, and zero rows (the first two cases) is an
 			// unknown limit. Both carry the number 0.
 			name:   "a zero limit is known, not absent",
 			script: memberScript([]byte("0")),
@@ -125,17 +180,23 @@ func TestGroupReplicationStates(t *testing.T) {
 		},
 		{
 			name:   "unfamiliar status is reported intact",
-			script: []testsupport.ScriptedQuery{pluginRows("SOMETHING_NEW"), groupNameRows(), sizeLimitRows()},
+			script: []testsupport.ScriptedQuery{groupNameRows(), sizeLimitRows(), modeRows(), pluginRows("SOMETHING_NEW")},
 			want:   GroupReplication{PluginStatus: "SOMETHING_NEW"},
 		},
 		{
 			name: "string driver values",
 			script: []testsupport.ScriptedQuery{
-				{Match: testMatchPlugins, Columns: []string{"PLUGIN_STATUS"}, Rows: [][]driver.Value{{"ACTIVE"}}},
-				groupNameRows(testGroupUUID),
-				sizeLimitRows("2147483647"),
+				groupNameRows(testGroupUUID), sizeLimitRows("2147483647"), modeRows(testModeOn),
 			},
 			want: member(2147483647),
+		},
+		{
+			name: "string plugin status without a group-name row",
+			script: []testsupport.ScriptedQuery{
+				groupNameRows(), sizeLimitRows(), modeRows(),
+				{Match: testMatchPlugins, Columns: []string{"PLUGIN_STATUS"}, Rows: [][]driver.Value{{"DISABLED"}}},
+			},
+			want: GroupReplication{PluginStatus: "DISABLED"},
 		},
 		{name: "signed integer driver value", script: memberScript(int64(1)), want: member(1)},
 		{name: "unsigned integer driver value", script: memberScript(uint64(2147483647)), want: member(2147483647)},
@@ -158,11 +219,12 @@ func TestGroupReplicationStates(t *testing.T) {
 			want:   member(math.MaxUint64),
 		},
 		{
-			// The three reads are not one snapshot, and the fact never
-			// reconciles them.
-			name: "a limit row without a plugin row is reported as read",
+			// The reads are not one snapshot, and the fact never reconciles
+			// them: no group-name row sends it to the plugin table, which
+			// has no row either.
+			name: "a limit row without a group-name or plugin row is reported as read",
 			script: []testsupport.ScriptedQuery{
-				pluginRows(), groupNameRows(), sizeLimitRows([]byte(testDefaultLimit)),
+				groupNameRows(), sizeLimitRows([]byte(testDefaultLimit)), modeRows(), pluginRows(),
 			},
 			want: GroupReplication{TransactionSizeLimit: 150000000, TransactionSizeLimitKnown: true},
 		},
@@ -186,55 +248,79 @@ func TestGroupReplicationStates(t *testing.T) {
 	}
 }
 
-// TestGroupReplicationStatements pins the exact statements, their order, and
-// that there are exactly three whatever the plugin row says: a consumer
-// auditing a query log sees these and no others.
+// TestGroupReplicationStatements pins the exact statements and their order:
+// three when the group-name read returns a row, an empty value included, and
+// four, information_schema.PLUGINS last, when it returns none (T6). A
+// consumer auditing a query log sees these and no others.
 func TestGroupReplicationStatements(t *testing.T) {
 	t.Parallel()
 
-	scripts := map[string][]testsupport.ScriptedQuery{
-		"configured member":    memberScript([]byte(testDefaultLimit)),
-		"plugin not installed": {pluginRows(), groupNameRows(), sizeLimitRows()},
+	withRow := []string{testSQLGroupName, testSQLSizeLimit, testSQLSinglePrimaryMode}
+	withoutRow := []string{testSQLGroupName, testSQLSizeLimit, testSQLSinglePrimaryMode, testSQLPluginStatus}
+
+	cases := []struct {
+		name   string
+		script []testsupport.ScriptedQuery
+		want   []string
+	}{
+		{name: "configured member", script: memberScript([]byte(testDefaultLimit)), want: withRow},
+		{
+			name: "plugin active, name unset",
+			script: []testsupport.ScriptedQuery{
+				groupNameRows([]byte("")), sizeLimitRows([]byte(testDefaultLimit)), modeRows([]byte(testModeOn)),
+			},
+			want: withRow,
+		},
+		{name: "plugin not installed", script: absentScript(), want: withoutRow},
+		{
+			name:   "plugin disabled",
+			script: []testsupport.ScriptedQuery{groupNameRows(), sizeLimitRows(), modeRows(), pluginRows("DISABLED")},
+			want:   withoutRow,
+		},
 	}
 
-	for name, script := range scripts {
-		t.Run(name, func(t *testing.T) {
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
 			var log []string
-			db := testsupport.OpenScriptedDBWithLog(&log, script...)
+			db := testsupport.OpenScriptedDBWithLog(&log, testCase.script...)
 			defer db.Close()
 
 			if _, err := NewInspector(db).GroupReplication(t.Context()); err != nil {
 				t.Fatalf("GroupReplication() returned error %v, want nil", err)
 			}
-
-			want := []string{testSQLPluginStatus, testSQLGroupName, testSQLSizeLimit}
-			if !slices.Equal(log, want) {
-				t.Errorf("statements = %q, want %q", log, want)
+			if !slices.Equal(log, testCase.want) {
+				t.Errorf("statements = %q, want %q", log, testCase.want)
 			}
 		})
 	}
 }
 
 // TestGroupReplicationClosesRowsBeforeNextRead proves each statement's rows
-// are closed before the next statement is issued. With one connection and a
-// result set the driver cannot finish on its own, an unclosed result would
-// hold the connection and the next statement would wait for the deadline.
+// are closed before the next statement is issued and before the fact returns.
+// With one connection and a result set the driver cannot finish on its own,
+// an unclosed result would hold the connection, and the next statement, or
+// the second call, would wait for the deadline.
 func TestGroupReplicationClosesRowsBeforeNextRead(t *testing.T) {
 	t.Parallel()
 
 	for _, held := range []struct {
-		name  string
-		index int
+		name   string
+		script func() []testsupport.ScriptedQuery
+		index  int
 	}{
-		{"plugin read", 0},
-		{"group-name read", 1},
+		{"group-name read", func() []testsupport.ScriptedQuery { return memberScript([]byte(testDefaultLimit)) }, 0},
+		{"limit read", func() []testsupport.ScriptedQuery { return memberScript([]byte(testDefaultLimit)) }, 1},
+		{"mode read", func() []testsupport.ScriptedQuery { return memberScript([]byte(testDefaultLimit)) }, 2},
+		{"plugin read", func() []testsupport.ScriptedQuery {
+			return []testsupport.ScriptedQuery{groupNameRows(), sizeLimitRows(), modeRows(), pluginRows("DISABLED")}
+		}, 3},
 	} {
 		t.Run(held.name, func(t *testing.T) {
 			t.Parallel()
 
-			script := memberScript([]byte(testDefaultLimit))
+			script := held.script()
 			script[held.index].PendingResultSet = true
 			db := testsupport.OpenScriptedDB(script...)
 			defer db.Close()
@@ -243,12 +329,14 @@ func TestGroupReplicationClosesRowsBeforeNextRead(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 
-			got, err := NewInspector(db).GroupReplication(ctx)
-			if err != nil {
-				t.Fatalf("GroupReplication() on a single connection returned error %v, want nil", err)
-			}
-			if !got.TransactionSizeLimitKnown {
-				t.Errorf("GroupReplication() = %#v, want the third read's limit", got)
+			for call := 1; call <= 2; call++ {
+				got, err := NewInspector(db).GroupReplication(ctx)
+				if err != nil {
+					t.Fatalf("GroupReplication() call %d on a single connection returned error %v, want nil", call, err)
+				}
+				if got.PluginStatus == "" {
+					t.Errorf("GroupReplication() call %d = %#v, want a status", call, got)
+				}
 			}
 		})
 	}
@@ -261,12 +349,21 @@ func TestGroupReplicationErrors(t *testing.T) {
 	iterationFailure := errors.New("iteration failed")
 	closeFailure := errors.New("close failed")
 
-	// third is the limit read's rule, behind two successful reads.
-	third := func(rule testsupport.ScriptedQuery) []testsupport.ScriptedQuery {
-		return []testsupport.ScriptedQuery{pluginRows("ACTIVE"), groupNameRows([]byte(testGroupUUID)), rule}
+	// afterName is the limit read's rule, behind a group-name row.
+	afterName := func(rule testsupport.ScriptedQuery) []testsupport.ScriptedQuery {
+		return []testsupport.ScriptedQuery{groupNameRows([]byte(testGroupUUID)), rule}
 	}
 	limitText := func(text string) []testsupport.ScriptedQuery {
-		return third(sizeLimitRows([]byte(text)))
+		return afterName(sizeLimitRows([]byte(text)))
+	}
+	// afterLimit is the mode read's rule, behind a group-name and a limit row.
+	afterLimit := func(rule testsupport.ScriptedQuery) []testsupport.ScriptedQuery {
+		return []testsupport.ScriptedQuery{groupNameRows([]byte(testGroupUUID)), sizeLimitRows([]byte("1")), rule}
+	}
+	// lastRead is the plugin read's rule, behind three reads without a
+	// group-name row.
+	lastRead := func(rule testsupport.ScriptedQuery) []testsupport.ScriptedQuery {
+		return []testsupport.ScriptedQuery{groupNameRows(), sizeLimitRows(), modeRows(), rule}
 	}
 
 	cases := []struct {
@@ -274,198 +371,250 @@ func TestGroupReplicationErrors(t *testing.T) {
 		script     []testsupport.ScriptedQuery
 		wantColumn string
 		wantCause  error
-		// limitRead marks a failure of the third read, whose cause must name
-		// the variable; no other failure's cause may.
-		limitRead bool
+		// named is the prefix the cause must start with: the limit read's
+		// and the mode read's failures name their variable, no other's does.
+		named string
 	}{
 		{
-			name: "plugin statement fails",
-			script: []testsupport.ScriptedQuery{
-				{Match: testMatchPlugins, Err: queryFailure}, groupNameRows(), sizeLimitRows(),
-			},
+			name:      "group-name statement fails",
+			script:    []testsupport.ScriptedQuery{{Match: testMatchGroupName, Err: queryFailure}},
 			wantCause: queryFailure,
 		},
 		{
-			name: "group-name statement fails after a successful first read",
-			script: []testsupport.ScriptedQuery{
-				pluginRows("ACTIVE"), {Match: testMatchGroupName, Err: queryFailure}, sizeLimitRows(),
-			},
-			wantCause: queryFailure,
-		},
-		{
-			name:       "two plugin rows",
-			script:     []testsupport.ScriptedQuery{pluginRows("ACTIVE", "ACTIVE"), groupNameRows(), sizeLimitRows()},
-			wantColumn: "PLUGIN_STATUS",
-			wantCause:  errMultipleRows,
-		},
-		{
-			name: "two group-name rows",
-			script: []testsupport.ScriptedQuery{
-				pluginRows("ACTIVE"), groupNameRows([]byte("a"), []byte("b")), sizeLimitRows(),
-			},
+			name:       "two group-name rows",
+			script:     []testsupport.ScriptedQuery{groupNameRows([]byte("a"), []byte("b"))},
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errMultipleRows,
 		},
 		{
-			name: "NULL plugin status",
-			script: []testsupport.ScriptedQuery{
-				{Match: testMatchPlugins, Columns: []string{"PLUGIN_STATUS"}, Rows: [][]driver.Value{{nil}}},
-				groupNameRows(), sizeLimitRows(),
-			},
-			wantColumn: "PLUGIN_STATUS",
-			wantCause:  errUnexpectedNULL,
-		},
-		{
 			name:       "NULL group name",
-			script:     []testsupport.ScriptedQuery{pluginRows("ACTIVE"), groupNameRows(nil), sizeLimitRows()},
+			script:     []testsupport.ScriptedQuery{groupNameRows(nil)},
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errUnexpectedNULL,
 		},
 		{
 			name:       "undecodable group name",
-			script:     []testsupport.ScriptedQuery{pluginRows("ACTIVE"), groupNameRows(int64(7)), sizeLimitRows()},
+			script:     []testsupport.ScriptedQuery{groupNameRows(int64(7))},
 			wantColumn: "VARIABLE_VALUE",
 		},
 		{
-			name: "group-name result missing its VARIABLE_VALUE column",
-			script: []testsupport.ScriptedQuery{
-				pluginRows("ACTIVE"),
-				{Match: testMatchGroupName, Columns: []string{"VARIABLE_NAME"}},
-				sizeLimitRows(),
-			},
+			name:       "group-name result missing its VARIABLE_VALUE column",
+			script:     []testsupport.ScriptedQuery{{Match: testMatchGroupName, Columns: []string{"VARIABLE_NAME"}}},
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errMissingColumn,
 		},
 		{
-			name: "iteration fails",
-			script: []testsupport.ScriptedQuery{
-				{
-					Match: testMatchPlugins, Columns: []string{"PLUGIN_STATUS"},
-					Rows: [][]driver.Value{{[]byte("ACTIVE")}}, RowsErr: iterationFailure,
-				},
-				groupNameRows(), sizeLimitRows(),
-			},
+			name: "group-name iteration fails",
+			script: []testsupport.ScriptedQuery{{
+				Match: testMatchGroupName, Columns: []string{"VARIABLE_VALUE"},
+				Rows: [][]driver.Value{{[]byte(testGroupUUID)}}, RowsErr: iterationFailure,
+			}},
 			wantCause: iterationFailure,
 		},
 		{
-			name: "close fails",
-			script: []testsupport.ScriptedQuery{
-				{
-					Match: testMatchPlugins, Columns: []string{"PLUGIN_STATUS"},
-					Rows:     [][]driver.Value{{[]byte("ACTIVE")}},
-					CloseErr: closeFailure, PendingResultSet: true,
-				},
-				groupNameRows(), sizeLimitRows(),
-			},
+			name: "group-name close fails",
+			script: []testsupport.ScriptedQuery{{
+				Match: testMatchGroupName, Columns: []string{"VARIABLE_VALUE"},
+				Rows:     [][]driver.Value{{[]byte(testGroupUUID)}},
+				CloseErr: closeFailure, PendingResultSet: true,
+			}},
 			wantCause: closeFailure,
 		},
 		{
-			name:      "limit statement fails after two successful reads",
-			script:    third(testsupport.ScriptedQuery{Match: testMatchSizeLimit, Err: queryFailure}),
+			name:      "limit statement fails after a successful first read",
+			script:    afterName(testsupport.ScriptedQuery{Match: testMatchSizeLimit, Err: queryFailure}),
 			wantCause: queryFailure,
-			limitRead: true,
+			named:     testSizeLimitCause,
 		},
 		{
 			name:       "two limit rows",
-			script:     third(sizeLimitRows([]byte("1"), []byte("2"))),
+			script:     afterName(sizeLimitRows([]byte("1"), []byte("2"))),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errMultipleRows,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "NULL limit",
-			script:     third(sizeLimitRows(nil)),
+			script:     afterName(sizeLimitRows(nil)),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errUnexpectedNULL,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "empty limit text",
 			script:     limitText(""),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  strconv.ErrSyntax,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "non-numeric limit text",
 			script:     limitText("unlimited"),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  strconv.ErrSyntax,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "negative limit text",
 			script:     limitText("-1"),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  strconv.ErrSyntax,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "fractional limit text",
 			script:     limitText("1.5"),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  strconv.ErrSyntax,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "limit text beyond uint64",
 			script:     limitText("18446744073709551616"),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  strconv.ErrRange,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "negative integer limit",
-			script:     third(sizeLimitRows(int64(-1))),
+			script:     afterName(sizeLimitRows(int64(-1))),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errValueOutOfRange,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "fractional float limit",
-			script:     third(sizeLimitRows(float64(1.5))),
+			script:     afterName(sizeLimitRows(float64(1.5))),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errUnrecognizedValue,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "float limit beyond uint64",
-			script:     third(sizeLimitRows(float64(1 << 64))),
+			script:     afterName(sizeLimitRows(float64(1 << 64))),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errValueOutOfRange,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "undecodable limit driver type",
-			script:     third(sizeLimitRows(true)),
+			script:     afterName(sizeLimitRows(true)),
 			wantColumn: "VARIABLE_VALUE",
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name:       "limit result missing its VARIABLE_VALUE column",
-			script:     third(testsupport.ScriptedQuery{Match: testMatchSizeLimit, Columns: []string{"VARIABLE_NAME"}}),
+			script:     afterName(testsupport.ScriptedQuery{Match: testMatchSizeLimit, Columns: []string{"VARIABLE_NAME"}}),
 			wantColumn: "VARIABLE_VALUE",
 			wantCause:  errMissingColumn,
-			limitRead:  true,
+			named:      testSizeLimitCause,
 		},
 		{
 			name: "limit iteration fails",
-			script: third(testsupport.ScriptedQuery{
+			script: afterName(testsupport.ScriptedQuery{
 				Match: testMatchSizeLimit, Columns: []string{"VARIABLE_VALUE"},
 				Rows: [][]driver.Value{{[]byte("1")}}, RowsErr: iterationFailure,
 			}),
 			wantCause: iterationFailure,
-			limitRead: true,
+			named:     testSizeLimitCause,
 		},
 		{
 			name: "limit close fails",
-			script: third(testsupport.ScriptedQuery{
+			script: afterName(testsupport.ScriptedQuery{
 				Match: testMatchSizeLimit, Columns: []string{"VARIABLE_VALUE"},
 				Rows:     [][]driver.Value{{[]byte("1")}},
 				CloseErr: closeFailure, PendingResultSet: true,
 			}),
 			wantCause: closeFailure,
-			limitRead: true,
+			named:     testSizeLimitCause,
+		},
+		{
+			name:      "mode statement fails after two successful reads",
+			script:    afterLimit(testsupport.ScriptedQuery{Match: testMatchMode, Err: queryFailure}),
+			wantCause: queryFailure,
+			named:     testModeCause,
+		},
+		{
+			name:       "two mode rows",
+			script:     afterLimit(modeRows([]byte(testModeOn), []byte(testModeOff))),
+			wantColumn: "VARIABLE_VALUE",
+			wantCause:  errMultipleRows,
+			named:      testModeCause,
+		},
+		{
+			name:       "NULL mode",
+			script:     afterLimit(modeRows(nil)),
+			wantColumn: "VARIABLE_VALUE",
+			wantCause:  errUnexpectedNULL,
+			named:      testModeCause,
+		},
+		{
+			name:       "undecodable mode driver type",
+			script:     afterLimit(modeRows(int64(1))),
+			wantColumn: "VARIABLE_VALUE",
+			named:      testModeCause,
+		},
+		{
+			name:       "mode result missing its VARIABLE_VALUE column",
+			script:     afterLimit(testsupport.ScriptedQuery{Match: testMatchMode, Columns: []string{"VARIABLE_NAME"}}),
+			wantColumn: "VARIABLE_VALUE",
+			wantCause:  errMissingColumn,
+			named:      testModeCause,
+		},
+		{
+			name: "mode iteration fails",
+			script: afterLimit(testsupport.ScriptedQuery{
+				Match: testMatchMode, Columns: []string{"VARIABLE_VALUE"},
+				Rows: [][]driver.Value{{[]byte(testModeOn)}}, RowsErr: iterationFailure,
+			}),
+			wantCause: iterationFailure,
+			named:     testModeCause,
+		},
+		{
+			name: "mode close fails",
+			script: afterLimit(testsupport.ScriptedQuery{
+				Match: testMatchMode, Columns: []string{"VARIABLE_VALUE"},
+				Rows:     [][]driver.Value{{[]byte(testModeOn)}},
+				CloseErr: closeFailure, PendingResultSet: true,
+			}),
+			wantCause: closeFailure,
+			named:     testModeCause,
+		},
+		{
+			name:      "plugin statement fails after three reads",
+			script:    lastRead(testsupport.ScriptedQuery{Match: testMatchPlugins, Err: queryFailure}),
+			wantCause: queryFailure,
+		},
+		{
+			name:       "two plugin rows",
+			script:     lastRead(pluginRows("ACTIVE", "ACTIVE")),
+			wantColumn: "PLUGIN_STATUS",
+			wantCause:  errMultipleRows,
+		},
+		{
+			name: "NULL plugin status",
+			script: lastRead(testsupport.ScriptedQuery{
+				Match: testMatchPlugins, Columns: []string{"PLUGIN_STATUS"}, Rows: [][]driver.Value{{nil}},
+			}),
+			wantColumn: "PLUGIN_STATUS",
+			wantCause:  errUnexpectedNULL,
+		},
+		{
+			name: "plugin iteration fails",
+			script: lastRead(testsupport.ScriptedQuery{
+				Match: testMatchPlugins, Columns: []string{"PLUGIN_STATUS"},
+				Rows: [][]driver.Value{{[]byte("DISABLED")}}, RowsErr: iterationFailure,
+			}),
+			wantCause: iterationFailure,
+		},
+		{
+			name: "plugin close fails",
+			script: lastRead(testsupport.ScriptedQuery{
+				Match: testMatchPlugins, Columns: []string{"PLUGIN_STATUS"},
+				Rows:     [][]driver.Value{{[]byte("DISABLED")}},
+				CloseErr: closeFailure, PendingResultSet: true,
+			}),
+			wantCause: closeFailure,
 		},
 	}
 
@@ -500,15 +649,19 @@ func TestGroupReplicationErrors(t *testing.T) {
 			if testCase.wantCause != nil && !errors.Is(err, testCase.wantCause) {
 				t.Errorf("error %v does not wrap %v", err, testCase.wantCause)
 			}
-			if named := strings.HasPrefix(opErr.Err.Error(), testSizeLimitCause); named != testCase.limitRead {
-				t.Errorf("cause %q starts with %q: %t, want %t", opErr.Err, testSizeLimitCause, named, testCase.limitRead)
+			cause := opErr.Err.Error()
+			for _, prefix := range []string{testSizeLimitCause, testModeCause} {
+				if named := strings.HasPrefix(cause, prefix); named != (prefix == testCase.named) {
+					t.Errorf("cause %q starts with %q: %t, want %t", cause, prefix, named, prefix == testCase.named)
+				}
 			}
 		})
 	}
 }
 
-// TestGroupReplicationErrorText pins the rendered text of a failed limit read,
-// which names the variable, next to the group-name read's, which is unchanged.
+// TestGroupReplicationErrorText pins the rendered text of a failed limit read
+// and of a failed mode read, which name their variable, next to the
+// group-name read's, which is unchanged.
 func TestGroupReplicationErrorText(t *testing.T) {
 	t.Parallel()
 
@@ -524,8 +677,16 @@ func TestGroupReplicationErrorText(t *testing.T) {
 				"variable group_replication_transaction_size_limit: unexpected NULL",
 		},
 		{
+			name: "NULL mode",
+			script: []testsupport.ScriptedQuery{
+				groupNameRows([]byte(testGroupUUID)), sizeLimitRows([]byte(testDefaultLimit)), modeRows(nil),
+			},
+			want: "replication: group_replication column VARIABLE_VALUE: " +
+				"variable group_replication_single_primary_mode: unexpected NULL",
+		},
+		{
 			name:   "NULL group name",
-			script: []testsupport.ScriptedQuery{pluginRows("ACTIVE"), groupNameRows(nil), sizeLimitRows()},
+			script: []testsupport.ScriptedQuery{groupNameRows(nil)},
 			want:   "replication: group_replication column VARIABLE_VALUE: unexpected NULL",
 		},
 	}
@@ -559,9 +720,9 @@ func TestGroupReplicationNilQuerier(t *testing.T) {
 	}
 }
 
-// TestGroupReplicationJSON pins the encoding, including both limit keys: a
-// known limit of zero and an unknown limit encode the same number and differ
-// only in transaction_size_limit_known.
+// TestGroupReplicationJSON pins the encoding, including both limit keys and
+// both mode keys: a known limit of zero and an unknown limit encode the same
+// number and differ only in transaction_size_limit_known.
 func TestGroupReplicationJSON(t *testing.T) {
 	t.Parallel()
 
@@ -572,24 +733,31 @@ func TestGroupReplicationJSON(t *testing.T) {
 	}{
 		{
 			name: "member with a known limit of zero",
-			fact: GroupReplication{PluginStatus: "ACTIVE", GroupName: testGroupUUID, TransactionSizeLimitKnown: true},
+			fact: GroupReplication{
+				PluginStatus: "ACTIVE", GroupName: testGroupUUID, TransactionSizeLimitKnown: true,
+				SinglePrimaryMode: testModeOn, SinglePrimaryModeKnown: true,
+			},
 			want: `{"plugin_status":"ACTIVE","group_name":"` + testGroupUUID +
-				`","transaction_size_limit":0,"transaction_size_limit_known":true}`,
+				`","transaction_size_limit":0,"transaction_size_limit_known":true,` +
+				`"single_primary_mode":"ON","single_primary_mode_known":true}`,
 		},
 		{
 			name: "member with the default limit",
 			fact: GroupReplication{
 				PluginStatus: "ACTIVE", GroupName: testGroupUUID,
 				TransactionSizeLimit: 150000000, TransactionSizeLimitKnown: true,
+				SinglePrimaryMode: testModeOff, SinglePrimaryModeKnown: true,
 			},
 			want: `{"plugin_status":"ACTIVE","group_name":"` + testGroupUUID +
-				`","transaction_size_limit":150000000,"transaction_size_limit_known":true}`,
+				`","transaction_size_limit":150000000,"transaction_size_limit_known":true,` +
+				`"single_primary_mode":"OFF","single_primary_mode_known":true}`,
 		},
 		{
-			name: "limit unknown",
+			name: "limit and mode unknown",
 			fact: GroupReplication{PluginStatus: "DISABLED"},
 			want: `{"plugin_status":"DISABLED","group_name":"",` +
-				`"transaction_size_limit":0,"transaction_size_limit_known":false}`,
+				`"transaction_size_limit":0,"transaction_size_limit_known":false,` +
+				`"single_primary_mode":"","single_primary_mode_known":false}`,
 		},
 	}
 
@@ -613,7 +781,7 @@ func TestGroupReplicationJSON(t *testing.T) {
 func TestGroupReplicationCanceledContext(t *testing.T) {
 	t.Parallel()
 
-	db := testsupport.OpenScriptedDB(pluginRows(), groupNameRows(), sizeLimitRows())
+	db := testsupport.OpenScriptedDB(absentScript()...)
 	defer db.Close()
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -654,40 +822,53 @@ func (q *cancelBeforeQuery) QueryRowContext(ctx context.Context, query string, a
 }
 
 // TestGroupReplicationCanceledBetweenStatements pins that a context canceled
-// after one read and before the next fails the whole fact: all three reads
-// must succeed, never a half-filled value. Canceled before the third read,
-// the error names the limit variable.
+// after one read and before the next fails the whole fact: every read must
+// succeed, never a half-filled value. Canceled before the limit or the mode
+// read, the error names that variable; before the plugin read, none.
 func TestGroupReplicationCanceledBetweenStatements(t *testing.T) {
 	t.Parallel()
 
-	for _, at := range []int{2, 3} {
-		t.Run("before statement "+strconv.Itoa(at), func(t *testing.T) {
+	for _, testCase := range []struct {
+		at     int
+		script []testsupport.ScriptedQuery
+		named  string
+	}{
+		{at: 2, script: memberScript([]byte(testDefaultLimit)), named: testSizeLimitCause},
+		{at: 3, script: memberScript([]byte(testDefaultLimit)), named: testModeCause},
+		{at: 4, script: absentScript()},
+	} {
+		t.Run("before statement "+strconv.Itoa(testCase.at), func(t *testing.T) {
 			t.Parallel()
 
-			db := testsupport.OpenScriptedDB(memberScript([]byte(testDefaultLimit))...)
+			db := testsupport.OpenScriptedDB(testCase.script...)
 			defer db.Close()
 
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			querier := &cancelBeforeQuery{db: db, cancel: cancel, at: at}
+			querier := &cancelBeforeQuery{db: db, cancel: cancel, at: testCase.at}
 
 			got, err := NewInspector(querier).GroupReplication(ctx)
 			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("GroupReplication() canceled before statement %d = %#v, %v; want context.Canceled", at, got, err)
+				t.Fatalf("GroupReplication() canceled before statement %d = %#v, %v; want context.Canceled",
+					testCase.at, got, err)
 			}
 			if got != (GroupReplication{}) {
 				t.Errorf("GroupReplication() = %#v alongside its error, want the zero value", got)
 			}
-			if querier.queries != at {
-				t.Errorf("issued %d statements, want %d: the cancellation must reach statement %d", querier.queries, at, at)
+			if querier.queries != testCase.at {
+				t.Errorf("issued %d statements, want %d: the cancellation must reach statement %d",
+					querier.queries, testCase.at, testCase.at)
 			}
 
 			var opErr *OpError
 			if !errors.As(err, &opErr) || opErr.Op != "group_replication" {
 				t.Fatalf("error %v, want *OpError with Op group_replication", err)
 			}
-			if named := strings.HasPrefix(opErr.Err.Error(), testSizeLimitCause); named != (at == 3) {
-				t.Errorf("cause %q starts with %q: %t, want %t", opErr.Err, testSizeLimitCause, named, at == 3)
+			cause := opErr.Err.Error()
+			for _, prefix := range []string{testSizeLimitCause, testModeCause} {
+				if named := strings.HasPrefix(cause, prefix); named != (prefix == testCase.named) {
+					t.Errorf("cause %q starts with %q: %t, want %t", cause, prefix, named, prefix == testCase.named)
+				}
 			}
 		})
 	}

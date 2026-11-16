@@ -188,3 +188,213 @@ func (r *scriptedRows) NextResultSet() error {
 
 	return nil
 }
+
+// ScriptedDriverConn is a driver.QueryerContext that answers from Script, for
+// a unit test of a function that takes a database/sql/driver connection
+// directly. Rules match as for OpenScriptedDB; a statement matching no rule
+// returns zero rows.
+//
+// It records what the function under test did to it: every QueryContext call
+// with the context and arguments it received, the number of result sets still
+// open when each statement arrived, and every call to a method a reader must
+// never make (Prepare, Begin, BeginTx, ExecContext, ResetSession, Close),
+// which also fails with an error.
+//
+// With ReuseBuffers set, every []byte value is delivered in a buffer, one per
+// column of the result set, that the next Next, and Close, overwrite: a
+// driver may reuse dest's memory that way, so a caller that kept the slice
+// instead of decoding it would read the overwritten bytes.
+//
+// The zero value with a Script is ready to use. A ScriptedDriverConn is safe
+// for concurrent use, though the order between concurrent calls is the order
+// it saw them.
+type ScriptedDriverConn struct {
+	Script       []ScriptedQuery
+	ReuseBuffers bool
+
+	mu        sync.Mutex
+	calls     []DriverQueryCall
+	forbidden []string
+	open      int
+}
+
+// DriverQueryCall is one QueryContext call a ScriptedDriverConn received.
+type DriverQueryCall struct {
+	Ctx   context.Context
+	Query string
+	Args  []driver.NamedValue
+	// OpenResults is how many of the connection's earlier result sets were
+	// still open when this statement arrived.
+	OpenResults int
+}
+
+var errForbiddenDriverCall = errors.New("testsupport: a reader must not call this method")
+
+// QueryContext satisfies driver.QueryerContext.
+func (c *ScriptedDriverConn) QueryContext(
+	ctx context.Context, query string, args []driver.NamedValue,
+) (driver.Rows, error) {
+	c.mu.Lock()
+	c.calls = append(c.calls, DriverQueryCall{Ctx: ctx, Query: query, Args: args, OpenResults: c.open})
+	c.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, rule := range c.Script {
+		if !strings.Contains(query, rule.Match) {
+			continue
+		}
+		if rule.Err != nil {
+			return nil, rule.Err
+		}
+
+		return c.opened(&scriptedRows{
+			columns:  rule.Columns,
+			rows:     rule.Rows,
+			rowsErr:  rule.RowsErr,
+			closeErr: rule.CloseErr,
+		}), nil
+	}
+
+	return c.opened(&scriptedRows{}), nil
+}
+
+func (c *ScriptedDriverConn) opened(rows *scriptedRows) driver.Rows {
+	c.mu.Lock()
+	c.open++
+	c.mu.Unlock()
+
+	return &trackedDriverRows{conn: c, rows: rows, reuse: c.ReuseBuffers}
+}
+
+func (c *ScriptedDriverConn) forbid(method string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.forbidden = append(c.forbidden, method)
+}
+
+// Prepare is recorded and refused.
+func (c *ScriptedDriverConn) Prepare(string) (driver.Stmt, error) {
+	c.forbid("Prepare")
+
+	return nil, errForbiddenDriverCall
+}
+
+// Begin is recorded and refused.
+func (c *ScriptedDriverConn) Begin() (driver.Tx, error) {
+	c.forbid("Begin")
+
+	return nil, errForbiddenDriverCall
+}
+
+// BeginTx is recorded and refused.
+func (c *ScriptedDriverConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	c.forbid("BeginTx")
+
+	return nil, errForbiddenDriverCall
+}
+
+// ExecContext is recorded and refused.
+func (c *ScriptedDriverConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+	c.forbid("ExecContext")
+
+	return nil, errForbiddenDriverCall
+}
+
+// ResetSession is recorded and refused.
+func (c *ScriptedDriverConn) ResetSession(context.Context) error {
+	c.forbid("ResetSession")
+
+	return errForbiddenDriverCall
+}
+
+// Close is recorded and refused: the connection is the caller's to close.
+func (c *ScriptedDriverConn) Close() error {
+	c.forbid("Close")
+
+	return errForbiddenDriverCall
+}
+
+// Calls returns the QueryContext calls received so far, in order.
+func (c *ScriptedDriverConn) Calls() []DriverQueryCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]DriverQueryCall(nil), c.calls...)
+}
+
+// Forbidden returns the names of the refused methods called so far, in order.
+func (c *ScriptedDriverConn) Forbidden() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]string(nil), c.forbidden...)
+}
+
+// OpenResults is how many result sets are open now.
+func (c *ScriptedDriverConn) OpenResults() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.open
+}
+
+// trackedDriverRows counts its own Close once, and with reuse delivers []byte
+// values through one buffer per column.
+type trackedDriverRows struct {
+	conn   *ScriptedDriverConn
+	rows   *scriptedRows
+	reuse  bool
+	bufs   map[int][]byte
+	closed bool
+}
+
+func (r *trackedDriverRows) Columns() []string { return r.rows.Columns() }
+
+func (r *trackedDriverRows) Next(dest []driver.Value) error {
+	r.scribble()
+	if err := r.rows.Next(dest); err != nil {
+		return err
+	}
+	if !r.reuse {
+		return nil
+	}
+	if r.bufs == nil {
+		r.bufs = map[int][]byte{}
+	}
+	for position, value := range dest {
+		text, ok := value.([]byte)
+		if !ok {
+			continue
+		}
+		r.bufs[position] = append(r.bufs[position][:0], text...)
+		dest[position] = r.bufs[position][:len(text):len(text)]
+	}
+
+	return nil
+}
+
+// scribble overwrites every buffer handed out, as a driver reading the next
+// packet into them would.
+func (r *trackedDriverRows) scribble() {
+	for _, buf := range r.bufs {
+		for index := range buf {
+			buf[index] = 'X'
+		}
+	}
+}
+
+func (r *trackedDriverRows) Close() error {
+	r.scribble()
+	if !r.closed {
+		r.closed = true
+		r.conn.mu.Lock()
+		r.conn.open--
+		r.conn.mu.Unlock()
+	}
+
+	return r.rows.Close()
+}

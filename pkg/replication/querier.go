@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"reflect"
 )
 
@@ -10,6 +11,7 @@ const (
 	opBinaryLogEnabled   = "binary_log_enabled"
 	opBinaryLogStatus    = "binary_log_status"
 	opGTIDStatus         = "gtid_status"
+	opGroupConsistency   = "group_consistency"
 	opGroupMembers       = "group_members"
 	opGroupMemberStats   = "group_member_stats"
 	opGroupReplication   = "group_replication"
@@ -55,11 +57,22 @@ func (i *Inspector) validate(op string) error {
 }
 
 func isNilQuerier(q Querier) bool {
-	if q == nil {
+	return isNilValue(q)
+}
+
+// isNilConn is isNilQuerier for GroupConsistencyOnDriverConn's connection.
+func isNilConn(conn driver.QueryerContext) bool {
+	return isNilValue(conn)
+}
+
+// isNilValue reports an untyped nil, or a typed nil of a kind that can be
+// one, held in an interface.
+func isNilValue(v any) bool {
+	if v == nil {
 		return true
 	}
 
-	value := reflect.ValueOf(q)
+	value := reflect.ValueOf(v)
 	switch value.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
 		reflect.Pointer, reflect.Slice:

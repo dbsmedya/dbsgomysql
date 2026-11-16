@@ -317,3 +317,11 @@ Library packages import only the Go standard library. They do not:
 
 Errors retain wrapped causes so consumers can use `errors.Is` and `errors.As`
 with their selected driver when driver-specific handling is required.
+
+One function accepts a caller's driver connection:
+`replication.GroupConsistencyOnDriverConn` takes a
+`database/sql/driver.QueryerContext`, so a consumer can read the fact inside
+its own connector before `database/sql` hands the connection out. It still
+imports only the standard library, opens and closes no connection, and reads
+only through that connection's `QueryContext` with the caller's context.
+Closing a connection whose read failed or was cancelled stays the caller's.

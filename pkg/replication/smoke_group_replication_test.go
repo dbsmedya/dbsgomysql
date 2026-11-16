@@ -10,8 +10,8 @@ import (
 )
 
 // TestSmokeGroupReplication exercises the GroupReplication fact once against a
-// live cluster member: the plugin is ACTIVE, a group name is configured, and
-// the transaction size limit is known.
+// live cluster member: the plugin is ACTIVE, a group name is configured, the
+// transaction size limit is known, and the group is single-primary.
 func TestSmokeGroupReplication(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
@@ -19,8 +19,24 @@ func TestSmokeGroupReplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GroupReplication on the primary: %v", err)
 	}
-	if got.PluginStatus != "ACTIVE" || got.GroupName == "" || !got.TransactionSizeLimitKnown {
-		t.Errorf("GroupReplication on the primary = %#v, want ACTIVE with a group name and a known limit", got)
+	if got.PluginStatus != "ACTIVE" || got.GroupName == "" || !got.TransactionSizeLimitKnown ||
+		got.SinglePrimaryMode != grModeOn || !got.SinglePrimaryModeKnown {
+		t.Errorf("GroupReplication on the primary = %#v, "+
+			"want ACTIVE with a group name, a known limit and the mode ON", got)
+	}
+}
+
+// TestSmokeGroupConsistency exercises the GroupConsistency fact once against a
+// live cluster member: the plugin is ACTIVE and both values are known.
+func TestSmokeGroupConsistency(t *testing.T) {
+	topology := testsupport.GroupReplicationTopology(t)
+
+	got, err := replication.NewInspector(topology.Primary).GroupConsistency(t.Context())
+	if err != nil {
+		t.Fatalf("GroupConsistency on the primary: %v", err)
+	}
+	if got.PluginStatus != "ACTIVE" || !got.SessionConsistencyKnown || !got.GlobalConsistencyKnown {
+		t.Errorf("GroupConsistency on the primary = %#v, want ACTIVE with both values known", got)
 	}
 }
 
