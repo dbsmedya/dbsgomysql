@@ -66,15 +66,15 @@ func cleanupSafeContext(t *testing.T, timeout time.Duration) (context.Context, c
 // Secondary, and Rejoiner are the three cluster members gr1, gr2, gr3;
 // Installed and Disabled are standalone servers with the plugin ACTIVE and
 // DISABLED; Ext is a standalone GTID source, and ExtHost is its hostname as
-// the members reach it. The DSN fields are what account connections derive
-// from.
+// the members reach it. The DSN fields are what account connections, and the
+// fence harness's and mode helper's own sessions, derive from.
 //
 // The zero value is unusable; build one with GroupReplicationTopology.
 type GRTopology struct {
 	Primary, Secondary, Rejoiner, Installed, Disabled, Ext *sql.DB
 
-	PrimaryDSN, InstalledDSN, DisabledDSN string
-	ExtHost                               string
+	PrimaryDSN, SecondaryDSN, RejoinerDSN, InstalledDSN, DisabledDSN string
+	ExtHost                                                          string
 }
 
 // GroupReplicationTopology opens every server described by the
@@ -88,12 +88,12 @@ func GroupReplicationTopology(t *testing.T) *GRTopology {
 
 	topology := &GRTopology{
 		PrimaryDSN:   requiredGREnv(t, envGRPrimaryDSN),
+		SecondaryDSN: requiredGREnv(t, envGRSecondaryDSN),
+		RejoinerDSN:  requiredGREnv(t, envGRRejoinerDSN),
 		InstalledDSN: requiredGREnv(t, envGRInstalledDSN),
 		DisabledDSN:  requiredGREnv(t, envGRDisabledDSN),
 		ExtHost:      requiredGREnv(t, envGRExtHost),
 	}
-	secondaryDSN := requiredGREnv(t, envGRSecondaryDSN)
-	rejoinerDSN := requiredGREnv(t, envGRRejoinerDSN)
 	extDSN := requiredGREnv(t, envGRExtDSN)
 
 	if !regexp.MustCompile(replicationHostExpr).MatchString(topology.ExtHost) {
@@ -101,8 +101,8 @@ func GroupReplicationTopology(t *testing.T) *GRTopology {
 	}
 
 	topology.Primary = openReplicationDB(t, "group primary", topology.PrimaryDSN)
-	topology.Secondary = openReplicationDB(t, "group secondary", secondaryDSN)
-	topology.Rejoiner = openReplicationDB(t, "group rejoiner", rejoinerDSN)
+	topology.Secondary = openReplicationDB(t, "group secondary", topology.SecondaryDSN)
+	topology.Rejoiner = openReplicationDB(t, "group rejoiner", topology.RejoinerDSN)
 	topology.Installed = openReplicationDB(t, "plugin-installed server", topology.InstalledDSN)
 	topology.Disabled = openReplicationDB(t, "plugin-disabled server", topology.DisabledDSN)
 	topology.Ext = openReplicationDB(t, "external source", extDSN)
