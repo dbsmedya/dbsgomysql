@@ -83,8 +83,16 @@ func TestCompat35VariableFactsIgnoreSessionSelectLimitIntegration(t *testing.T) 
 	}
 
 	wantLogBin, wantGTID, wantConfig := read(t)
+	wantConsistency, err := inspector.GroupConsistency(t.Context())
+	if err != nil || !wantConsistency.SessionConsistencyKnown || !wantConsistency.GlobalConsistencyKnown {
+		t.Fatalf("baseline GroupConsistency = %+v, %v; want both values known", wantConsistency, err)
+	}
 	setSessionSelectLimit(t, conn, 0)
 	logBin, gtid, config := read(t)
+	consistency, err := inspector.GroupConsistency(t.Context())
+	if err != nil {
+		t.Fatalf("GroupConsistency under sql_select_limit = 0: %v", err)
+	}
 	if logBin != wantLogBin || gtid != wantGTID || config != wantConfig {
 		t.Errorf("variable facts under sql_select_limit = 0 = (%v, %+v, %+v), want (%v, %+v, %+v)",
 			logBin, gtid, config, wantLogBin, wantGTID, wantConfig)
@@ -99,17 +107,25 @@ func TestCompat35VariableFactsIgnoreSessionSelectLimitIntegration(t *testing.T) 
 	if group != (replication.GroupReplication{}) {
 		t.Errorf("GroupReplication on a server without the plugin = %+v, want the zero value", group)
 	}
+	// group_replication_consistency is the server's own variable: both rows
+	// are there without the plugin, and a read that lost its LIMIT would
+	// leave a Known flag false here.
+	if consistency != wantConsistency {
+		t.Errorf("GroupConsistency on a server without the plugin under sql_select_limit = 0 = %+v, want %+v",
+			consistency, wantConsistency)
+	}
 }
 
-// TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration: at limit 0 the
-// zero-or-one-row PLUGINS lookup would return no row, which GroupReplication
-// reads as "plugin absent" — a false answer, not an error — on the group
-// primary and on the standalone servers with the plugin ACTIVE and DISABLED.
-// The group name and the transaction size limit are read from
-// performance_schema.global_variables, not SHOW VARIABLES, which the variable
-// caps (docs/COMPAT.md entry 35), so at limit 0 they must still be the
-// configured values. The members and stats tables hold three rows each, more
-// than either limit.
+// TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration: at limit 0 a
+// zero-or-one-row read without its own LIMIT returns no row. GroupReplication
+// would then read the plugin as absent or not ACTIVE, and its limit and mode
+// as unknown, and GroupConsistency its values as unknown — false answers, not
+// errors — on the group primary and on the standalone servers with the plugin
+// ACTIVE and DISABLED. Every variable is read from
+// performance_schema.global_variables or session_variables, not SHOW
+// VARIABLES, which the variable caps (docs/COMPAT.md entry 35), so at limit 0
+// both whole facts must equal their uncapped reads (T2). The members and stats
+// tables hold three rows each, more than either limit.
 func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 	conn := pinnedConn(t, topology.Primary)
@@ -119,19 +135,27 @@ func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GroupReplication: %v", err)
 	}
-	if wantGroup.PluginStatus != "ACTIVE" || wantGroup.GroupName == "" || !wantGroup.TransactionSizeLimitKnown {
-		t.Fatalf("baseline GroupReplication = %+v, want ACTIVE with a group name and a known limit", wantGroup)
+	if wantGroup.PluginStatus != "ACTIVE" || wantGroup.GroupName == "" || !wantGroup.TransactionSizeLimitKnown ||
+		!wantGroup.SinglePrimaryModeKnown {
+		t.Fatalf("baseline GroupReplication = %+v, want ACTIVE with a group name, a known limit and a known mode",
+			wantGroup)
+	}
+	wantConsistency, err := inspector.GroupConsistency(t.Context())
+	if err != nil || wantConsistency.PluginStatus != "ACTIVE" ||
+		!wantConsistency.SessionConsistencyKnown || !wantConsistency.GlobalConsistencyKnown {
+		t.Fatalf("baseline GroupConsistency = %+v, %v; want ACTIVE with both values known", wantConsistency, err)
 	}
 	// The standalone servers carry the plugin ACTIVE and DISABLED with no
 	// group: a lookup that lost its row would read DISABLED as absent, and a
 	// limit read that lost its row would read the ACTIVE server's limit as
 	// unknown.
 	standalone := []struct {
-		name     string
-		conn     *sql.Conn
-		want     string
-		known    bool
-		baseline replication.GroupReplication
+		name        string
+		conn        *sql.Conn
+		want        string
+		known       bool
+		baseline    replication.GroupReplication
+		consistency replication.GroupConsistency
 	}{
 		{name: "plugin-installed server", conn: pinnedConn(t, topology.Installed), want: "ACTIVE", known: true},
 		{name: "plugin-disabled server", conn: pinnedConn(t, topology.Disabled), want: "DISABLED", known: false},
@@ -139,11 +163,19 @@ func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 	for index := range standalone {
 		server := &standalone[index]
 		group, err := replication.NewInspector(server.conn).GroupReplication(t.Context())
-		if err != nil || group.PluginStatus != server.want || group.TransactionSizeLimitKnown != server.known {
-			t.Fatalf("baseline GroupReplication on the %s = %+v, %v; want %s with the limit known: %t",
+		if err != nil || group.PluginStatus != server.want || group.TransactionSizeLimitKnown != server.known ||
+			group.SinglePrimaryModeKnown != server.known {
+			t.Fatalf("baseline GroupReplication on the %s = %+v, %v; want %s with the limit and mode known: %t",
 				server.name, group, err, server.want, server.known)
 		}
 		server.baseline = group
+		consistency, err := replication.NewInspector(server.conn).GroupConsistency(t.Context())
+		if err != nil || consistency.PluginStatus != server.want ||
+			!consistency.SessionConsistencyKnown || !consistency.GlobalConsistencyKnown {
+			t.Fatalf("baseline GroupConsistency on the %s = %+v, %v; want %s with both values known",
+				server.name, consistency, err, server.want)
+		}
+		server.consistency = consistency
 	}
 	wantMembers := groupMemberIDs(t, inspector)
 	wantStats := groupStatsMemberIDs(t, inspector)
@@ -172,6 +204,13 @@ func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 					limit, group.TransactionSizeLimit, group.TransactionSizeLimitKnown,
 					wantGroup.TransactionSizeLimit, wantGroup.TransactionSizeLimitKnown)
 			}
+			consistency, err := inspector.GroupConsistency(t.Context())
+			if err != nil {
+				t.Fatalf("GroupConsistency: %v", err)
+			}
+			if consistency != wantConsistency {
+				t.Errorf("GroupConsistency under sql_select_limit = %d = %+v, want %+v", limit, consistency, wantConsistency)
+			}
 			if got := groupMemberIDs(t, inspector); !slices.Equal(got, wantMembers) {
 				t.Errorf("GroupMembers under sql_select_limit = %d = %q, want %q", limit, got, wantMembers)
 			}
@@ -187,6 +226,54 @@ func TestCompat35GroupFactsIgnoreSessionSelectLimitIntegration(t *testing.T) {
 				if group != server.baseline {
 					t.Errorf("GroupReplication on the %s under sql_select_limit = %d = %+v, want %+v",
 						server.name, limit, group, server.baseline)
+				}
+				consistency, err := replication.NewInspector(server.conn).GroupConsistency(t.Context())
+				if err != nil {
+					t.Fatalf("GroupConsistency on the %s: %v", server.name, err)
+				}
+				if consistency != server.consistency {
+					t.Errorf("GroupConsistency on the %s under sql_select_limit = %d = %+v, want %+v",
+						server.name, limit, consistency, server.consistency)
+				}
+			}
+		})
+	}
+}
+
+// TestCompat35GroupFactsForUsageAccountUnderSelectLimitIntegration is T2 as
+// the spec states it: T1 again under the session's sql_select_limit, read by
+// a USAGE-only account in every plugin state and on both members. Both whole
+// facts must equal the same session's reads with no limit, which report the
+// state's PluginStatus. The test above reads the same facts as root.
+func TestCompat35GroupFactsForUsageAccountUnderSelectLimitIntegration(t *testing.T) {
+	topology := testsupport.GroupReplicationTopology(t)
+
+	for _, server := range gcServers(t, topology) {
+		t.Run(server.name, func(t *testing.T) {
+			conn, _ := usageConn(t, server, "gclimit")
+			inspector := replication.NewInspector(conn)
+
+			wantGroup, err := inspector.GroupReplication(t.Context())
+			if err != nil || wantGroup.PluginStatus != server.wantStatus {
+				t.Fatalf("baseline GroupReplication = %+v, %v; want PluginStatus %q", wantGroup, err, server.wantStatus)
+			}
+			wantConsistency, err := inspector.GroupConsistency(t.Context())
+			if err != nil || wantConsistency.PluginStatus != server.wantStatus {
+				t.Fatalf("baseline GroupConsistency = %+v, %v; want PluginStatus %q",
+					wantConsistency, err, server.wantStatus)
+			}
+
+			for _, limit := range selectLimits {
+				setSessionSelectLimit(t, conn, limit)
+				group, err := inspector.GroupReplication(t.Context())
+				if err != nil || group != wantGroup {
+					t.Errorf("GroupReplication under sql_select_limit = %d = %+v, %v; want %+v",
+						limit, group, err, wantGroup)
+				}
+				consistency, err := inspector.GroupConsistency(t.Context())
+				if err != nil || consistency != wantConsistency {
+					t.Errorf("GroupConsistency under sql_select_limit = %d = %+v, %v; want %+v",
+						limit, consistency, err, wantConsistency)
 				}
 			}
 		})

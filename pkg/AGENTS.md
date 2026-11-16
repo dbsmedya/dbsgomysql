@@ -29,6 +29,13 @@ What no tool checks:
   configures, or closes a connection. The consumer supplies it.
 - **Accept the smallest `database/sql` interface the call needs** — one that a
   `*sql.DB` and a `*sql.Tx` both satisfy.
+
+  > **One named exception:** `replication.GroupConsistencyOnDriverConn` takes a
+  > `database/sql/driver.QueryerContext`. A consumer has to fence or refuse a physical connection
+  > inside its connector, before `database/sql` hands the connection out, and only the driver
+  > connection exists there. The exception is that one function, it is still standard library
+  > only, and it shares every statement and decoder with the `Querier` path. Any further
+  > driver-level API is a new decision, not an extension of this one.
 - **Return facts as `(facts, error)`. Return checks as `[]Finding` alone.** A
   check is a pure predicate over facts: it inspects nothing, so it has nothing
   to fail at. Give it no `error` return.

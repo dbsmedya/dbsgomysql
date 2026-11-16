@@ -10,6 +10,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `replication.GroupReplication` gains `SinglePrimaryMode` (`string`, JSON
+  `single_primary_mode`) and `SinglePrimaryModeKnown` (`bool`, JSON
+  `single_primary_mode_known`): `group_replication_single_primary_mode` as
+  `performance_schema.global_variables` spells it, `ON` for single-primary and
+  `OFF` for multi-primary, any other text reported as sent. Known is true only
+  when the server returned the variable's row, which every measured server did
+  with the plugin `ACTIVE` and not with it `DISABLED` or absent. On an `ONLINE`
+  member the value is the group's mode; on a stopped member, or a server in no
+  group, it is that server's own configured value. See `docs/COMPAT.md`
+  entries 30 and 37.
+- A new fact, `replication.GroupConsistency`, read with
+  `(*Inspector).GroupConsistency(ctx)`: on the session it is read on, the Group
+  Replication plugin's state (`PluginStatus`, derived exactly as
+  `GroupReplication.PluginStatus`, by the same statements), that session's
+  `group_replication_consistency` and the server's global value, each value
+  with a Known flag. It needs no privilege beyond connecting and reads only
+  `performance_schema` while the group name's row is returned, so a fence on a
+  newly elected primary does not hold it. Pass a `*sql.Conn` when the session
+  matters: a `*sql.DB` reads some pooled session's value.
+- `replication.GroupConsistencyOnDriverConn(ctx, conn)` reads the same fact on
+  a `database/sql/driver.QueryerContext` the caller owns, for example inside a
+  `driver.Connector`'s `Connect` before `database/sql` hands the connection
+  out. It issues the `Inspector` path's statements in the same order through
+  `conn.QueryContext` only, with the caller's `ctx` unwrapped and `nil`
+  arguments; it closes every result before the next statement and before it
+  returns, calls nothing else on `conn`, sets nothing, leaves no transaction
+  open, and never closes `conn`. A `driver.ErrSkip` comes back wrapped in an
+  `*OpError`, never bare.
+- `replication.ErrNilConn`, returned (wrapped in an `*OpError` with `Op`
+  `"group_consistency"`) for a nil or typed-nil driver connection.
+- `docs/COMPAT.md` entries 36 (what a fence on a newly elected primary holds),
+  37 (the mode changes only by a group action while Group Replication runs)
+  and 38 (a newly elected primary is read-only until its backlog is applied).
+- Upgrade notes: a `GroupReplication` built with an unkeyed composite literal
+  no longer compiles. A whole-struct comparison with a value that leaves the
+  new fields empty is now false on every server where the plugin is `ACTIVE`,
+  because the mode is filled in there; compare the fields you mean. Comparing
+  with `GroupReplication{}` still identifies a server without the plugin.
+
+### Changed
+
+- `GroupReplication` now issues the group-name read first, then the
+  transaction size limit, then the new single-primary-mode read, and reads
+  `information_schema.PLUGINS` last and only when the group name's row was not
+  returned: three statements with that row, four without (v1.5.0 issued three).
+  `PluginStatus` is `ACTIVE` exactly when the server returns the
+  `group_replication_group_name` row; otherwise it is `PLUGIN_STATUS` from
+  `information_schema.PLUGINS`, or empty when that has no row. It is the same
+  value as before in every state but one window: while the plugin's variables
+  are registered but its initialization has not completed — from
+  `INSTALL PLUGIN group_replication` until initialization completes, or until a
+  failed install's variables are finally removed, which can be after the
+  statement — `PluginStatus` reads `ACTIVE` where the server lists `INACTIVE`,
+  `DELETING` or `DELETED`; no short bound is claimed. A consumer that
+  allow-lists the library's statements in a server query log must add the mode
+  read. A failure of the mode read carries
+  `variable group_replication_single_primary_mode: ` at the front of the
+  `OpError`'s cause; the other reads' errors are unchanged.
+- `GroupReplication`'s GoDoc no longer says a `*sql.Tx` works as its
+  `Querier`: on a newly elected primary under a fence the server holds
+  `START TRANSACTION` itself, so a transaction cannot be begun there
+  (`docs/COMPAT.md` entry 36).
+- `docs/COMPAT.md` entry 30 no longer says every `group_replication_*` variable
+  is registered only while the plugin is `ACTIVE`: `group_replication_consistency`
+  is a server variable, present with the plugin absent, `DISABLED` or `ACTIVE`.
+  The entry now separates a plugin variable's registration from the row the
+  server returns, and records how `PluginStatus` is derived.
+- `docs/COMPAT.md` entry 35 adds `SHOW PLUGINS` to the statements
+  `sql_select_limit` caps. The library does not issue it.
+
 ## [1.5.0] - 2026-11-15
 
 ### Added

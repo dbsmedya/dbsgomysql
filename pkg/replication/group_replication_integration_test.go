@@ -8,8 +8,10 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,12 +21,12 @@ import (
 	"github.com/dbsmedya/dbsgomysql/pkg/replication"
 )
 
-// These tests pin docs/COMPAT.md entries 29, 30, and 33 and the async facts'
-// behavior on Group Replication members, against the topology of
+// These tests pin docs/COMPAT.md entries 29, 30, 33 and 37 and the async
+// facts' behavior on Group Replication members, against the topology of
 // tests/docker/compose_group_replication.yaml. None calls t.Parallel: the
-// servers are shared, two of the tests change the cluster's membership or its
-// channels, and one changes the standalone ACTIVE server's transaction size
-// limit.
+// servers are shared; some tests change the cluster's membership, its mode or
+// its channels; and some change the standalone ACTIVE server's transaction
+// size limit, its mode, or whether its plugin is installed.
 
 // Statements spelled independently of the library's constants.
 const (
@@ -39,7 +41,21 @@ const (
 	grSQLShowSizeLimit     = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_transaction_size_limit'"
 	grSQLTableSizeLimit    = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
 		"WHERE VARIABLE_NAME = 'group_replication_transaction_size_limit'"
-	grSQLSetSizeLimit       = "SET GLOBAL group_replication_transaction_size_limit = "
+	grSQLSetSizeLimit = "SET GLOBAL group_replication_transaction_size_limit = "
+	grSQLModeVariable = "SELECT @@GLOBAL.group_replication_single_primary_mode"
+	grModeOn          = "ON"  // single-primary, as performance_schema spells it
+	grModeOff         = "OFF" // multi-primary
+	grSQLShowMode     = "SHOW GLOBAL VARIABLES WHERE Variable_name = 'group_replication_single_primary_mode'"
+	grSQLTableMode    = "SELECT VARIABLE_VALUE FROM performance_schema.global_variables " +
+		"WHERE VARIABLE_NAME = 'group_replication_single_primary_mode'"
+	grSQLPluginStatus = "SELECT PLUGIN_STATUS FROM information_schema.PLUGINS " +
+		"WHERE PLUGIN_NAME = 'group_replication' LIMIT 18446744073709551615"
+	grSQLAllVariables = "SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables " +
+		"WHERE VARIABLE_NAME LIKE 'group\\_replication\\_%' LIMIT 18446744073709551615"
+	grSQLAllPersisted = "SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.persisted_variables " +
+		"LIMIT 18446744073709551615"
+	grSQLUninstallPlugin    = "UNINSTALL PLUGIN group_replication"
+	grSQLInstallPlugin      = "INSTALL PLUGIN group_replication SONAME 'group_replication.so'"
 	grSQLRecoveryConnection = "SELECT SERVICE_STATE FROM performance_schema.replication_connection_status " +
 		"WHERE CHANNEL_NAME = 'group_replication_recovery'"
 	grSQLExecuted           = "SELECT @@GLOBAL.gtid_executed"
@@ -48,8 +64,9 @@ const (
 	grSQLConfiguredChannels = "SELECT CHANNEL_NAME, HOST FROM performance_schema.replication_connection_configuration"
 
 	// Server error numbers these pins assert, from the MySQL error reference.
-	erUnknownSystemVariable = 1193 // ER_UNKNOWN_SYSTEM_VARIABLE
-	erReplicaChannelOp      = 3139 // SHOW REPLICA STATUS refused for group_replication_applier
+	erUnknownSystemVariable   = 1193 // ER_UNKNOWN_SYSTEM_VARIABLE
+	erReplicaChannelOp        = 3139 // SHOW REPLICA STATUS refused for group_replication_applier
+	erOptionPreventsStatement = 1290 // ER_OPTION_PREVENTS_STATEMENT, here super_read_only
 
 	grExtChannel      = testsupport.ExtChannel
 	grRecoveryChannel = "group_replication_recovery"
@@ -63,9 +80,16 @@ const (
 
 // TestCompat30GroupReplicationPluginStatesIntegration pins COMPAT entry 30 and the
 // GroupReplication fact on all four server states, each read by a USAGE-only
-// account. The expected transaction size limit is what root reads with
-// @@GLOBAL on the same server, never a default written here: the library does
-// not depend on the server's default.
+// account. The expected transaction size limit and mode are what root reads
+// with @@GLOBAL on the same server, never a default written here: the library
+// does not depend on the server's default.
+//
+// It is also T1, the differential: in each state both facts' PluginStatus
+// equals the account's own direct information_schema.PLUGINS read, and the
+// group name's row is absent exactly where the plugin is absent or
+// DISABLED. It is the tripwire for a series that moves group_name into the
+// server, as happened to group_replication_consistency: that server would
+// report ACTIVE without the plugin.
 func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 	topology := testsupport.GroupReplicationTopology(t)
 
@@ -74,37 +98,47 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 		account := testsupport.CreateMySQLAccount(t, admin, "grabsent")
 		usage := testsupport.MySQLDBAs(t, account)
 
-		assertGroupReplication(t, usage, replication.GroupReplication{})
 		assertGroupNameRows(t, usage, 0, "an absent plugin's variable")
 		assertSizeLimitRows(t, usage, 0, "an absent plugin's limit")
+		assertModeRows(t, usage, 0, "an absent plugin's mode")
 		assertServerError(t, usage, grSQLGroupNameVariable, erUnknownSystemVariable)
 		assertServerError(t, usage, grSQLSizeLimitVariable, erUnknownSystemVariable)
+		assertServerError(t, usage, grSQLModeVariable, erUnknownSystemVariable)
+		assertGroupReplication(t, usage, replication.GroupReplication{})
+		assertPluginStatusDifferential(t, usage, "")
 	})
 
 	t.Run("disabled", func(t *testing.T) {
 		account := testsupport.CreateMySQLAccount(t, topology.Disabled, "grdisabled")
 		usage := testsupport.MySQLDBAsOn(t, topology.DisabledDSN, account)
 
-		assertGroupReplication(t, usage, replication.GroupReplication{PluginStatus: grPluginOff})
 		assertGroupNameRows(t, usage, 0, "a DISABLED plugin's variable (it hides the variable)")
 		assertSizeLimitRows(t, usage, 0, "a DISABLED plugin's limit (it hides the variable)")
+		assertModeRows(t, usage, 0, "a DISABLED plugin's mode (it hides the variable)")
 		assertServerError(t, usage, grSQLGroupNameVariable, erUnknownSystemVariable)
 		assertServerError(t, usage, grSQLSizeLimitVariable, erUnknownSystemVariable)
+		assertServerError(t, usage, grSQLModeVariable, erUnknownSystemVariable)
+		assertGroupReplication(t, usage, replication.GroupReplication{PluginStatus: grPluginOff})
+		assertPluginStatusDifferential(t, usage, grPluginOff)
 	})
 
 	t.Run("installed, never configured", func(t *testing.T) {
 		limit := globalSizeLimit(t, topology.Installed)
+		mode := globalMode(t, topology.Installed)
 		account := testsupport.CreateMySQLAccount(t, topology.Installed, "grinstalled")
 		usage := testsupport.MySQLDBAsOn(t, topology.InstalledDSN, account)
 
-		assertGroupReplication(t, usage, replication.GroupReplication{
-			PluginStatus: grPluginOn, TransactionSizeLimit: limit, TransactionSizeLimitKnown: true,
-		})
 		// The fact reads "" from one row with an empty value here, and from
 		// zero rows on the two states above; only the raw count tells them
 		// apart.
 		assertGroupNameRows(t, usage, 1, "an ACTIVE, unnamed plugin's variable (registered, empty)")
 		assertSizeLimitRows(t, usage, 1, "an ACTIVE plugin's limit (registered)")
+		assertModeRows(t, usage, 1, "an ACTIVE plugin's mode (registered)")
+		assertGroupReplication(t, usage, replication.GroupReplication{
+			PluginStatus: grPluginOn, TransactionSizeLimit: limit, TransactionSizeLimitKnown: true,
+			SinglePrimaryMode: mode, SinglePrimaryModeKnown: true,
+		})
+		assertPluginStatusDifferential(t, usage, grPluginOn)
 	})
 
 	t.Run("cluster member", func(t *testing.T) {
@@ -119,17 +153,22 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 		limit := globalSizeLimit(t, topology.Primary)
 		account := testsupport.CreateMySQLAccount(t, topology.Primary, "grmember")
 		usage := testsupport.MySQLDBAsOn(t, topology.PrimaryDSN, account)
+		assertSizeLimitRows(t, usage, 1, "a member's limit")
+		assertModeRows(t, usage, 1, "a member's mode")
 		assertGroupReplication(t, usage, replication.GroupReplication{
 			PluginStatus: grPluginOn, GroupName: name,
 			TransactionSizeLimit: limit, TransactionSizeLimitKnown: true,
+			SinglePrimaryMode: globalMode(t, topology.Primary), SinglePrimaryModeKnown: true,
 		})
-		assertSizeLimitRows(t, usage, 1, "a member's limit")
+		assertPluginStatusDifferential(t, usage, grPluginOn)
 
-		// Each member reports its own limit; nothing here assumes they agree.
+		// Each member reports its own limit and mode; nothing here assumes
+		// they agree.
 		for role, db := range map[string]*sql.DB{"secondary": topology.Secondary, "rejoiner": topology.Rejoiner} {
 			want := replication.GroupReplication{
 				PluginStatus: grPluginOn, GroupName: name,
 				TransactionSizeLimit: globalSizeLimit(t, db), TransactionSizeLimitKnown: true,
+				SinglePrimaryMode: globalMode(t, db), SinglePrimaryModeKnown: true,
 			}
 			got, err := replication.NewInspector(db).GroupReplication(t.Context())
 			if err != nil {
@@ -140,6 +179,152 @@ func TestCompat30GroupReplicationPluginStatesIntegration(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestGroupReplicationSinglePrimaryModeFollowsServerIntegration sets the mode
+// OFF and back on the standalone ACTIVE server, which is in no group and
+// whose checks are OFF, so the server accepts both values (docs/COMPAT.md
+// entry 37), and requires the fact, read by a USAGE-only account, to report
+// each. "Known" there means configured, not in force.
+func TestGroupReplicationSinglePrimaryModeFollowsServerIntegration(t *testing.T) {
+	topology := testsupport.GroupReplicationTopology(t)
+
+	account := testsupport.CreateMySQLAccount(t, topology.Installed, "grmode")
+	usage := testsupport.MySQLDBAsOn(t, topology.InstalledDSN, account)
+
+	original := globalMode(t, topology.Installed)
+	t.Cleanup(func() { execOn(t, topology.Installed, "SET GLOBAL group_replication_single_primary_mode = "+original) })
+
+	for _, mode := range []string{grModeOff, grModeOn} {
+		execOn(t, topology.Installed, "SET GLOBAL group_replication_single_primary_mode = "+mode)
+		if got := globalMode(t, topology.Installed); got != mode {
+			t.Fatalf("@@GLOBAL reads %s after setting %s", got, mode)
+		}
+		got, err := replication.NewInspector(usage).GroupReplication(t.Context())
+		if err != nil {
+			t.Fatalf("GroupReplication after setting %s: %v", mode, err)
+		}
+		if got.SinglePrimaryMode != mode || !got.SinglePrimaryModeKnown || got.PluginStatus != grPluginOn {
+			t.Errorf("GroupReplication after setting %s = %#v, want the mode %s, known, plugin ACTIVE", mode, got, mode)
+		}
+	}
+}
+
+// TestCompat37GroupModeSwitchIntegration switches the cluster to
+// multi-primary and back with the switch functions and requires every ONLINE
+// member to report the group's mode after each. Then a member stopped before
+// a switch keeps and reports its own value while the others report the
+// group's. The mode helper restores single-primary with gr1 primary, every
+// member ONLINE and every persisted row as captured, and verifies it.
+func TestCompat37GroupModeSwitchIntegration(t *testing.T) {
+	topology := testsupport.GroupReplicationTopology(t)
+	change := testsupport.StartGroupModeChange(t, topology)
+
+	members := map[string]*sql.DB{
+		"primary": topology.Primary, "secondary": topology.Secondary, "rejoiner": topology.Rejoiner,
+	}
+	assertModes := func(t *testing.T, want map[string]string) {
+		t.Helper()
+
+		for role, mode := range want {
+			got, err := replication.NewInspector(members[role]).GroupReplication(t.Context())
+			if err != nil {
+				t.Fatalf("GroupReplication on the %s: %v", role, err)
+			}
+			if got.SinglePrimaryMode != mode || !got.SinglePrimaryModeKnown {
+				t.Errorf("GroupReplication on the %s = %#v, want the mode %s, known", role, got, mode)
+			}
+		}
+	}
+
+	change.SwitchToMultiPrimary(t)
+	assertModes(t, map[string]string{"primary": grModeOff, "secondary": grModeOff, "rejoiner": grModeOff})
+	change.SwitchToSinglePrimary(t)
+	assertModes(t, map[string]string{"primary": grModeOn, "secondary": grModeOn, "rejoiner": grModeOn})
+
+	execOn(t, topology.Rejoiner, "STOP GROUP_REPLICATION")
+	testsupport.WaitMemberState(t, topology.Rejoiner, testsupport.MemberOffline)
+	change.SwitchToMultiPrimary(t)
+	assertModes(t, map[string]string{"primary": grModeOff, "secondary": grModeOff, "rejoiner": grModeOn})
+
+	change.Restore(t)
+	assertModes(t, map[string]string{"primary": grModeOn, "secondary": grModeOn, "rejoiner": grModeOn})
+}
+
+// TestCompat30PluginUninstallInstallIntegration is T5: on the standalone
+// ACTIVE server, UNINSTALL PLUGIN takes both facts' PluginStatus to "" and
+// INSTALL PLUGIN back to ACTIVE, each equal to the direct
+// information_schema.PLUGINS read. Other tests share the server, so every
+// Group Replication variable's runtime value and the server's persisted rows
+// are captured first and restored and verified after.
+//
+// INSTALL PLUGIN also records the plugin in mysql.plugin, which the server's
+// --plugin-load-add already loads; that row is not removed, and the topology
+// is torn down with down -v after each run.
+func TestCompat30PluginUninstallInstallIntegration(t *testing.T) {
+	topology := testsupport.GroupReplicationTopology(t)
+
+	account := testsupport.CreateMySQLAccount(t, topology.Installed, "grtoggle")
+	usage := testsupport.MySQLDBAsOn(t, topology.InstalledDSN, account)
+
+	variables := variableValues(t, topology.Installed, grSQLAllVariables)
+	persisted := variableValues(t, topology.Installed, grSQLAllPersisted)
+	if len(variables) == 0 {
+		t.Fatal("the standalone ACTIVE server lists no group_replication_% variable before the change")
+	}
+	t.Cleanup(func() {
+		if countRows(t, topology.Installed, grSQLPluginStatus) == 0 {
+			execOn(t, topology.Installed, grSQLInstallPlugin)
+		}
+		restoreVariables(t, topology.Installed, variables)
+		restorePersisted(t, topology.Installed, persisted)
+		verifyRestored(t, topology.Installed, variables, persisted)
+	})
+
+	execOn(t, topology.Installed, grSQLUninstallPlugin)
+	assertPluginStatusDifferential(t, usage, "")
+	assertGroupReplication(t, usage, replication.GroupReplication{})
+
+	execOn(t, topology.Installed, grSQLInstallPlugin)
+	assertPluginStatusDifferential(t, usage, grPluginOn)
+}
+
+// TestCompat36UninstallRefusedOnSecondaryIntegration is T4's measured premise:
+// UNINSTALL PLUGIN must write mysql.plugin first, and a running secondary,
+// like a fenced primary, has super_read_only = 1, so the statement fails with
+// 1290 and the plugin stays ACTIVE. UNINSTALL is never run on a fenced
+// primary; that one is inferred from the same variable (docs/COMPAT.md entry
+// 36). If it unexpectedly succeeds, the registered recovery reinstalls the
+// plugin, restores the member's Group Replication variables, starts it, waits
+// for ONLINE, and the test fails.
+func TestCompat36UninstallRefusedOnSecondaryIntegration(t *testing.T) {
+	topology := testsupport.GroupReplicationTopology(t)
+	secondary := topology.Secondary
+
+	if readOnly := scalarString(t, secondary, "SELECT @@GLOBAL.super_read_only"); readOnly != "1" {
+		t.Fatalf("the secondary's super_read_only is %s, want 1", readOnly)
+	}
+	variables := variableValues(t, secondary, grSQLAllVariables)
+	persisted := variableValues(t, secondary, grSQLAllPersisted)
+	t.Cleanup(func() {
+		if countRows(t, secondary, grSQLPluginStatus) != 0 {
+			return
+		}
+		t.Error("UNINSTALL PLUGIN succeeded on a running secondary; recovering the member")
+		execOn(t, secondary, "SET GLOBAL super_read_only = OFF")
+		execOn(t, secondary, grSQLInstallPlugin)
+		restoreVariables(t, secondary, variables)
+		restorePersisted(t, secondary, persisted)
+		execOn(t, secondary, "START GROUP_REPLICATION")
+		testsupport.WaitMemberState(t, secondary, testsupport.MemberOnline)
+		verifyRestored(t, secondary, variables, persisted)
+	})
+
+	assertServerError(t, secondary, grSQLUninstallPlugin, erOptionPreventsStatement)
+	if status := scalarString(t, secondary, grSQLPluginStatus); status != grPluginOn {
+		t.Errorf("after the refused UNINSTALL the secondary's plugin is %q, want %s", status, grPluginOn)
+	}
+	assertGroupReplicationStatus(t, secondary, grPluginOn)
 }
 
 // TestGroupReplicationTransactionSizeLimitFollowsServerIntegration sets the
@@ -165,8 +350,11 @@ func TestGroupReplicationTransactionSizeLimitFollowsServerIntegration(t *testing
 		if got := globalSizeLimit(t, topology.Installed); got != limit {
 			t.Fatalf("@@GLOBAL reads %d after setting %d", got, limit)
 		}
+		// The plugin is ACTIVE here, so the fact also reports the mode, read
+		// by root on the same server.
 		assertGroupReplication(t, usage, replication.GroupReplication{
 			PluginStatus: grPluginOn, TransactionSizeLimit: limit, TransactionSizeLimitKnown: true,
+			SinglePrimaryMode: globalMode(t, topology.Installed), SinglePrimaryModeKnown: true,
 		})
 	}
 }
@@ -357,6 +545,46 @@ func TestReplicaStatusKeepsAsyncChannelOnGroupMemberIntegration(t *testing.T) {
 	assertNoReplicaChannels(t, "secondary", topology.Secondary)
 }
 
+// assertPluginStatusDifferential requires GroupReplication's and
+// GroupConsistency's PluginStatus, read through db, to equal db's own direct
+// information_schema.PLUGINS read, and that read to equal want: "" for no row.
+func assertPluginStatusDifferential(t *testing.T, db *sql.DB, want string) {
+	t.Helper()
+
+	direct := ""
+	if countRows(t, db, grSQLPluginStatus) > 0 {
+		direct = scalarString(t, db, grSQLPluginStatus)
+	}
+	if direct != want {
+		t.Fatalf("the direct information_schema.PLUGINS read is %q, want %q", direct, want)
+	}
+	inspector := replication.NewInspector(db)
+	group, err := inspector.GroupReplication(t.Context())
+	if err != nil {
+		t.Fatalf("GroupReplication: %v", err)
+	}
+	consistency, err := inspector.GroupConsistency(t.Context())
+	if err != nil {
+		t.Fatalf("GroupConsistency: %v", err)
+	}
+	if group.PluginStatus != direct || consistency.PluginStatus != direct {
+		t.Errorf("PluginStatus: GroupReplication %q, GroupConsistency %q; the direct read %q",
+			group.PluginStatus, consistency.PluginStatus, direct)
+	}
+}
+
+func assertGroupReplicationStatus(t *testing.T, db *sql.DB, want string) {
+	t.Helper()
+
+	got, err := replication.NewInspector(db).GroupReplication(t.Context())
+	if err != nil {
+		t.Fatalf("GroupReplication: %v", err)
+	}
+	if got.PluginStatus != want {
+		t.Errorf("GroupReplication().PluginStatus = %q, want %q", got.PluginStatus, want)
+	}
+}
+
 func assertGroupReplication(t *testing.T, db *sql.DB, want replication.GroupReplication) {
 	t.Helper()
 
@@ -466,10 +694,15 @@ func assertServerError(t *testing.T, db *sql.DB, query string, number uint16) {
 	}
 }
 
+// countRows runs on statementContext, so it also works from t.Cleanup, where
+// t.Context() is already canceled.
 func countRows(t *testing.T, db replication.Querier, query string) int {
 	t.Helper()
 
-	rows, err := db.QueryContext(t.Context(), query)
+	ctx, cancel := statementContext(t)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		t.Fatalf("%q: %v", query, err)
 	}
@@ -511,6 +744,119 @@ func assertSizeLimitRows(t *testing.T, db replication.Querier, want int, state s
 		if rows := countRows(t, db, query); rows != want {
 			t.Errorf("%s: %q returned %d rows, want %d", state, query, rows, want)
 		}
+	}
+}
+
+// assertModeRows is assertGroupNameRows for
+// group_replication_single_primary_mode.
+func assertModeRows(t *testing.T, db replication.Querier, want int, state string) {
+	t.Helper()
+
+	for _, query := range []string{grSQLTableMode, grSQLShowMode} {
+		if rows := countRows(t, db, query); rows != want {
+			t.Errorf("%s: %q returned %d rows, want %d", state, query, rows, want)
+		}
+	}
+}
+
+// globalMode reads group_replication_single_primary_mode with @@GLOBAL, a
+// spelling independent of the table the fact reads, which answers 1 or 0, and
+// returns the table's spelling, ON or OFF. Call it only on a server where the
+// variable is registered.
+func globalMode(t *testing.T, db *sql.DB) string {
+	t.Helper()
+
+	switch value := scalarString(t, db, grSQLModeVariable); value {
+	case "1":
+		return grModeOn
+	case "0":
+		return grModeOff
+	default:
+		t.Fatalf("%s = %q, want 1 or 0", grSQLModeVariable, value)
+
+		return ""
+	}
+}
+
+// variableValues maps VARIABLE_NAME to VARIABLE_VALUE for query's rows.
+func variableValues(t *testing.T, db *sql.DB, query string) map[string]string {
+	t.Helper()
+
+	ctx, cancel := statementContext(t)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		t.Fatalf("%q: %v", query, err)
+	}
+	defer rows.Close()
+
+	values := map[string]string{}
+	for rows.Next() {
+		var name string
+		var value sql.NullString
+		if err := rows.Scan(&name, &value); err != nil {
+			t.Fatalf("scan %q: %v", query, err)
+		}
+		values[name] = value.String
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate %q: %v", query, err)
+	}
+
+	return values
+}
+
+// restoreVariables sets, with SET GLOBAL, every variable whose runtime value
+// differs from want: a decimal value unquoted, anything else as a string.
+// A variable the server will not set fails the test with the server's error.
+func restoreVariables(t *testing.T, db *sql.DB, want map[string]string) {
+	t.Helper()
+
+	current := variableValues(t, db, grSQLAllVariables)
+	names := slices.Sorted(maps.Keys(want))
+	for _, name := range names {
+		value := want[name]
+		if current[name] == value {
+			continue
+		}
+		literal := "'" + strings.ReplaceAll(value, "'", "''") + "'"
+		if _, err := strconv.ParseUint(value, 10, 64); err == nil {
+			literal = value
+		}
+		execOn(t, db, "SET GLOBAL "+name+" = "+literal)
+	}
+}
+
+// restorePersisted takes db's persisted rows back to want, with the mode
+// helper's statements.
+func restorePersisted(t *testing.T, db *sql.DB, want map[string]string) {
+	t.Helper()
+
+	rows := func(values map[string]string) map[string]testsupport.PersistedRow {
+		converted := make(map[string]testsupport.PersistedRow, len(values))
+		for name, value := range values {
+			converted[name] = testsupport.PersistedRow{Present: true, Value: value}
+		}
+
+		return converted
+	}
+	current := variableValues(t, db, grSQLAllPersisted)
+	for _, statement := range testsupport.PersistedRestoreStatements(rows(want), rows(current)) {
+		execOn(t, db, statement)
+	}
+}
+
+// verifyRestored reads db's Group Replication variables and persisted rows
+// again and requires both to equal what was captured.
+func verifyRestored(t *testing.T, db *sql.DB, variables, persisted map[string]string) {
+	t.Helper()
+
+	if got := variableValues(t, db, grSQLAllVariables); !maps.Equal(got, variables) {
+		t.Errorf("after the restore the Group Replication variables are %v, want %v", got, variables)
+	}
+	if got := variableValues(t, db, grSQLAllPersisted); !maps.Equal(got, persisted) {
+		t.Errorf("after the restore the persisted rows are %v, want %v", got, persisted)
 	}
 }
 

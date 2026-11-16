@@ -36,8 +36,9 @@ everyone else.
 
 - **Zero dependencies.** Library code imports the Go standard library only.
 - **Driver-agnostic.** You supply the connection — a `*sql.DB`, `*sql.Conn`, or
-  `*sql.Tx`; the library never opens, configures, or closes one, and never
-  imports a driver.
+  `*sql.Tx`, or for one replication fact a `database/sql/driver` connection;
+  the library never opens, configures, or closes one, and never imports a
+  driver.
 - **Never panics, never logs.** It returns data and errors. You decide what
   reaches a terminal.
 - **Context-first.** Every call that touches the database takes a
@@ -54,10 +55,11 @@ go get github.com/dbsmedya/dbsgomysql
 Available now: `pkg/sqlutil` for MySQL identifier validation and quoting, plus
 the `pkg/validations` metadata, column, foreign-key, and privilege facts and all
 15 pure catalog checks, including table specification and diff facts.
-`pkg/replication` adds nine replication facts — replica channel status,
+`pkg/replication` adds ten replication facts — replica channel status,
 binary log enablement and coordinates, GTID state, replication configuration,
-registered replicas, Group Replication plugin status, group name and
-transaction size limit, group
+registered replicas, Group Replication plugin status, group name, transaction
+size limit and single-primary mode, a session's group replication
+consistency, group
 members, and per-member queues and counters — with nine pure catalog checks
 over them, tested against live source-replica and Group Replication
 topologies on 8.0, 8.4, and 9.7.
